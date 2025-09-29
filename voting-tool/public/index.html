@@ -87,6 +87,17 @@
         </div>
     </div>
 
+    <!-- Image Modal -->
+    <div class="overlay" id="imageModal" style="display: none;" onclick="app.closeImageModal()">
+        <div style="position: relative; max-width: 90vw; max-height: 90vh; display: flex; align-items: center; justify-content: center;" onclick="event.stopPropagation()">
+            <img id="modalImage" src="" alt="Screenshot" style="max-width: 100%; max-height: 90vh; border-radius: 12px; box-shadow: var(--shadow-floating);">
+            <button
+                onclick="app.closeImageModal()"
+                style="position: absolute; top: -15px; right: -15px; background: white; border: none; border-radius: 50%; width: 40px; height: 40px; font-size: 24px; cursor: pointer; box-shadow: var(--shadow-lg); display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
+            >×</button>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>

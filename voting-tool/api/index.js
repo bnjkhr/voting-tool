@@ -8,7 +8,8 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, '../public')));
@@ -119,20 +120,73 @@ app.get('/api/apps', async (req, res) => {
 app.get('/api/apps/:appId/suggestions', async (req, res) => {
   try {
     const { appId } = req.params;
+    const userFingerprint = generateUserFingerprint(req);
 
     // Validate appId format
     if (!/^[a-zA-Z0-9_-]+$/.test(appId)) {
       return res.status(400).json({ error: 'Invalid app ID format' });
     }
 
+    // Get suggestions for this app
     const suggestionsSnapshot = await db.collection('suggestions')
       .where('appId', '==', appId)
       .where('approved', '==', true)
       .get();
 
+    if (suggestionsSnapshot.empty) {
+      return res.json([]);
+    }
+
+    const suggestionIds = suggestionsSnapshot.docs.map(doc => doc.id);
+
+    // Batch load comments and votes for these suggestions
+    const [commentsSnapshot, votesSnapshot] = await Promise.all([
+      db.collection('comments')
+        .where('suggestionId', 'in', suggestionIds.slice(0, 10)) // Firestore 'in' limit is 10
+        .get()
+        .catch(() => ({ docs: [] })), // Fallback if query fails
+      db.collection('votes')
+        .where('suggestionId', 'in', suggestionIds.slice(0, 10))
+        .where('userFingerprint', '==', userFingerprint)
+        .get()
+        .catch(() => ({ docs: [] }))
+    ]);
+
+    // If more than 10 suggestions, load remaining in second batch
+    let additionalComments = [];
+    let additionalVotes = [];
+    if (suggestionIds.length > 10) {
+      const [commentsSnapshot2, votesSnapshot2] = await Promise.all([
+        db.collection('comments')
+          .where('suggestionId', 'in', suggestionIds.slice(10))
+          .get()
+          .catch(() => ({ docs: [] })),
+        db.collection('votes')
+          .where('suggestionId', 'in', suggestionIds.slice(10))
+          .where('userFingerprint', '==', userFingerprint)
+          .get()
+          .catch(() => ({ docs: [] }))
+      ]);
+      additionalComments = commentsSnapshot2.docs;
+      additionalVotes = votesSnapshot2.docs;
+    }
+
+    // Create maps
+    const commentCountMap = {};
+    [...commentsSnapshot.docs, ...additionalComments].forEach(doc => {
+      const suggestionId = doc.data().suggestionId;
+      commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
+    });
+
+    const userVotesSet = new Set(
+      [...votesSnapshot.docs, ...additionalVotes].map(doc => doc.data().suggestionId)
+    );
+
     const suggestions = suggestionsSnapshot.docs.map(doc => ({
       id: doc.id,
-      ...doc.data()
+      ...doc.data(),
+      commentCount: commentCountMap[doc.id] || 0,
+      hasVoted: userVotesSet.has(doc.id)
     }));
 
     // Sort by votes (desc) then by createdAt (desc)
@@ -523,10 +577,10 @@ app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
 // Admin: Get all suggestions with app info
 app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
   try {
-    const [suggestionsSnapshot, appsSnapshot, commentsSnapshot] = await Promise.all([
+    // Load suggestions and apps in parallel
+    const [suggestionsSnapshot, appsSnapshot] = await Promise.all([
       db.collection('suggestions').get(),
-      db.collection('apps').get(),
-      db.collection('comments').get()
+      db.collection('apps').get()
     ]);
 
     // Create app lookup map
@@ -535,12 +589,35 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       appsMap[doc.id] = { id: doc.id, ...doc.data() };
     });
 
-    // Create comment count map
-    const commentCountMap = {};
-    commentsSnapshot.docs.forEach(doc => {
-      const suggestionId = doc.data().suggestionId;
-      commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
-    });
+    const suggestionIds = suggestionsSnapshot.docs.map(doc => doc.id);
+
+    // Load comments only for existing suggestions in batches
+    let commentCountMap = {};
+    if (suggestionIds.length > 0) {
+      // Split into chunks of 10 for Firestore 'in' query limit
+      const chunks = [];
+      for (let i = 0; i < suggestionIds.length; i += 10) {
+        chunks.push(suggestionIds.slice(i, i + 10));
+      }
+
+      // Load all chunks in parallel
+      const commentSnapshots = await Promise.all(
+        chunks.map(chunk =>
+          db.collection('comments')
+            .where('suggestionId', 'in', chunk)
+            .get()
+            .catch(() => ({ docs: [] }))
+        )
+      );
+
+      // Aggregate comment counts
+      commentSnapshots.forEach(snapshot => {
+        snapshot.docs.forEach(doc => {
+          const suggestionId = doc.data().suggestionId;
+          commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
+        });
+      });
+    }
 
     const suggestions = suggestionsSnapshot.docs.map(doc => ({
       id: doc.id,
@@ -717,11 +794,17 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
 
       // Validate each screenshot
       processedScreenshots = screenshots.filter(screenshot => {
-        // Basic validation: check if it's a base64 data URL
+        // Basic validation: check if it's a base64 data URL and reasonable size
         return typeof screenshot === 'string' &&
                screenshot.startsWith('data:image/') &&
-               screenshot.length < 5000000; // ~5MB limit
+               screenshot.length < 300000; // ~225KB limit per image
       });
+
+      // Validate total size
+      const totalSize = processedScreenshots.reduce((sum, s) => sum + s.length, 0);
+      if (totalSize > 800000) { // ~600KB total limit
+        return res.status(400).json({ error: 'Screenshots total size too large. Please use smaller images.' });
+      }
     }
 
     // Check if suggestion exists
@@ -769,6 +852,47 @@ app.get('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, async
     const comments = commentsSnapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
+    }));
+
+    // Sort by createdAt descending (newest first)
+    comments.sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.() || a.createdAt?._seconds ? new Date(a.createdAt._seconds * 1000) : new Date(0);
+      const bTime = b.createdAt?.toDate?.() || b.createdAt?._seconds ? new Date(b.createdAt._seconds * 1000) : new Date(0);
+      return bTime - aTime;
+    });
+
+    res.json(comments);
+  } catch (error) {
+    console.error('Error fetching comments:', error);
+    res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+// Public: Get comments for a suggestion (read-only)
+app.get('/api/suggestions/:suggestionId/comments', async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+
+    // Validate suggestionId format
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    // Check if suggestion exists and is approved
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists || !suggestionDoc.data().approved) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const commentsSnapshot = await db.collection('comments')
+      .where('suggestionId', '==', suggestionId)
+      .get();
+
+    const comments = commentsSnapshot.docs.map(doc => ({
+      id: doc.id,
+      text: doc.data().text,
+      screenshots: doc.data().screenshots || [],
+      createdAt: doc.data().createdAt
     }));
 
     // Sort by createdAt descending (newest first)

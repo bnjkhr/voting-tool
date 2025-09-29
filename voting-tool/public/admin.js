@@ -594,8 +594,10 @@ class AdminApp {
                                     <img
                                         src="${screenshot}"
                                         alt="Screenshot ${idx + 1}"
-                                        onclick="window.open(this.src, '_blank')"
-                                        style="max-width: 150px; max-height: 150px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); object-fit: cover;"
+                                        onclick="adminApp.showImageModal(this.src)"
+                                        style="max-width: 150px; max-height: 150px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); object-fit: cover; transition: transform 0.2s;"
+                                        onmouseover="this.style.transform='scale(1.05)'"
+                                        onmouseout="this.style.transform='scale(1)'"
                                     >
                                 `).join('')}
                             </div>
@@ -629,15 +631,21 @@ class AdminApp {
         previewDiv.innerHTML = '';
 
         files.forEach((file, idx) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                this.selectedScreenshots[suggestionId].push(e.target.result);
+            this.compressImage(file, 800, 0.6).then(compressedDataUrl => {
+                // Check size (max 200KB per image)
+                const sizeInBytes = compressedDataUrl.length * 0.75; // Approximate base64 to bytes
+                if (sizeInBytes > 200000) {
+                    this.showToast('Bild zu groß. Bitte kleineres Bild verwenden.', 'error');
+                    return;
+                }
+
+                this.selectedScreenshots[suggestionId].push(compressedDataUrl);
 
                 const imgContainer = document.createElement('div');
                 imgContainer.style.cssText = 'position: relative; display: inline-block;';
                 imgContainer.innerHTML = `
                     <img
-                        src="${e.target.result}"
+                        src="${compressedDataUrl}"
                         style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);"
                     >
                     <button
@@ -646,7 +654,42 @@ class AdminApp {
                     >×</button>
                 `;
                 previewDiv.appendChild(imgContainer);
+            }).catch(error => {
+                console.error('Error compressing image:', error);
+                this.showToast('Fehler beim Verarbeiten des Bildes', 'error');
+            });
+        });
+    }
+
+    compressImage(file, maxWidth, quality) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    // Calculate new dimensions
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+
+                    // Create canvas and compress
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // Convert to data URL with compression
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.onerror = reject;
+                img.src = e.target.result;
             };
+            reader.onerror = reject;
             reader.readAsDataURL(file);
         });
     }
@@ -735,6 +778,20 @@ class AdminApp {
             console.error('Error deleting comment:', error);
             this.showToast(error.message || 'Fehler beim Löschen des Kommentars', 'error');
         }
+    }
+
+    showImageModal(imageSrc) {
+        const modal = document.getElementById('imageModal');
+        const modalImage = document.getElementById('modalImage');
+        modalImage.src = imageSrc;
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    }
+
+    closeImageModal() {
+        const modal = document.getElementById('imageModal');
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
     }
 }
 
