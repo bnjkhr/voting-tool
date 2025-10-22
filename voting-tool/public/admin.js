@@ -160,6 +160,9 @@ class AdminApp {
 
         suggestionsList.innerHTML = suggestions.map(suggestion => {
             const isApproved = suggestion.approved === true;
+            const isImplemented = suggestion.tag === 'ist umgesetzt';
+            const itemOpacity = isImplemented ? 'opacity: 0.5;' : '';
+
             const statusBadge = isApproved
                 ? '<span style="background: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">✓ Freigegeben</span>'
                 : '<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Wartet auf Freigabe</span>';
@@ -172,7 +175,7 @@ class AdminApp {
                 : '';
 
             return `
-                <div class="suggestion-item" style="border-left: 4px solid ${isApproved ? '#10b981' : '#f59e0b'}">
+                <div class="suggestion-item" style="border-left: 4px solid ${isApproved ? '#10b981' : '#f59e0b'}; ${itemOpacity}">
                     <div class="suggestion-header">
                         <div class="suggestion-content">
                             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;">

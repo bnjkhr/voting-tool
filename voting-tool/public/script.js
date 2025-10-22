@@ -335,6 +335,10 @@ class VotingApp {
         }
 
         const suggestionsHTML = suggestions.map(suggestion => {
+            // Check if suggestion is implemented (ausgegraut)
+            const isImplemented = suggestion.tag === 'ist umgesetzt';
+            const cardOpacity = isImplemented ? 'opacity: 0.5;' : '';
+
             // Generate tag badge if tag exists
             let tagBadge = '';
             if (suggestion.tag) {
@@ -385,7 +389,7 @@ class VotingApp {
             ` : '';
 
             return `
-                <div class="suggestion-card">
+                <div class="suggestion-card" style="${cardOpacity}">
                     <div class="suggestion-header">
                         <div class="suggestion-content">
                             <h3 class="suggestion-title">${this.escapeHtml(suggestion.title)}</h3>
@@ -404,7 +408,7 @@ class VotingApp {
                         </div>
                         <button
                             class="vote-btn ${suggestion.hasVoted ? 'voted' : ''}"
-                            ${suggestion.hasVoted ? 'disabled' : ''}
+                            ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
                             onclick="app.voteSuggestion('${suggestion.id}', this)"
                         >
                             ${suggestion.hasVoted ? 'Gevotet ✓' : 'Vote'}
