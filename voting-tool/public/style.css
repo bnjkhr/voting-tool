@@ -263,12 +263,13 @@ body {
 
 /* Checkbox Container */
 .checkbox-container {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     cursor: pointer;
     user-select: none;
     gap: 12px;
     padding: 8px 0;
+    flex-direction: row;
 }
 
 .checkbox-container input[type="checkbox"] {
