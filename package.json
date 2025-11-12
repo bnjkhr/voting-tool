@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "build": "echo 'No build needed - Node.js API only'",
-    "vercel-build": "echo 'Vercel build complete'"
+    "vercel-build": "cd voting-tool && npm install --production"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

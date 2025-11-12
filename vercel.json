@@ -1,6 +1,8 @@
 {
   "version": 2,
+  "framework": null,
   "buildCommand": "cd voting-tool && npm install",
+  "outputDirectory": "voting-tool/public",
   "builds": [
     {
       "src": "voting-tool/api/index.js",
