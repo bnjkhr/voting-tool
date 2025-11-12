@@ -23,13 +23,6 @@ class VotingApp {
         document.getElementById('fabBtn').addEventListener('click', () => this.showSuggestionForm());
         document.getElementById('cancelBtn').addEventListener('click', () => this.showSuggestions());
 
-        // Settings
-        document.getElementById('settingsBtn').addEventListener('click', () => this.showSettingsModal());
-        document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
-        document.getElementById('settingsBackdrop').addEventListener('click', () => this.hideSettingsModal());
-        document.getElementById('cancelSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
-        document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
-
         // Form submission
         document.getElementById('newSuggestionForm').addEventListener('submit', (e) => this.submitSuggestion(e));
     }
