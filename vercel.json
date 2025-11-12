@@ -1,7 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "cd voting-tool && echo 'Build complete - Node.js API ready'",
-  "installCommand": "cd voting-tool && npm install",
+  "buildCommand": "echo 'Build complete - Node.js API ready'",
   "builds": [
     {
       "src": "voting-tool/api/index.js",
