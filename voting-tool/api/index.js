@@ -294,7 +294,7 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
 app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) => {
   try {
     const { appId } = req.params;
-    const { title, description } = req.body;
+    const { title, description, email, notificationsEnabled } = req.body;
     const userFingerprint = generateUserFingerprint(req);
 
     // Validate inputs
@@ -303,6 +303,16 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
 
     if (!validTitle || !validDescription) {
       return res.status(400).json({ error: 'Invalid title or description' });
+    }
+
+    // Validate email if provided
+    let validEmail = null;
+    if (email && email.trim() !== '') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({ error: 'Invalid email format' });
+      }
+      validEmail = email.trim();
     }
 
     // Check if app exists
@@ -322,6 +332,37 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
     };
 
     const docRef = await db.collection('suggestions').add(suggestion);
+
+    // Save user notification settings if email was provided
+    if (validEmail) {
+      try {
+        const settingsData = {
+          userFingerprint,
+          email: validEmail,
+          notificationsEnabled: Boolean(notificationsEnabled),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Check if settings already exist
+        const existingSettings = await db.collection('userSettings')
+          .where('userFingerprint', '==', userFingerprint)
+          .limit(1)
+          .get();
+
+        if (existingSettings.empty) {
+          // Create new settings
+          settingsData.createdAt = admin.firestore.FieldValue.serverTimestamp();
+          await db.collection('userSettings').add(settingsData);
+        } else {
+          // Update existing settings
+          const docRef = existingSettings.docs[0].ref;
+          await docRef.update(settingsData);
+        }
+      } catch (settingsError) {
+        console.error('Error saving user notification settings:', settingsError);
+        // Continue even if settings save fails
+      }
+    }
 
     // Send email notification to admin
     try {

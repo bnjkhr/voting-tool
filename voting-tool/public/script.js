@@ -185,19 +185,41 @@ class VotingApp {
 
         const title = document.getElementById('suggestionTitle').value.trim();
         const description = document.getElementById('suggestionDescription').value.trim();
+        const email = document.getElementById('suggestionEmail').value.trim();
+        const notificationsEnabled = document.getElementById('suggestionNotificationsEnabled').checked;
 
         if (!title || !description) {
             this.showToast('Bitte füllen Sie alle Felder aus', 'error');
             return;
         }
 
+        // Validate email if provided and notifications are enabled
+        if (email && notificationsEnabled && !this.validateEmail(email)) {
+            this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
+            return;
+        }
+
+        // Warn if notifications are enabled but no email provided
+        if (notificationsEnabled && !email) {
+            this.showToast('Bitte geben Sie eine E-Mail-Adresse ein, um Benachrichtigungen zu erhalten', 'error');
+            return;
+        }
+
         try {
+            const requestBody = { title, description };
+
+            // Add email and notifications only if email is provided
+            if (email) {
+                requestBody.email = email;
+                requestBody.notificationsEnabled = notificationsEnabled;
+            }
+
             const response = await fetch(`/api/apps/${this.currentApp.id}/suggestions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ title, description })
+                body: JSON.stringify(requestBody)
             });
 
             if (response.ok) {
