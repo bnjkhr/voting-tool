@@ -1,0 +1,9 @@
+{
+  "name": "voting-tool-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'No build needed - Node.js API only'",
+    "vercel-build": "echo 'Vercel build complete'"
+  }
+}
