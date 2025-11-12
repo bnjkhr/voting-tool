@@ -122,7 +122,7 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
     
     switch(status) {
       case 'approved':
-        statusText = 'Genehmigt';
+        statusText = 'Freigegeben';
         statusColor = '#28a745';
         break;
       case 'rejected':
@@ -132,6 +132,10 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
       case 'commented':
         statusText = 'Neuer Kommentar';
         statusColor = '#007bff';
+        break;
+      case 'tag_changed':
+        statusText = 'Status geändert';
+        statusColor = '#f59e0b';
         break;
       default:
         statusText = 'Status aktualisiert';
@@ -848,6 +852,14 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
       tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    // Send notification to suggestion creator about tag change
+    try {
+      await notifySuggestionCreator(suggestionId, 'tag_changed', `Status wurde geändert zu: ${tag || 'Kein Status'}`);
+    } catch (notificationError) {
+      console.error('Error sending tag change notification:', notificationError);
+      // Continue even if notification fails
+    }
+
     res.json({
       success: true,
       message: 'Tag erfolgreich aktualisiert'
@@ -1196,14 +1208,18 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
 // Send notification to suggestion creator (helper function for admin actions)
 async function notifySuggestionCreator(suggestionId, status, comment = null) {
   try {
+    console.log(`[NOTIFICATION] Starting notification for suggestion ${suggestionId}, status: ${status}`);
+
     // Get suggestion details
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
     if (!suggestionDoc.exists) {
+      console.log(`[NOTIFICATION] Suggestion ${suggestionId} does not exist`);
       return;
     }
 
     const suggestion = suggestionDoc.data();
-    
+    console.log(`[NOTIFICATION] Suggestion userFingerprint: ${suggestion.userFingerprint}`);
+
     // Get app details
     const appDoc = await db.collection('apps').doc(suggestion.appId).get();
     const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
@@ -1211,11 +1227,17 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
     // For now, we'll use a simplified approach to find the user
     // In a real implementation, you'd want to track the creator's fingerprint
     const userFingerprint = suggestion.userFingerprint;
-    
+
     if (userFingerprint) {
       const userSettings = await getUserNotificationSettings(userFingerprint);
-      
+      console.log(`[NOTIFICATION] User settings:`, {
+        hasEmail: !!userSettings.email,
+        notificationsEnabled: userSettings.notificationsEnabled,
+        email: userSettings.email ? userSettings.email.substring(0, 3) + '***' : 'none'
+      });
+
       if (userSettings.email && userSettings.notificationsEnabled) {
+        console.log(`[NOTIFICATION] Sending email to user...`);
         await sendUserNotificationEmail(
           userSettings.email,
           suggestionId,
@@ -1224,10 +1246,15 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
           comment,
           appName
         );
+        console.log(`[NOTIFICATION] Email sent successfully`);
+      } else {
+        console.log(`[NOTIFICATION] Not sending email - conditions not met`);
       }
+    } else {
+      console.log(`[NOTIFICATION] No userFingerprint found for suggestion`);
     }
   } catch (error) {
-    console.error('Error notifying suggestion creator:', error);
+    console.error('[NOTIFICATION] Error notifying suggestion creator:', error);
   }
 }
 
