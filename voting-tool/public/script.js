@@ -93,7 +93,7 @@ class VotingApp {
 
         // Validate email if provided
         if (email && !this.validateEmail(email)) {
-            this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
+            this.showToast('Bitte gib eine gültige E-Mail-Adresse ein', 'error');
             return;
         }
 
@@ -195,13 +195,13 @@ class VotingApp {
 
         // Validate email if provided and notifications are enabled
         if (email && notificationsEnabled && !this.validateEmail(email)) {
-            this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
+            this.showToast('Bitte gib eine gültige E-Mail-Adresse ein', 'error');
             return;
         }
 
         // Warn if notifications are enabled but no email provided
         if (notificationsEnabled && !email) {
-            this.showToast('Bitte geben Sie eine E-Mail-Adresse ein, um Benachrichtigungen zu erhalten', 'error');
+            this.showToast('Bitte gib eine E-Mail-Adresse ein, um Benachrichtigungen zu erhalten', 'error');
             return;
         }
 
@@ -428,7 +428,7 @@ class VotingApp {
             noResultsMsg.className = 'loading';
             noResultsMsg.innerHTML = `
                 ${this.currentFilter === 'all' ?
-                    'Noch keine Vorschläge vorhanden.<br>Seien Sie der Erste und reichen Sie einen Vorschlag ein!' :
+                    'Noch keine Vorschläge vorhanden.<br>Sei der Erste und reiche einen Vorschlag ein!' :
                     'Keine Vorschläge mit diesem Status gefunden.'
                 }
             `;
