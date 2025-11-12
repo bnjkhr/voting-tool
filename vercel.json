@@ -1,12 +1,13 @@
 {
   "version": 2,
-  "buildCommand": "echo 'Build complete - Node.js API ready'",
+  "buildCommand": "cd voting-tool && npm install",
   "builds": [
     {
       "src": "voting-tool/api/index.js",
       "use": "@vercel/node",
       "config": {
-        "maxDuration": 10
+        "maxDuration": 10,
+        "includeFiles": ["voting-tool/**"]
       }
     }
   ],
