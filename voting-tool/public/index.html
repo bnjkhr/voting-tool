@@ -15,6 +15,7 @@
         <header class="header">
             <h1>Feature Voting</h1>
             <p>Schlage neue Features vor oder vote für bestehende Ideen</p>
+            <button class="settings-btn" id="settingsBtn" title="Einstellungen">⚙️</button>
         </header>
 
         <main class="main">
@@ -66,6 +67,46 @@
                         <button type="submit" class="primary-btn">Vorschlag einreichen</button>
                     </div>
                 </form>
+            </section>
+
+            <!-- Settings Modal -->
+            <section class="settings-modal hidden" id="settingsModal">
+                <div class="modal-backdrop" id="settingsBackdrop"></div>
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Einstellungen</h2>
+                        <button class="close-btn" id="closeSettingsBtn">×</button>
+                    </div>
+                    
+                    <div class="modal-body">
+                        <div class="settings-section">
+                            <h3>Benachrichtigungen</h3>
+                            <p class="settings-description">
+                                Erhalten Sie E-Mail-Benachrichtigungen, wenn sich der Status Ihrer Vorschläge ändert oder neue Kommentare hinzugefügt werden.
+                            </p>
+                            
+                            <div class="form-group">
+                                <label for="userEmail">E-Mail-Adresse (optional)</label>
+                                <input type="email" id="userEmail" placeholder="ihre.email@beispiel.de"
+                                       pattern="[^\s@]+@[^\s@]+\.[^\s@]+">
+                                <small class="form-hint">Ihre E-Mail-Adresse wird nur für Benachrichtigungen verwendet</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="checkbox-container">
+                                    <input type="checkbox" id="notificationsEnabled">
+                                    <span class="checkmark"></span>
+                                    Benachrichtigungen aktivieren
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="modal-footer">
+                        <button class="secondary-btn" id="cancelSettingsBtn">Abbrechen</button>
+                        <button class="primary-btn" id="saveSettingsBtn">Speichern</button>
+                    </div>
+                </div>
             </section>
         </main>
     </div>

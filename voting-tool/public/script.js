@@ -4,6 +4,10 @@ class VotingApp {
         this.votedSuggestions = new Set(this.getVotedSuggestions());
         this.currentFilter = 'all';
         this.allSuggestions = [];
+        this.userSettings = {
+            email: null,
+            notificationsEnabled: false
+        };
         this.init();
     }
 
@@ -18,6 +22,13 @@ class VotingApp {
         document.getElementById('formBackBtn').addEventListener('click', () => this.showSuggestions());
         document.getElementById('fabBtn').addEventListener('click', () => this.showSuggestionForm());
         document.getElementById('cancelBtn').addEventListener('click', () => this.showSuggestions());
+
+        // Settings
+        document.getElementById('settingsBtn').addEventListener('click', () => this.showSettingsModal());
+        document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
+        document.getElementById('settingsBackdrop').addEventListener('click', () => this.hideSettingsModal());
+        document.getElementById('cancelSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
+        document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
 
         // Form submission
         document.getElementById('newSuggestionForm').addEventListener('submit', (e) => this.submitSuggestion(e));
@@ -47,6 +58,75 @@ class VotingApp {
 
         // Clear form
         document.getElementById('newSuggestionForm').reset();
+    }
+
+    // Settings methods
+    showSettingsModal() {
+        document.getElementById('settingsModal').classList.remove('hidden');
+        this.loadUserSettings();
+    }
+
+    hideSettingsModal() {
+        document.getElementById('settingsModal').classList.add('hidden');
+    }
+
+    async loadUserSettings() {
+        try {
+            const response = await fetch('/api/user/notification-settings');
+            if (response.ok) {
+                const settings = await response.json();
+                this.userSettings = settings;
+                
+                // Update form fields
+                document.getElementById('userEmail').value = settings.email || '';
+                document.getElementById('notificationsEnabled').checked = settings.notificationsEnabled;
+            }
+        } catch (error) {
+            console.error('Error loading user settings:', error);
+            this.showToast('Fehler beim Laden der Einstellungen', 'error');
+        }
+    }
+
+    async saveSettings() {
+        const email = document.getElementById('userEmail').value.trim();
+        const notificationsEnabled = document.getElementById('notificationsEnabled').checked;
+
+        // Validate email if provided
+        if (email && !this.validateEmail(email)) {
+            this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/user/notification-settings', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email: email,
+                    notificationsEnabled: notificationsEnabled
+                })
+            });
+
+            if (response.ok) {
+                const settings = await response.json();
+                this.userSettings = settings;
+                this.hideSettingsModal();
+                this.showToast('Einstellungen gespeichert', 'success');
+            } else {
+                const error = await response.json();
+                this.showToast(error.error || 'Fehler beim Speichern der Einstellungen', 'error');
+            }
+        } catch (error) {
+            console.error('Error saving settings:', error);
+            this.showToast('Fehler beim Speichern der Einstellungen', 'error');
+        }
+    }
+
+    validateEmail(email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
     }
 
     // API methods

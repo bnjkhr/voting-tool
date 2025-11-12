@@ -90,6 +90,89 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   }
 }
 
+// Helper function to send user notification email
+async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName) {
+  // Check if email is configured
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+    console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
+    return;
+  }
+
+  // Validate email address
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(userEmail)) {
+    console.warn('Invalid user email format:', userEmail);
+    return;
+  }
+
+  try {
+    // Configure email transporter
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD
+      }
+    });
+
+    const suggestionUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
+    
+    let statusText = '';
+    let statusColor = '';
+    
+    switch(status) {
+      case 'approved':
+        statusText = 'Genehmigt';
+        statusColor = '#28a745';
+        break;
+      case 'rejected':
+        statusText = 'Abgelehnt';
+        statusColor = '#dc3545';
+        break;
+      case 'commented':
+        statusText = 'Neuer Kommentar';
+        statusColor = '#007bff';
+        break;
+      default:
+        statusText = 'Status aktualisiert';
+        statusColor = '#6c757d';
+    }
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: userEmail,
+      subject: `Ihr Vorschlag "${title}" - ${statusText}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Update zu Ihrem Vorschlag</h2>
+          
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: ${statusColor};">${statusText}</h3>
+            <p><strong>Vorschlag:</strong> ${title}</p>
+            <p><strong>App:</strong> ${appName}</p>
+            ${comment ? `<p><strong>Kommentar:</strong> ${comment}</p>` : ''}
+          </div>
+          
+          <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Vorschlag ansehen</a></p>
+          
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+          <p style="color: #6c757d; font-size: 12px;">
+            Sie erhalten diese E-Mail, weil Sie Benachrichtigungen für diesen Vorschlag aktiviert haben.
+            <br>Um keine Benachrichtigungen mehr zu erhalten, deaktivieren Sie die Benachrichtigungen in den Einstellungen.
+          </p>
+        </div>
+      `
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('User notification email sent successfully:', info.messageId);
+  } catch (error) {
+    console.error('Failed to send user notification email:', error.message);
+    console.error('Full error:', error);
+    throw error;
+  }
+}
+
 // Helper function to generate user fingerprint
 function generateUserFingerprint(req) {
   const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
@@ -212,6 +295,7 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
   try {
     const { appId } = req.params;
     const { title, description } = req.body;
+    const userFingerprint = generateUserFingerprint(req);
 
     // Validate inputs
     const validTitle = validateInput(title, 100);
@@ -233,6 +317,7 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
       description: validDescription,
       votes: 0,
       approved: false,
+      userFingerprint: userFingerprint,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
@@ -675,6 +760,14 @@ app.post('/api/admin/suggestions/:suggestionId/approve', requireAdminAuth, async
       approvedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
+    // Send notification to suggestion creator
+    try {
+      await notifySuggestionCreator(suggestionId, 'approved');
+    } catch (notificationError) {
+      console.error('Error sending approval notification:', notificationError);
+      // Continue even if notification fails
+    }
+
     res.json({
       success: true,
       message: 'Vorschlag erfolgreich freigegeben'
@@ -738,6 +831,14 @@ app.delete('/api/admin/suggestions/:suggestionId', requireAdminAuth, async (req,
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
     if (!suggestionDoc.exists) {
       return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    // Send rejection notification before deletion
+    try {
+      await notifySuggestionCreator(suggestionId, 'rejected', 'Ihr Vorschlag wurde entfernt.');
+    } catch (notificationError) {
+      console.error('Error sending rejection notification:', notificationError);
+      // Continue even if notification fails
     }
 
     // Delete votes for this suggestion
@@ -822,6 +923,14 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
     };
 
     const commentRef = await db.collection('comments').add(comment);
+
+    // Send notification about new comment
+    try {
+      await notifySuggestionCreator(suggestionId, 'commented', validText);
+    } catch (notificationError) {
+      console.error('Error sending comment notification:', notificationError);
+      // Continue even if notification fails
+    }
 
     res.status(201).json({
       id: commentRef.id,
@@ -941,6 +1050,145 @@ app.delete('/api/admin/suggestions/:suggestionId/comments/:commentId', requireAd
     res.status(500).json({ error: 'Failed to delete comment' });
   }
 });
+
+// Helper function to get user notification settings
+async function getUserNotificationSettings(userFingerprint) {
+  try {
+    const settingsSnapshot = await db.collection('userSettings')
+      .where('userFingerprint', '==', userFingerprint)
+      .limit(1)
+      .get();
+
+    if (settingsSnapshot.empty) {
+      return { email: null, notificationsEnabled: false };
+    }
+
+    return settingsSnapshot.docs[0].data();
+  } catch (error) {
+    console.error('Error getting user notification settings:', error);
+    return { email: null, notificationsEnabled: false };
+  }
+}
+
+// Helper function to get suggestions by user fingerprint
+async function getSuggestionsByUserFingerprint(userFingerprint) {
+  try {
+    // This is a simplified approach - in a real implementation, 
+    // you'd want to track the creator of suggestions
+    const suggestionsSnapshot = await db.collection('suggestions')
+      .where('userFingerprint', '==', userFingerprint)
+      .get();
+
+    return suggestionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('Error getting user suggestions:', error);
+    return [];
+  }
+}
+
+// Get user notification settings
+app.get('/api/user/notification-settings', async (req, res) => {
+  try {
+    const userFingerprint = generateUserFingerprint(req);
+    const settings = await getUserNotificationSettings(userFingerprint);
+    
+    res.json(settings);
+  } catch (error) {
+    console.error('Error fetching notification settings:', error);
+    res.status(500).json({ error: 'Failed to fetch notification settings' });
+  }
+});
+
+// Update user notification settings
+app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res) => {
+  try {
+    const userFingerprint = generateUserFingerprint(req);
+    const { email, notificationsEnabled } = req.body;
+
+    // Validate email if provided
+    if (email && email.trim() !== '') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({ error: 'Invalid email format' });
+      }
+    }
+
+    const settingsData = {
+      userFingerprint,
+      email: email ? email.trim() : null,
+      notificationsEnabled: Boolean(notificationsEnabled),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Check if settings already exist
+    const existingSettings = await db.collection('userSettings')
+      .where('userFingerprint', '==', userFingerprint)
+      .limit(1)
+      .get();
+
+    if (existingSettings.empty) {
+      // Create new settings
+      settingsData.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      const docRef = await db.collection('userSettings').add(settingsData);
+      res.json({
+        id: docRef.id,
+        ...settingsData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+    } else {
+      // Update existing settings
+      const docRef = existingSettings.docs[0].ref;
+      await docRef.update(settingsData);
+      res.json({
+        id: docRef.id,
+        ...settingsData,
+        updatedAt: new Date()
+      });
+    }
+  } catch (error) {
+    console.error('Error updating notification settings:', error);
+    res.status(500).json({ error: 'Failed to update notification settings' });
+  }
+});
+
+// Send notification to suggestion creator (helper function for admin actions)
+async function notifySuggestionCreator(suggestionId, status, comment = null) {
+  try {
+    // Get suggestion details
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return;
+    }
+
+    const suggestion = suggestionDoc.data();
+    
+    // Get app details
+    const appDoc = await db.collection('apps').doc(suggestion.appId).get();
+    const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
+
+    // For now, we'll use a simplified approach to find the user
+    // In a real implementation, you'd want to track the creator's fingerprint
+    const userFingerprint = suggestion.userFingerprint;
+    
+    if (userFingerprint) {
+      const userSettings = await getUserNotificationSettings(userFingerprint);
+      
+      if (userSettings.email && userSettings.notificationsEnabled) {
+        await sendUserNotificationEmail(
+          userSettings.email,
+          suggestionId,
+          suggestion.title,
+          status,
+          comment,
+          appName
+        );
+      }
+    }
+  } catch (error) {
+    console.error('Error notifying suggestion creator:', error);
+  }
+}
 
 // For Vercel serverless functions
 module.exports = app;
