@@ -1073,8 +1073,8 @@ body {
 /* Footer */
 .footer {
     background: #000000;
-    margin-top: var(--spacing-lg);
-    padding: 8px 0;
+    margin-top: 20px;
+    padding: 4px 0;
 }
 
 .footer-content {
@@ -1082,7 +1082,7 @@ body {
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: var(--spacing-md);
+    gap: 8px;
 }
 
 .footer-info p {
@@ -1098,7 +1098,7 @@ body {
 
 .footer-links {
     display: flex;
-    gap: var(--spacing-md);
+    gap: 12px;
     flex-wrap: wrap;
 }
 
