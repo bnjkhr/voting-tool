@@ -279,8 +279,8 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
     // Sort by votes (desc) then by createdAt (desc)
     suggestions.sort((a, b) => {
       // First: check if suggestion has "ist umgesetzt" tag (completed)
-      const aCompleted = a.tags && a.tags.includes('ist umgesetzt') ? 1 : 0;
-      const bCompleted = b.tags && b.tags.includes('ist umgesetzt') ? 1 : 0;
+      const aCompleted = a.tag === 'ist umgesetzt' ? 1 : 0;
+      const bCompleted = b.tag === 'ist umgesetzt' ? 1 : 0;
       if (aCompleted !== bCompleted) {
         return aCompleted - bCompleted; // Open suggestions (0) come before completed (1)
       }
@@ -768,8 +768,8 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
     // Sort by approval status (pending first), then by votes (desc), then by createdAt (desc)
     suggestions.sort((a, b) => {
       // First: check if suggestion has "ist umgesetzt" tag (completed)
-      const aCompleted = a.tags && a.tags.includes('ist umgesetzt') ? 1 : 0;
-      const bCompleted = b.tags && b.tags.includes('ist umgesetzt') ? 1 : 0;
+      const aCompleted = a.tag === 'ist umgesetzt' ? 1 : 0;
+      const bCompleted = b.tag === 'ist umgesetzt' ? 1 : 0;
       if (aCompleted !== bCompleted) {
         return aCompleted - bCompleted; // Open suggestions (0) come before completed (1)
       }
