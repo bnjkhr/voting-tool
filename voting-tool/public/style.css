@@ -1077,6 +1077,11 @@ body {
     padding: 4px 0;
 }
 
+.footer .container {
+    padding: 4px var(--spacing-lg) !important;
+    min-height: auto !important;
+}
+
 .footer-content {
     display: flex;
     justify-content: space-between;
