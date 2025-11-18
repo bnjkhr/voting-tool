@@ -278,10 +278,19 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
 
     // Sort by votes (desc) then by createdAt (desc)
     suggestions.sort((a, b) => {
+      // First: check if suggestion has "ist umgesetzt" tag (completed)
+      const aCompleted = a.tags && a.tags.includes('ist umgesetzt') ? 1 : 0;
+      const bCompleted = b.tags && b.tags.includes('ist umgesetzt') ? 1 : 0;
+      if (aCompleted !== bCompleted) {
+        return aCompleted - bCompleted; // Open suggestions (0) come before completed (1)
+      }
+
+      // Within each group: sort by votes (desc)
       if (b.votes !== a.votes) {
         return (b.votes || 0) - (a.votes || 0);
       }
-      // Compare timestamps
+
+      // Finally: sort by createdAt (desc)
       const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
       const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
       return bTime - aTime;
@@ -758,7 +767,14 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
 
     // Sort by approval status (pending first), then by votes (desc), then by createdAt (desc)
     suggestions.sort((a, b) => {
-      // First: pending suggestions (not approved) come first
+      // First: check if suggestion has "ist umgesetzt" tag (completed)
+      const aCompleted = a.tags && a.tags.includes('ist umgesetzt') ? 1 : 0;
+      const bCompleted = b.tags && b.tags.includes('ist umgesetzt') ? 1 : 0;
+      if (aCompleted !== bCompleted) {
+        return aCompleted - bCompleted; // Open suggestions (0) come before completed (1)
+      }
+
+      // Then: pending suggestions (not approved) come first within each group
       const aApproved = a.approved === true ? 1 : 0;
       const bApproved = b.approved === true ? 1 : 0;
       if (aApproved !== bApproved) {
