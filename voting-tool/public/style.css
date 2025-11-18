@@ -518,10 +518,10 @@ body {
 /* Floating Action Button */
 .fab {
     position: fixed;
-    bottom: var(--spacing-xl);
+    bottom: calc(var(--spacing-xl) + 60px);
     right: var(--spacing-xl);
-    width: 64px;
-    height: 64px;
+    width: 72px;
+    height: 72px;
     border-radius: var(--radius-full);
     background: var(--gradient-primary);
     color: var(--text-inverse);
@@ -532,14 +532,15 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5rem;
+    font-size: 1.75rem;
     z-index: 1000;
+    font-weight: 300;
 }
 
 .fab:hover {
-    transform: translateY(-3px) scale(1.1);
-    box-shadow: var(--shadow-floating);
-    filter: brightness(1.1);
+    transform: translateY(-4px) scale(1.15);
+    box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.3);
+    filter: brightness(1.2);
 }
 
 .fab:active {
@@ -976,9 +977,9 @@ body {
     .fab {
         width: 56px;
         height: 56px;
-        bottom: calc(var(--spacing-lg) + env(safe-area-inset-bottom));
-        right: var(--spacing-lg);
-        font-size: 1.75rem;
+        bottom: calc(var(--spacing-md) + 40px + env(safe-area-inset-bottom));
+        right: var(--spacing-md);
+        font-size: 1.5rem;
     }
 
     /* Better spacing for bottom content on mobile */
@@ -1052,10 +1053,11 @@ body {
     }
 
     .fab {
-        width: 52px;
-        height: 52px;
-        bottom: calc(var(--spacing-md) + env(safe-area-inset-bottom));
-        right: var(--spacing-md);
+        width: 60px;
+        height: 60px;
+        bottom: calc(var(--spacing-lg) + 50px + env(safe-area-inset-bottom));
+        right: var(--spacing-lg);
+        font-size: 1.5rem;
     }
 
     /* Reduce animation intensity on small screens for better performance */
