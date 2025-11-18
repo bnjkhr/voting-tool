@@ -1073,8 +1073,8 @@ body {
 /* Footer */
 .footer {
     background: #000000;
-    margin-top: var(--spacing-3xl);
-    padding: var(--spacing-md) 0;
+    margin-top: var(--spacing-lg);
+    padding: 8px 0;
 }
 
 .footer-content {
@@ -1117,34 +1117,27 @@ body {
 /* Footer responsive */
 @media (max-width: 768px) {
     .footer {
-        padding: var(--spacing-sm) 0;
+        padding: 6px 0;
     }
     
     .footer-content {
         flex-direction: column;
         text-align: center;
-        gap: var(--spacing-sm);
+        gap: 4px;
     }
     
     .footer-links {
         justify-content: center;
-        gap: var(--spacing-sm);
+        gap: 8px;
     }
 }
 
 @media (max-width: 480px) {
     .footer {
-        padding: var(--spacing-xs) 0;
+        padding: 4px 0;
     }
     
     .footer-links {
-        flex-direction: column;
-        gap: var(--spacing-xs);
-        width: 100%;
-    }
-    
-    .footer-links a {
-        text-align: center;
-        width: 100%;
+        gap: 6px;
     }
 }
