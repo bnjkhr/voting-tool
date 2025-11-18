@@ -6,35 +6,35 @@
 
 :root {
     /* Modern Color Palette - 2024 */
-    --primary-color: #6366F1;
-    --primary-hover: #4F46E5;
-    --primary-light: #E0E7FF;
-    --accent-color: #F59E0B;
-    --accent-hover: #D97706;
-    --success-color: #10B981;
-    --success-light: #D1FAE5;
-    --danger-color: #EF4444;
-    --danger-light: #FEE2E2;
-    --warning-color: #F59E0B;
-    --warning-light: #FEF3C7;
+    --primary-color: #000000;
+    --primary-hover: #333333;
+    --primary-light: #F5F5F5;
+    --accent-color: #666666;
+    --accent-hover: #444444;
+    --success-color: #000000;
+    --success-light: #F8F8F8;
+    --danger-color: #666666;
+    --danger-light: #F0F0F0;
+    --warning-color: #999999;
+    --warning-light: #FCFCFC;
 
     /* Background & Surfaces */
-    --background: #F8FAFC;
-    --background-alt: #F1F5F9;
+    --background: #FFFFFF;
+    --background-alt: #FAFAFA;
     --surface: #FFFFFF;
     --surface-elevated: #FFFFFF;
-    --glass-bg: rgba(255, 255, 255, 0.8);
+    --glass-bg: rgba(255, 255, 255, 0.95);
 
     /* Text Colors */
-    --text-primary: #0F172A;
-    --text-secondary: #64748B;
-    --text-muted: #94A3B8;
+    --text-primary: #000000;
+    --text-secondary: #666666;
+    --text-muted: #999999;
     --text-inverse: #FFFFFF;
 
     /* Borders & Dividers */
-    --border: #E2E8F0;
-    --border-light: #F1F5F9;
-    --border-focus: #6366F1;
+    --border: #E0E0E0;
+    --border-light: #F0F0F0;
+    --border-focus: #000000;
 
     /* Shadows & Effects */
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
