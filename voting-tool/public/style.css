@@ -1072,10 +1072,9 @@ body {
 
 /* Footer */
 .footer {
-    background: var(--surface);
-    border-top: 1px solid var(--border);
+    background: #000000;
     margin-top: var(--spacing-3xl);
-    padding: var(--spacing-2xl) 0 var(--spacing-xl) 0;
+    padding: var(--spacing-md) 0;
 }
 
 .footer-content {
@@ -1083,80 +1082,69 @@ body {
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: var(--spacing-lg);
+    gap: var(--spacing-md);
 }
 
 .footer-info p {
     margin: 0;
-    color: var(--text-primary);
-    font-weight: 500;
+    color: #ffffff;
+    font-weight: 400;
+    font-size: 0.875rem;
 }
 
 .footer-description {
-    font-size: 0.9rem !important;
-    color: var(--text-secondary) !important;
-    font-weight: 400 !important;
-    margin-top: var(--spacing-xs) !important;
+    display: none;
 }
 
 .footer-links {
     display: flex;
-    gap: var(--spacing-lg);
+    gap: var(--spacing-md);
     flex-wrap: wrap;
 }
 
 .footer-links a {
-    color: var(--text-secondary);
+    color: #999999;
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
     transition: var(--transition);
-    padding: var(--spacing-xs) var(--spacing-sm);
-    border-radius: var(--radius-sm);
 }
 
 .footer-links a:hover {
-    color: var(--primary-color);
-    background: var(--primary-light);
+    color: #ffffff;
     text-decoration: none;
 }
 
 /* Footer responsive */
 @media (max-width: 768px) {
     .footer {
-        margin-top: var(--spacing-2xl);
-        padding: var(--spacing-xl) 0 var(--spacing-lg) 0;
+        padding: var(--spacing-sm) 0;
     }
     
     .footer-content {
         flex-direction: column;
         text-align: center;
-        gap: var(--spacing-md);
+        gap: var(--spacing-sm);
     }
     
     .footer-links {
         justify-content: center;
-        gap: var(--spacing-md);
-    }
-    
-    .footer-links a {
-        padding: var(--spacing-xs) var(--spacing);
+        gap: var(--spacing-sm);
     }
 }
 
 @media (max-width: 480px) {
     .footer {
-        padding: var(--spacing-lg) 0 var(--spacing-md) 0;
+        padding: var(--spacing-xs) 0;
     }
     
     .footer-links {
         flex-direction: column;
-        gap: var(--spacing-sm);
+        gap: var(--spacing-xs);
         width: 100%;
     }
     
     .footer-links a {
         text-align: center;
         width: 100%;
-        padding: var(--spacing-sm);
     }
 }
