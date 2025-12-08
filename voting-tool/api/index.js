@@ -51,7 +51,6 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
     return;
   }
 
-  console.log('Attempting to send email notification via Resend...');
   const resend = new Resend(process.env.RESEND_API_KEY);
   const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 
@@ -77,8 +76,6 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
       console.error('Failed to send email:', error);
       return;
     }
-
-    console.log('Email sent successfully:', data.id);
   } catch (error) {
     console.error('Unexpected error sending email:', error);
   }
@@ -160,8 +157,6 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
       console.error('Failed to send user notification email:', error);
       return;
     }
-
-    console.log('User notification email sent successfully:', data.id);
   } catch (error) {
     console.error('Unexpected error sending user notification email:', error);
   }
@@ -1265,51 +1260,4 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
 }
 
 // For Vercel serverless functions
-// TEST ENDPOINT - Remove later
-app.get('/api/test-email', async (req, res) => {
-  if (!process.env.RESEND_API_KEY) {
-    return res.status(500).json({ error: 'RESEND_API_KEY is missing in env variables' });
-  }
-
-  try {
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
-    
-    // Send to the admin email defined in env or hardcoded fallback
-    const toEmail = 'ben.kohler@me.com';
-
-    console.log(`Testing email from ${fromEmail} to ${toEmail}`);
-
-    const { data, error } = await resend.emails.send({
-      from: fromEmail,
-      to: toEmail,
-      subject: 'Test Email Voting Tool',
-      html: '<p>Wenn Sie das lesen, funktioniert der Versand! 🚀</p>'
-    });
-
-    if (error) {
-      console.error('Resend Error:', error);
-      return res.status(400).json({ 
-        success: false, 
-        error: error,
-        message: 'Resend returned an error. See "error" object details.'
-      });
-    }
-
-    return res.json({ 
-      success: true, 
-      data: data,
-      message: `Email sent successfully to ${toEmail}` 
-    });
-
-  } catch (err) {
-    console.error('Server Error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      error: err.message, 
-      stack: err.stack 
-    });
-  }
-});
-
 module.exports = app;
