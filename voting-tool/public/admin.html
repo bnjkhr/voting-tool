@@ -385,13 +385,14 @@
         /* Mobile Responsive for Admin */
         @media (max-width: 1024px) {
             .stats-grid {
-                grid-template-columns: repeat(6, 1fr);
+                grid-template-columns: repeat(3, 1fr);
+                gap: var(--spacing-md);
             }
 
             .stat-card:first-child,
             .stat-card:nth-child(2),
             .stat-card:nth-child(3) {
-                grid-column: span 2;
+                grid-column: span 1;
             }
         }
 
@@ -399,60 +400,164 @@
             .admin-header {
                 padding: var(--spacing-xl) var(--spacing-lg);
                 margin: calc(-1 * var(--spacing-lg)) calc(-1 * var(--spacing-lg)) var(--spacing-xl) calc(-1 * var(--spacing-lg));
+                border-radius: 0 0 var(--radius-xl) var(--radius-xl);
             }
 
             .admin-header h1 {
-                font-size: 1.75rem;
+                font-size: 1.6rem;
             }
 
-            .admin-actions {
-                flex-direction: column;
+            .admin-header p {
+                font-size: 0.95rem;
             }
 
-            .admin-actions .primary-btn,
-            .admin-actions .secondary-btn {
-                width: 100%;
-            }
-
+            /* Stats horizontal scroll on mobile */
             .stats-grid {
-                grid-template-columns: 1fr;
+                display: flex;
+                gap: var(--spacing-md);
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                -ms-overflow-style: none;
+                margin-left: calc(-1 * var(--spacing-lg));
+                margin-right: calc(-1 * var(--spacing-lg));
+                padding: 0 var(--spacing-lg);
+                padding-bottom: var(--spacing-sm);
+            }
+
+            .stats-grid::-webkit-scrollbar {
+                display: none;
             }
 
             .stat-card,
             .stat-card:first-child,
             .stat-card:nth-child(2),
             .stat-card:nth-child(3) {
-                grid-column: span 1;
-                padding: var(--spacing-lg);
-                min-height: 120px;
+                flex: 0 0 auto;
+                width: 140px;
+                min-height: 100px;
+                padding: var(--spacing-md);
             }
 
             .stat-number {
-                font-size: 2.5rem;
+                font-size: 2rem;
             }
 
+            .stat-label {
+                font-size: 0.85rem;
+            }
+
+            /* Actions */
+            .admin-actions {
+                flex-direction: column;
+                gap: var(--spacing-sm);
+            }
+
+            .admin-actions .primary-btn,
+            .admin-actions .secondary-btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            /* Management sections */
+            .app-management {
+                gap: var(--spacing-lg);
+            }
+
+            .management-section {
+                border-radius: var(--radius-lg);
+            }
+
+            .apps-list h3, .suggestions-list h3 {
+                padding: var(--spacing-md) var(--spacing-lg);
+                font-size: 1rem;
+            }
+
+            /* App & Suggestion items */
             .app-item, .suggestion-item {
                 flex-direction: column;
-                padding: var(--spacing-lg);
+                padding: var(--spacing-md) var(--spacing-lg);
+                gap: var(--spacing-md);
+            }
+
+            .app-details h4, .suggestion-content h4 {
+                font-size: 1rem;
+            }
+
+            .app-details p, .suggestion-content p {
+                font-size: 0.9rem;
             }
 
             .app-actions, .suggestion-actions {
                 width: 100%;
-                flex-direction: column;
+                flex-direction: row;
+                flex-wrap: wrap;
             }
 
             .app-actions button, .suggestion-actions button {
-                width: 100%;
+                flex: 1;
+                min-width: calc(50% - var(--spacing-xs));
+            }
+
+            .btn-small {
+                padding: var(--spacing-sm) var(--spacing-md);
+                font-size: 0.8rem;
+                min-height: 44px;
             }
 
             .suggestion-header {
                 flex-direction: column;
+                gap: var(--spacing-sm);
             }
 
+            .suggestion-meta {
+                gap: var(--spacing-xs);
+            }
+
+            .meta-item {
+                font-size: 0.75rem;
+                padding: 3px 8px;
+            }
+
+            /* Modal */
             .modal .modal-content {
                 width: 95%;
                 padding: var(--spacing-lg);
-                max-height: 90vh;
+                max-height: 85vh;
+                border-radius: var(--radius-xl);
+            }
+
+            .modal .modal-header h3 {
+                font-size: 1.1rem;
+            }
+
+            .form-actions {
+                flex-direction: column-reverse;
+                gap: var(--spacing-sm);
+            }
+
+            .form-actions .primary-btn,
+            .form-actions .secondary-btn {
+                width: 100%;
+            }
+
+            /* Touch targets */
+            button, a.secondary-btn {
+                min-height: 44px;
+            }
+
+            /* Disable hover on touch */
+            @media (hover: none) {
+                .app-item:hover,
+                .suggestion-item:hover,
+                .stat-card:hover {
+                    transform: none;
+                    background: transparent;
+                }
+
+                .stat-card:hover {
+                    box-shadow: var(--shadow);
+                }
             }
         }
 
@@ -460,23 +565,88 @@
             .admin-header {
                 padding: var(--spacing-lg) var(--spacing-md);
                 margin: calc(-1 * var(--spacing-md)) calc(-1 * var(--spacing-md)) var(--spacing-lg) calc(-1 * var(--spacing-md));
+                border-radius: 0 0 var(--radius-lg) var(--radius-lg);
             }
 
             .admin-header h1 {
-                font-size: 1.5rem;
+                font-size: 1.4rem;
+            }
+
+            .admin-header p {
+                font-size: 0.85rem;
+            }
+
+            .admin-header::before {
+                width: 150px;
+                height: 150px;
+                top: -60px;
+                right: -60px;
+            }
+
+            .admin-header::after {
+                width: 100px;
+                height: 100px;
+                bottom: -40px;
+                left: -30px;
+            }
+
+            /* Stats */
+            .stats-grid {
+                margin-left: calc(-1 * var(--spacing-md));
+                margin-right: calc(-1 * var(--spacing-md));
+                padding: 0 var(--spacing-md);
+            }
+
+            .stat-card {
+                width: 120px;
+                min-height: 90px;
+                padding: var(--spacing-sm) var(--spacing-md);
             }
 
             .stat-number {
                 font-size: 1.75rem;
             }
 
-            .meta-item {
+            .stat-label {
                 font-size: 0.8rem;
-                padding: 3px 8px;
+            }
+
+            /* Items */
+            .app-item, .suggestion-item {
+                padding: var(--spacing-md);
             }
 
             .apps-list h3, .suggestions-list h3 {
                 padding: var(--spacing-md);
+                font-size: 0.95rem;
+            }
+
+            .app-actions button, .suggestion-actions button {
+                min-width: 100%;
+            }
+
+            /* Modal as bottom sheet */
+            .modal .modal-content {
+                width: 100%;
+                max-height: 90vh;
+                border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                margin: 0;
+                animation: slideUpModal 0.3s ease;
+            }
+
+            @keyframes slideUpModal {
+                from { transform: translateY(100%); }
+                to { transform: translateY(0); }
+            }
+
+            /* Form inputs - prevent iOS zoom */
+            .form-group input,
+            .form-group textarea {
+                font-size: 16px;
             }
         }
     </style>
