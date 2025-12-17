@@ -8,13 +8,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Feature Voting">
     <title>App Feature Voting</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <h1>Feature Voting</h1>
-            <p>Schlage neue Features vor oder vote für bestehende Ideen</p>
+            <div class="header-decoration"></div>
+            <div class="header-content">
+                <div class="header-badge">Feature Requests</div>
+                <h1>Shape the <span>Future</span></h1>
+                <p>Vote für Features die du brauchst oder schlage neue Ideen vor</p>
+            </div>
+            <div class="header-actions">
+                <button class="settings-btn" id="settingsBtn" title="Einstellungen">⚙</button>
+            </div>
         </header>
 
         <main class="main">
