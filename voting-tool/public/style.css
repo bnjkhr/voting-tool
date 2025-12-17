@@ -874,6 +874,89 @@ body::before {
     margin-bottom: var(--spacing-lg);
 }
 
+/* Filter Bar */
+.filter-bar {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    margin-bottom: var(--spacing-xl);
+    padding: 0;
+    background: transparent;
+}
+
+.filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-full);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.filter-btn:hover {
+    background: var(--surface-solid);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.filter-btn.active {
+    background: var(--gradient-primary);
+    border-color: transparent;
+    color: var(--text-inverse);
+    box-shadow: var(--shadow), var(--shadow-primary);
+}
+
+.filter-btn.active:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg), var(--shadow-primary);
+}
+
+.filter-label {
+    font-weight: 600;
+}
+
+.filter-count {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-size: 0.8rem;
+    font-weight: 700;
+    min-width: 24px;
+    text-align: center;
+}
+
+.filter-btn:not(.active) .filter-count {
+    background: var(--background-alt);
+    color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+    .filter-bar {
+        gap: var(--spacing-xs);
+        margin-bottom: var(--spacing-lg);
+    }
+
+    .filter-btn {
+        padding: var(--spacing-xs) var(--spacing-md);
+        font-size: 0.85rem;
+    }
+
+    .filter-count {
+        padding: 2px 6px;
+        font-size: 0.75rem;
+    }
+}
+
 /* Suggestions - Bento Style */
 .suggestions-list {
     display: grid;
