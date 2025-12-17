@@ -267,38 +267,67 @@ body::before {
 @media (max-width: 768px) {
     .header {
         grid-template-columns: 1fr;
-        gap: var(--spacing-lg);
+        gap: var(--spacing-md);
         text-align: left;
+        padding: var(--spacing-lg) 0;
+        margin-bottom: var(--spacing-xl);
+    }
+
+    .header-content {
+        gap: var(--spacing-sm);
     }
 
     .header h1 {
-        font-size: clamp(2rem, 10vw, 3rem);
+        font-size: clamp(1.75rem, 8vw, 2.5rem);
     }
 
     .header p {
-        font-size: 1rem;
+        font-size: 0.95rem;
+        line-height: 1.4;
     }
 
     .header-actions {
-        flex-direction: row;
-        justify-content: flex-start;
-        align-items: center;
+        position: absolute;
+        top: 0;
+        right: 0;
     }
 
     .settings-btn {
-        width: 48px;
-        height: 48px;
+        width: 44px;
+        height: 44px;
+        font-size: 1.2rem;
+    }
+
+    .header-decoration {
+        width: 200px;
+        height: 200px;
+        opacity: 0.04;
     }
 }
 
 @media (max-width: 480px) {
+    .header {
+        padding: var(--spacing-md) 0;
+        margin-bottom: var(--spacing-lg);
+    }
+
     .header h1 {
-        font-size: 2rem;
+        font-size: 1.6rem;
+        padding-right: 50px;
+    }
+
+    .header p {
+        font-size: 0.9rem;
     }
 
     .header-badge {
-        font-size: 0.8rem;
-        padding: var(--spacing-xs) var(--spacing-sm);
+        font-size: 0.75rem;
+        padding: 4px 10px;
+    }
+
+    .header-badge::before {
+        width: 6px;
+        height: 6px;
     }
 }
 
@@ -405,6 +434,65 @@ body::before {
     gap: var(--spacing-md);
     justify-content: flex-end;
     background: var(--background-alt);
+}
+
+/* Modal Responsive */
+@media (max-width: 768px) {
+    .modal-content {
+        width: 95%;
+        max-height: 85vh;
+        border-radius: var(--radius-xl);
+    }
+
+    .modal-header {
+        padding: var(--spacing-lg);
+    }
+
+    .modal-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .modal-body {
+        padding: var(--spacing-lg);
+    }
+
+    .modal-footer {
+        padding: var(--spacing-md) var(--spacing-lg);
+        flex-direction: column-reverse;
+        gap: var(--spacing-sm);
+    }
+
+    .modal-footer .primary-btn,
+    .modal-footer .secondary-btn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .modal-content {
+        width: 100%;
+        max-height: 90vh;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        margin: 0;
+        animation: slideUpModal 0.3s ease;
+    }
+
+    @keyframes slideUpModal {
+        from {
+            transform: translateY(100%);
+        }
+        to {
+            transform: translateY(0);
+        }
+    }
+
+    .settings-modal .modal-content {
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
 }
 
 .settings-section h3 {
@@ -942,18 +1030,45 @@ body::before {
 
 @media (max-width: 768px) {
     .filter-bar {
-        gap: var(--spacing-xs);
+        gap: var(--spacing-sm);
         margin-bottom: var(--spacing-lg);
+        margin-left: calc(-1 * var(--spacing-lg));
+        margin-right: calc(-1 * var(--spacing-lg));
+        padding: 0 var(--spacing-lg);
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
+    .filter-bar::-webkit-scrollbar {
+        display: none;
     }
 
     .filter-btn {
-        padding: var(--spacing-xs) var(--spacing-md);
+        padding: var(--spacing-sm) var(--spacing-md);
         font-size: 0.85rem;
+        flex-shrink: 0;
     }
 
     .filter-count {
         padding: 2px 6px;
         font-size: 0.75rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .filter-bar {
+        margin-left: calc(-1 * var(--spacing-md));
+        margin-right: calc(-1 * var(--spacing-md));
+        padding: 0 var(--spacing-md);
+        gap: var(--spacing-xs);
+    }
+
+    .filter-btn {
+        padding: var(--spacing-xs) var(--spacing);
+        font-size: 0.8rem;
     }
 }
 
@@ -1439,49 +1554,54 @@ body::before {
     }
 }
 
-/* Responsive */
+/* Responsive - Tablet */
 @media (max-width: 768px) {
     .container {
         padding: var(--spacing-lg);
     }
 
-    .header {
-        margin-bottom: var(--spacing-xl);
-        padding: var(--spacing-xl) 0;
-    }
-
-    .header h1 {
-        font-size: 2rem;
-    }
-
-    .header p {
-        font-size: 1rem;
-    }
-
+    /* App Grid Mobile */
     .app-grid {
-        grid-template-columns: 1fr;
-        gap: var(--spacing-lg);
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing-md);
     }
 
-    .app-card {
+    .app-card,
+    .app-card:first-child,
+    .app-card:nth-child(2),
+    .app-card:nth-child(3),
+    .app-card:nth-child(4),
+    .app-card:nth-child(5),
+    .app-card:nth-child(n+6) {
+        grid-column: span 1;
+        grid-row: span 1;
         padding: var(--spacing-lg);
+        min-height: 140px;
     }
 
+    .app-card:first-child {
+        grid-column: span 2;
+        min-height: 160px;
+    }
+
+    .app-card:first-child h3,
     .app-card h3 {
-        font-size: 1.25rem;
+        font-size: 1.15rem;
     }
 
     .app-card p {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
+        line-height: 1.4;
     }
 
+    /* View Header */
     .view-header {
-        margin-bottom: var(--spacing-lg);
-        gap: var(--spacing);
+        margin-bottom: var(--spacing-md);
+        gap: var(--spacing-sm);
     }
 
     .view-header h2 {
-        font-size: 1.4rem;
+        font-size: 1.3rem;
     }
 
     .back-btn {
@@ -1490,6 +1610,7 @@ body::before {
         flex-shrink: 0;
     }
 
+    /* Suggestions Mobile */
     .suggestion-card {
         padding: var(--spacing-lg);
     }
@@ -1499,9 +1620,33 @@ body::before {
     }
 
     .suggestion-description {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
+        line-height: 1.5;
     }
 
+    .suggestion-footer {
+        flex-direction: row;
+        gap: var(--spacing-md);
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .vote-info {
+        padding: var(--spacing-xs) var(--spacing-sm);
+        font-size: 0.85rem;
+    }
+
+    .vote-count {
+        font-size: 1rem;
+    }
+
+    .vote-btn {
+        padding: var(--spacing-sm) var(--spacing-lg);
+        font-size: 0.9rem;
+        min-width: 100px;
+    }
+
+    /* Forms */
     .form-actions {
         flex-direction: column-reverse;
         gap: var(--spacing);
@@ -1513,20 +1658,8 @@ body::before {
         padding: var(--spacing-md);
     }
 
-    .suggestion-footer {
-        flex-direction: column;
-        gap: var(--spacing-md);
-        align-items: stretch;
-    }
-
-    .vote-btn {
-        width: 100%;
-        padding: var(--spacing-md);
-        font-size: 1rem;
-    }
-
     .submit-btn {
-        padding: var(--spacing-sm) var(--spacing);
+        padding: var(--spacing-sm) var(--spacing-md);
         font-size: 0.85rem;
     }
 
@@ -1534,11 +1667,13 @@ body::before {
         padding-bottom: calc(80px + env(safe-area-inset-bottom));
     }
 
+    /* Toast */
     .toast {
         top: var(--spacing-md);
         right: var(--spacing-md);
         left: var(--spacing-md);
         max-width: none;
+        font-size: 0.9rem;
     }
 
     .form-group {
@@ -1548,9 +1683,10 @@ body::before {
     .form-group input,
     .form-group textarea {
         padding: var(--spacing-md);
-        font-size: 1rem;
+        font-size: 16px; /* Prevents iOS zoom */
     }
 
+    /* Overlay */
     .overlay {
         padding: var(--spacing-md);
     }
@@ -1566,8 +1702,23 @@ body::before {
         margin-bottom: var(--spacing-lg);
     }
 
+    /* Touch targets */
     button, .back-btn, .submit-btn {
         min-height: 44px;
+    }
+
+    /* Disable hover effects on touch */
+    @media (hover: none) {
+        .app-card:hover,
+        .suggestion-card:hover {
+            transform: none;
+            box-shadow: var(--shadow);
+        }
+
+        .vote-btn:not(.voted):not(:disabled):hover::after,
+        .vote-btn.voted:hover::after {
+            display: none;
+        }
     }
 }
 
@@ -1577,24 +1728,54 @@ body::before {
         padding: var(--spacing-md);
     }
 
-    .header {
-        padding: var(--spacing-lg) 0;
+    /* App Grid Small Mobile */
+    .app-grid {
+        grid-template-columns: 1fr;
+        gap: var(--spacing-md);
     }
 
-    .header h1 {
-        font-size: 1.75rem;
-    }
-
-    .header p {
-        font-size: 0.9rem;
-    }
-
-    .app-card {
+    .app-card,
+    .app-card:first-child {
+        grid-column: span 1;
         padding: var(--spacing-md);
+        min-height: 120px;
     }
 
+    .app-card h3 {
+        font-size: 1.1rem;
+    }
+
+    .app-card p {
+        font-size: 0.85rem;
+    }
+
+    /* Suggestions Small Mobile */
     .suggestion-card {
         padding: var(--spacing-md);
+    }
+
+    .suggestion-title {
+        font-size: 1rem;
+    }
+
+    .suggestion-description {
+        font-size: 0.85rem;
+    }
+
+    .suggestion-footer {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+        align-items: stretch;
+    }
+
+    .vote-info {
+        justify-content: center;
+    }
+
+    .vote-btn {
+        width: 100%;
+        padding: var(--spacing-md);
+        font-size: 0.95rem;
     }
 
     .submit-btn {
@@ -1602,15 +1783,23 @@ body::before {
         font-size: 0.8rem;
     }
 
-    /* Keep animations but slightly reduce duration */
+    .view-header h2 {
+        font-size: 1.2rem;
+    }
+
+    /* Reduce animations on small devices */
     * {
         animation-duration: 0.2s !important;
     }
 
-    /* Maintain hover effects but reduce transform */
+    /* Reduce transforms */
     .app-card:hover,
     .suggestion-card:hover {
         transform: translateY(-2px);
+    }
+
+    .filter-btn:hover {
+        transform: none;
     }
 }
 
