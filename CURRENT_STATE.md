@@ -1,8 +1,8 @@
 # projekte - Session Summary
 
-**Generated:** 2026-02-01 21:28
+**Generated:** 2026-02-01 22:00
 **Branch:** backup-before-cleanup
-**Latest Commit:** 21f117f - cleanup: Remove all non-voting-tool files and directories (3 months ago)
+**Latest Commit:** dfb8269 - chore: Session end auto-commit 2026-02-01 21:28 (32 minutes ago)
 
 ## 📊 Change Statistics
 
@@ -12,126 +12,40 @@
 0 files
 - ➖ Deleted: 0
 0 files
-- ❓ Untracked: 19 files
+- ❓ Untracked: 0
+0 files
 
 ## 🎯 Affected Areas
-- 🌐 API/Routes
-- 🧪 Tests
-- 🎨 UI/Components
-- ⚙️ Configuration
+- General changes
 
 ## 📂 Changes by Category
 
-### "Configuration"
-```
-M voting-tool/package-lock.json
-M voting-tool/package.json
-D voting-tool/vercel.json
-
-```
-
-### "Documentation"
-```
-D voting-tool/README.md
-D voting-tool/SECURITY.md
-D voting-tool/TEST_GUIDE.md
-?? voting-tool/CURRENT_STATE.md
-?? voting-tool/SORTING_TEST_PLAN.md
-
-```
-
 ### "Other"
 ```
-D voting-tool/.env.example
-D voting-tool/.gitignore
-D voting-tool/firestore.rules
-D voting-tool/public/admin.html
-D voting-tool/public/index.html
-D voting-tool/public/style.css
-D voting-tool/public/test.html
-?? GymBo/
-?? KI_Chrome/
-?? NaturSupps/
-?? StarTune/
-?? StarTune_website/
-?? WritingFlow/
-?? WritingFlow_website/
-?? cli-chat-website/
-?? cli-chat/
-?? datenplaner-v2/
-?? gymbo-website/
-?? voting-tool/.env.production
-?? voting-tool/.vercel/
-?? voting-tool/node_modules/
-?? voting-tool/voting-tool/
-?? website/
-
-```
-
-### "Scripts"
-```
-D voting-tool/test-notifications.sh
-?? voting-tool/build.sh
-
-```
-
-### "JavaScript/TypeScript"
-```
-D voting-tool/api/index.js
-D voting-tool/init-firebase.js
-D voting-tool/public/admin.js
-D voting-tool/public/script.js
+M GymBo
+m StarTune
+m WritingFlow
+? cli-chat-website
+m website
 
 ```
 
 ## 🔍 Detailed Git Status
 ```
- D voting-tool/.env.example
- D voting-tool/.gitignore
- D voting-tool/README.md
- D voting-tool/SECURITY.md
- D voting-tool/TEST_GUIDE.md
- D voting-tool/api/index.js
- D voting-tool/firestore.rules
- D voting-tool/init-firebase.js
- M voting-tool/package-lock.json
- M voting-tool/package.json
- D voting-tool/public/admin.html
- D voting-tool/public/admin.js
- D voting-tool/public/index.html
- D voting-tool/public/script.js
- D voting-tool/public/style.css
- D voting-tool/public/test.html
- D voting-tool/test-notifications.sh
- D voting-tool/vercel.json
-?? GymBo/
-?? KI_Chrome/
-?? NaturSupps/
-?? StarTune/
-?? StarTune_website/
-?? WritingFlow/
-?? WritingFlow_website/
-?? cli-chat-website/
-?? cli-chat/
-?? datenplaner-v2/
-?? gymbo-website/
-?? voting-tool/.env.production
-?? voting-tool/.vercel/
-?? voting-tool/CURRENT_STATE.md
-?? voting-tool/SORTING_TEST_PLAN.md
-?? voting-tool/build.sh
-?? voting-tool/node_modules/
-?? voting-tool/voting-tool/
-?? website/
+ M GymBo
+ m StarTune
+ m WritingFlow
+ ? cli-chat-website
+ m website
 ```
 
 ## 📝 Recent Activity
 ```
-21f117f (HEAD -> backup-before-cleanup) cleanup: Remove all non-voting-tool files and directories
+dfb8269 (HEAD -> backup-before-cleanup, origin/backup-before-cleanup) chore: Session end auto-commit 2026-02-01 21:28
+21f117f cleanup: Remove all non-voting-tool files and directories
 db1a558 feat: Add email notification system for voting tool
 e295242 feat: Fix critical bugs and migrate to @Observable
 35dc1f2 Flags, Performance
-af44c66 inital commit
 ```
 
 ## 🔄 Next Steps
