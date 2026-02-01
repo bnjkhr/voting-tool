@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature Voting - UI Demo</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Demo-spezifische Styles */
+        .demo-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .demo-section {
+            margin-bottom: 3rem;
+            padding: 2rem;
+            border: 1px solid #e0e0e0;
+        }
+        .demo-section h3 {
+            margin-bottom: 1.5rem;
+            font-size: 1.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <header class="header">
+            <h1>Feature Voting</h1>
+            <p>Schlage neue Features vor oder vote für bestehende Ideen</p>
+        </header>
+
+        <div class="demo-section">
+            <h3>App-Auswahl</h3>
+            <div class="app-grid">
+                <div class="app-card">
+                    <h3>Mobile App</h3>
+                    <p>Hauptanwendung für iOS und Android mit modernster Technologie</p>
+                </div>
+                <div class="app-card">
+                    <h3>Web Dashboard</h3>
+                    <p>Administrationsoberfläche für Unternehmenskunden</p>
+                </div>
+                <div class="app-card">
+                    <h3>API Service</h3>
+                    <p>Backend-Services und REST API für Entwickler</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h3>Vorschlags-Liste</h3>
+            <div class="suggestions-list">
+                <div class="suggestion-card">
+                    <div class="suggestion-header">
+                        <div class="suggestion-content">
+                            <h4 class="suggestion-title">Dunkelmodus implementieren</h4>
+                            <p class="suggestion-description">Eine systemweite Dunkelmodus-Option für bessere Nutzererfahrung bei schwachen Lichtverhältnissen.</p>
+                        </div>
+                    </div>
+                    <div class="suggestion-footer">
+                        <div class="vote-info">
+                            <span class="vote-count">42</span> Stimmen
+                        </div>
+                        <button class="vote-btn">Vote</button>
+                    </div>
+                </div>
+                
+                <div class="suggestion-card">
+                    <div class="suggestion-header">
+                        <div class="suggestion-content">
+                            <h4 class="suggestion-title">Offline-Funktionalität</h4>
+                            <p class="suggestion-description">Die App sollte auch ohne Internetverbindung grundlegende Funktionen bereitstellen.</p>
+                        </div>
+                    </div>
+                    <div class="suggestion-footer">
+                        <div class="vote-info">
+                            <span class="vote-count">28</span> Stimmen
+                        </div>
+                        <button class="vote-btn voted">Abgestimmt</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h3>Formular</h3>
+            <form class="suggestion-form" style="display: block;">
+                <div class="form-group">
+                    <label for="demoTitle">Titel</label>
+                    <input type="text" id="demoTitle" placeholder="Kurzer, aussagekräftiger Titel">
+                </div>
+                <div class="form-group">
+                    <label for="demoDescription">Beschreibung</label>
+                    <textarea id="demoDescription" placeholder="Detaillierte Beschreibung des Features..." rows="4"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="secondary-btn">Abbrechen</button>
+                    <button type="submit" class="primary-btn">Vorschlag einreichen</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="demo-section">
+            <h3>Buttons & Interaktion</h3>
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                <button class="primary-btn">Primary Button</button>
+                <button class="secondary-btn">Secondary Button</button>
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <button class="back-btn"></button>
+                <button class="fab" style="position: static;">+</button>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h3>Modal-Beispiel</h3>
+            <div class="modal-content" style="position: static; max-width: 400px; margin: 0 auto;">
+                <div class="modal-header">
+                    <h2>Einstellungen</h2>
+                    <button class="close-btn">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-section">
+                        <h3>Benachrichtigungen</h3>
+                        <label class="checkbox-container">
+                            <input type="checkbox" checked>
+                            <span class="checkmark"></span>
+                            <span>Benachrichtigungen aktivieren</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="secondary-btn">Abbrechen</button>
+                    <button class="primary-btn">Speichern</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-info">
+                    <p>&copy; 2025 Ben Kohler // Indie Apps</p>
+                    <p class="footer-description">
+                        UI-Demo für das Feature-Voting Tool.
+                    </p>
+                </div>
+                <div class="footer-links">
+                    <a href="https://benkohler.de" target="_blank" rel="noopener">Über mich</a>
+                    <a href="https://benkohler.de/impressum.html" target="_blank" rel="noopener">Impressum</a>
+                    <a href="https://benkohler.de/datenschutz.html" target="_blank" rel="noopener">Datenschutz</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

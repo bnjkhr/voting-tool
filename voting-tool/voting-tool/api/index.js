@@ -1,8 +1,9 @@
 const express = require('express');
 const cors = require('cors');
+require('dotenv').config();
 const admin = require('firebase-admin');
 const path = require('path');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const app = express();
 
@@ -44,30 +45,20 @@ const db = admin.firestore();
 
 // Helper function to send admin notification email
 async function sendAdminNotificationEmail(suggestionId, title, description, appName) {
-  // Check if email is configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
+  // Check if Resend is configured
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Email not configured - RESEND_API_KEY missing');
     return;
   }
 
-  console.log('Attempting to send email notification...');
-  console.log('EMAIL_USER:', process.env.EMAIL_USER);
-  console.log('BASE_URL:', process.env.BASE_URL);
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 
   try {
-    // Configure email transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-      }
-    });
-
     const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
 
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
       to: 'ben.kohler@me.com',
       subject: `Neuer Vorschlag wartet auf Freigabe: ${title}`,
       html: `
@@ -79,22 +70,22 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
         <br>
         <p><a href="${adminUrl}">Zum Admin-Bereich</a></p>
       `
-    };
+    });
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Email sent successfully:', info.messageId);
+    if (error) {
+      console.error('Failed to send email:', error);
+      return;
+    }
   } catch (error) {
-    console.error('Failed to send email:', error.message);
-    console.error('Full error:', error);
-    throw error;
+    console.error('Unexpected error sending email:', error);
   }
 }
 
 // Helper function to send user notification email
 async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName) {
-  // Check if email is configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
+  // Check if Resend is configured
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Email not configured - RESEND_API_KEY missing');
     return;
   }
 
@@ -106,14 +97,8 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
   }
 
   try {
-    // Configure email transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-      }
-    });
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 
     const suggestionUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
     
@@ -122,7 +107,7 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
     
     switch(status) {
       case 'approved':
-        statusText = 'Genehmigt';
+        statusText = 'Freigegeben';
         statusColor = '#28a745';
         break;
       case 'rejected':
@@ -133,13 +118,17 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
         statusText = 'Neuer Kommentar';
         statusColor = '#007bff';
         break;
+      case 'tag_changed':
+        statusText = 'Status geändert';
+        statusColor = '#f59e0b';
+        break;
       default:
         statusText = 'Status aktualisiert';
         statusColor = '#6c757d';
     }
 
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
       to: userEmail,
       subject: `Ihr Vorschlag "${title}" - ${statusText}`,
       html: `
@@ -162,14 +151,14 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
           </p>
         </div>
       `
-    };
+    });
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log('User notification email sent successfully:', info.messageId);
+    if (error) {
+      console.error('Failed to send user notification email:', error);
+      return;
+    }
   } catch (error) {
-    console.error('Failed to send user notification email:', error.message);
-    console.error('Full error:', error);
-    throw error;
+    console.error('Unexpected error sending user notification email:', error);
   }
 }
 
@@ -274,10 +263,19 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
 
     // Sort by votes (desc) then by createdAt (desc)
     suggestions.sort((a, b) => {
+      // First: check if suggestion has "ist umgesetzt" tag (completed)
+      const aCompleted = a.tag === 'ist umgesetzt' ? 1 : 0;
+      const bCompleted = b.tag === 'ist umgesetzt' ? 1 : 0;
+      if (aCompleted !== bCompleted) {
+        return aCompleted - bCompleted; // Open suggestions (0) come before completed (1)
+      }
+
+      // Within each group: sort by votes (desc)
       if (b.votes !== a.votes) {
         return (b.votes || 0) - (a.votes || 0);
       }
-      // Compare timestamps
+
+      // Finally: sort by createdAt (desc)
       const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
       const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
       return bTime - aTime;
@@ -294,7 +292,7 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
 app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) => {
   try {
     const { appId } = req.params;
-    const { title, description } = req.body;
+    const { title, description, email, notificationsEnabled } = req.body;
     const userFingerprint = generateUserFingerprint(req);
 
     // Validate inputs
@@ -303,6 +301,16 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
 
     if (!validTitle || !validDescription) {
       return res.status(400).json({ error: 'Invalid title or description' });
+    }
+
+    // Validate email if provided
+    let validEmail = null;
+    if (email && email.trim() !== '') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return res.status(400).json({ error: 'Invalid email format' });
+      }
+      validEmail = email.trim();
     }
 
     // Check if app exists
@@ -322,6 +330,37 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
     };
 
     const docRef = await db.collection('suggestions').add(suggestion);
+
+    // Save user notification settings if email was provided
+    if (validEmail) {
+      try {
+        const settingsData = {
+          userFingerprint,
+          email: validEmail,
+          notificationsEnabled: Boolean(notificationsEnabled),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Check if settings already exist
+        const existingSettings = await db.collection('userSettings')
+          .where('userFingerprint', '==', userFingerprint)
+          .limit(1)
+          .get();
+
+        if (existingSettings.empty) {
+          // Create new settings
+          settingsData.createdAt = admin.firestore.FieldValue.serverTimestamp();
+          await db.collection('userSettings').add(settingsData);
+        } else {
+          // Update existing settings
+          const docRef = existingSettings.docs[0].ref;
+          await docRef.update(settingsData);
+        }
+      } catch (settingsError) {
+        console.error('Error saving user notification settings:', settingsError);
+        // Continue even if settings save fails
+      }
+    }
 
     // Send email notification to admin
     try {
@@ -713,7 +752,14 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
 
     // Sort by approval status (pending first), then by votes (desc), then by createdAt (desc)
     suggestions.sort((a, b) => {
-      // First: pending suggestions (not approved) come first
+      // First: check if suggestion has "ist umgesetzt" tag (completed)
+      const aCompleted = a.tag === 'ist umgesetzt' ? 1 : 0;
+      const bCompleted = b.tag === 'ist umgesetzt' ? 1 : 0;
+      if (aCompleted !== bCompleted) {
+        return aCompleted - bCompleted; // Open suggestions (0) come before completed (1)
+      }
+
+      // Then: pending suggestions (not approved) come first within each group
       const aApproved = a.approved === true ? 1 : 0;
       const bApproved = b.approved === true ? 1 : 0;
       if (aApproved !== bApproved) {
@@ -806,6 +852,14 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
       tag: tag || null,
       tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    // Send notification to suggestion creator about tag change
+    try {
+      await notifySuggestionCreator(suggestionId, 'tag_changed', `Status wurde geändert zu: ${tag || 'Kein Status'}`);
+    } catch (notificationError) {
+      console.error('Error sending tag change notification:', notificationError);
+      // Continue even if notification fails
+    }
 
     res.json({
       success: true,
@@ -1155,14 +1209,18 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
 // Send notification to suggestion creator (helper function for admin actions)
 async function notifySuggestionCreator(suggestionId, status, comment = null) {
   try {
+    console.log(`[NOTIFICATION] Starting notification for suggestion ${suggestionId}, status: ${status}`);
+
     // Get suggestion details
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
     if (!suggestionDoc.exists) {
+      console.log(`[NOTIFICATION] Suggestion ${suggestionId} does not exist`);
       return;
     }
 
     const suggestion = suggestionDoc.data();
-    
+    console.log(`[NOTIFICATION] Suggestion userFingerprint: ${suggestion.userFingerprint}`);
+
     // Get app details
     const appDoc = await db.collection('apps').doc(suggestion.appId).get();
     const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
@@ -1170,11 +1228,17 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
     // For now, we'll use a simplified approach to find the user
     // In a real implementation, you'd want to track the creator's fingerprint
     const userFingerprint = suggestion.userFingerprint;
-    
+
     if (userFingerprint) {
       const userSettings = await getUserNotificationSettings(userFingerprint);
-      
+      console.log(`[NOTIFICATION] User settings:`, {
+        hasEmail: !!userSettings.email,
+        notificationsEnabled: userSettings.notificationsEnabled,
+        email: userSettings.email ? userSettings.email.substring(0, 3) + '***' : 'none'
+      });
+
       if (userSettings.email && userSettings.notificationsEnabled) {
+        console.log(`[NOTIFICATION] Sending email to user...`);
         await sendUserNotificationEmail(
           userSettings.email,
           suggestionId,
@@ -1183,10 +1247,15 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
           comment,
           appName
         );
+        console.log(`[NOTIFICATION] Email sent successfully`);
+      } else {
+        console.log(`[NOTIFICATION] Not sending email - conditions not met`);
       }
+    } else {
+      console.log(`[NOTIFICATION] No userFingerprint found for suggestion`);
     }
   } catch (error) {
-    console.error('Error notifying suggestion creator:', error);
+    console.error('[NOTIFICATION] Error notifying suggestion creator:', error);
   }
 }
 
