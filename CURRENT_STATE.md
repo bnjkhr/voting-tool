@@ -1,8 +1,8 @@
 # projekte - Session Summary
 
-**Generated:** 2026-02-01 22:03
+**Generated:** 2026-02-02 09:30
 **Branch:** backup-before-cleanup
-**Latest Commit:** ee3c2fb - chore: Session end auto-commit 2026-02-01 22:00 (3 minutes ago)
+**Latest Commit:** bf27213 - chore: Session end auto-commit 2026-02-01 22:03 (11 hours ago)
 
 ## 📊 Change Statistics
 
@@ -22,28 +22,32 @@
 
 ### "Other"
 ```
+m GymBo
 m StarTune
 m WritingFlow
 ? cli-chat-website
-m website
+M gymbo-website
+M website
 
 ```
 
 ## 🔍 Detailed Git Status
 ```
+ m GymBo
  m StarTune
  m WritingFlow
  ? cli-chat-website
- m website
+ M gymbo-website
+ M website
 ```
 
 ## 📝 Recent Activity
 ```
-ee3c2fb (HEAD -> backup-before-cleanup) chore: Session end auto-commit 2026-02-01 22:00
-dfb8269 (origin/backup-before-cleanup) chore: Session end auto-commit 2026-02-01 21:28
+bf27213 (HEAD -> backup-before-cleanup, origin/backup-before-cleanup) chore: Session end auto-commit 2026-02-01 22:03
+ee3c2fb chore: Session end auto-commit 2026-02-01 22:00
+dfb8269 chore: Session end auto-commit 2026-02-01 21:28
 21f117f cleanup: Remove all non-voting-tool files and directories
 db1a558 feat: Add email notification system for voting tool
-e295242 feat: Fix critical bugs and migrate to @Observable
 ```
 
 ## 🔄 Next Steps
