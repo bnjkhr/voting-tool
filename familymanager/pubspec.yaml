@@ -1,0 +1,68 @@
+name: familymanager
+description: "FamilyManager - Die App für Familien"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # State Management
+  flutter_bloc: ^8.1.6
+  equatable: ^2.0.7
+
+  # Dependency Injection
+  get_it: ^8.0.3
+  injectable: ^2.5.0
+
+  # Functional Programming
+  dartz: ^0.10.1
+
+  # Routing
+  go_router: ^14.8.1
+
+  # Backend - Supabase
+  supabase_flutter: ^2.8.4
+
+  # Local Storage
+  shared_preferences: ^2.3.5
+  flutter_secure_storage: ^9.2.4
+
+  # Environment
+  flutter_dotenv: ^5.2.1
+
+  # UI
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+  flutter_svg: ^2.0.17
+
+  # Image Picker
+  image_picker: ^1.1.2
+
+  # Biometric Auth
+  local_auth: ^2.3.0
+
+  # Utils
+  intl: ^0.20.2
+  uuid: ^4.5.1
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  injectable_generator: ^2.6.3
+  build_runner: ^2.4.15
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
+    - assets/images/

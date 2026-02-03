@@ -1,0 +1,29 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Supabase
+supabase/.branches
+supabase/.temp
+
+# Flutter (wird später hinzugefügt)
+# .dart_tool/
+# .packages
+# build/
+# .flutter-plugins
+# .flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# macOS
+.DS_Store
+*.pem
+
+# Logs
+*.log
+npm-debug.log*
