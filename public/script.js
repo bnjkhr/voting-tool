@@ -26,9 +26,9 @@ class VotingApp {
         // Settings
         document.getElementById('settingsBtn').addEventListener('click', () => this.showSettingsModal());
         document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
+        document.getElementById('settingsBackdrop').addEventListener('click', () => this.hideSettingsModal());
         document.getElementById('cancelSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
         document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
-        document.getElementById('settingsBackdrop').addEventListener('click', () => this.hideSettingsModal());
 
         // Form submission
         document.getElementById('newSuggestionForm').addEventListener('submit', (e) => this.submitSuggestion(e));
@@ -93,7 +93,7 @@ class VotingApp {
 
         // Validate email if provided
         if (email && !this.validateEmail(email)) {
-            this.showToast('Bitte gib eine gültige E-Mail-Adresse ein', 'error');
+            this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
             return;
         }
 
@@ -185,41 +185,19 @@ class VotingApp {
 
         const title = document.getElementById('suggestionTitle').value.trim();
         const description = document.getElementById('suggestionDescription').value.trim();
-        const email = document.getElementById('suggestionEmail').value.trim();
-        const notificationsEnabled = document.getElementById('suggestionNotificationsEnabled').checked;
 
         if (!title || !description) {
             this.showToast('Bitte füllen Sie alle Felder aus', 'error');
             return;
         }
 
-        // Validate email if provided and notifications are enabled
-        if (email && notificationsEnabled && !this.validateEmail(email)) {
-            this.showToast('Bitte gib eine gültige E-Mail-Adresse ein', 'error');
-            return;
-        }
-
-        // Warn if notifications are enabled but no email provided
-        if (notificationsEnabled && !email) {
-            this.showToast('Bitte gib eine E-Mail-Adresse ein, um Benachrichtigungen zu erhalten', 'error');
-            return;
-        }
-
         try {
-            const requestBody = { title, description };
-
-            // Add email and notifications only if email is provided
-            if (email) {
-                requestBody.email = email;
-                requestBody.notificationsEnabled = notificationsEnabled;
-            }
-
             const response = await fetch(`/api/apps/${this.currentApp.id}/suggestions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify({ title, description })
             });
 
             if (response.ok) {
@@ -293,12 +271,10 @@ class VotingApp {
 
     // Filtering methods
     renderFilterBar() {
-        const viewHeader = document.querySelector('.suggestions-view .view-header');
+        const suggestionsList = document.getElementById('suggestionsList');
 
         // Don't render filter bar if no suggestions at all
         if (this.allSuggestions.length === 0) {
-            const existingFilterBar = document.querySelector('.filter-bar');
-            if (existingFilterBar) existingFilterBar.remove();
             return;
         }
 
@@ -321,39 +297,62 @@ class VotingApp {
         });
 
         const filters = [
-            { id: 'all', label: 'Alle', count: counts.all },
-            { id: 'ist umgesetzt', label: 'Umgesetzt', count: counts['ist umgesetzt'] },
-            { id: 'wird umgesetzt', label: 'In Arbeit', count: counts['wird umgesetzt'] },
-            { id: 'wird geprüft', label: 'Wird geprüft', count: counts['wird geprüft'] },
-            { id: 'wird nicht umgesetzt', label: 'Abgelehnt', count: counts['wird nicht umgesetzt'] },
-            { id: 'keine', label: 'Offen', count: counts['keine'] }
+            { id: 'all', label: 'Alle', count: counts.all, color: '#6366F1' },
+            { id: 'wird umgesetzt', label: 'Wird umgesetzt', count: counts['wird umgesetzt'], color: '#10b981' },
+            { id: 'ist umgesetzt', label: 'Ist umgesetzt', count: counts['ist umgesetzt'], color: '#059669' },
+            { id: 'wird geprüft', label: 'Wird geprüft', count: counts['wird geprüft'], color: '#f59e0b' },
+            { id: 'wird nicht umgesetzt', label: 'Wird nicht umgesetzt', count: counts['wird nicht umgesetzt'], color: '#ef4444' },
+            { id: 'keine', label: 'Ohne Status', count: counts['keine'], color: '#64748b' }
         ];
 
         // Only show filters with count > 0 (except 'all')
         const visibleFilters = filters.filter(f => f.id === 'all' || f.count > 0);
 
         const filterBar = `
-            <nav class="filter-bar">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; padding: 16px; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow);">
                 ${visibleFilters.map(filter => `
                     <button
                         onclick="app.setFilter('${filter.id}')"
-                        class="filter-btn ${this.currentFilter === filter.id ? 'active' : ''}"
+                        class="filter-pill ${this.currentFilter === filter.id ? 'active' : ''}"
+                        style="
+                            padding: 8px 16px;
+                            border: 2px solid ${this.currentFilter === filter.id ? filter.color : 'var(--border)'};
+                            background: ${this.currentFilter === filter.id ? filter.color : 'var(--surface)'};
+                            color: ${this.currentFilter === filter.id ? 'white' : 'var(--text-primary)'};
+                            border-radius: var(--radius-full);
+                            font-size: 0.875rem;
+                            font-weight: 600;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 6px;
+                        "
+                        onmouseover="if ('${this.currentFilter}' !== '${filter.id}') { this.style.borderColor = '${filter.color}'; this.style.background = '${filter.color}15'; }"
+                        onmouseout="if ('${this.currentFilter}' !== '${filter.id}') { this.style.borderColor = 'var(--border)'; this.style.background = 'var(--surface)'; }"
                     >
-                        <span class="filter-label">${filter.label}</span>
-                        <span class="filter-count">${filter.count}</span>
+                        <span>${filter.label}</span>
+                        <span style="
+                            background: ${this.currentFilter === filter.id ? 'rgba(255,255,255,0.3)' : 'var(--border-light)'};
+                            padding: 2px 8px;
+                            border-radius: var(--radius-full);
+                            font-size: 0.75rem;
+                        ">${filter.count}</span>
                     </button>
                 `).join('')}
-            </nav>
+            </div>
         `;
 
-        // Remove existing filter bar
-        const existingFilterBar = document.querySelector('.filter-bar');
+        // Prepend filter bar to suggestions list
+        const existingFilterBar = suggestionsList.querySelector('.filter-bar-container');
         if (existingFilterBar) {
             existingFilterBar.remove();
         }
 
-        // Insert after view header
-        viewHeader.insertAdjacentHTML('afterend', filterBar);
+        const filterContainer = document.createElement('div');
+        filterContainer.className = 'filter-bar-container';
+        filterContainer.innerHTML = filterBar;
+        suggestionsList.insertBefore(filterContainer, suggestionsList.firstChild);
     }
 
     setFilter(filterId) {
@@ -407,7 +406,7 @@ class VotingApp {
             noResultsMsg.className = 'loading';
             noResultsMsg.innerHTML = `
                 ${this.currentFilter === 'all' ?
-                    'Noch keine Vorschläge vorhanden.<br>Sei der Erste und reiche einen Vorschlag ein!' :
+                    'Noch keine Vorschläge vorhanden.<br>Seien Sie der Erste und reichen Sie einen Vorschlag ein!' :
                     'Keine Vorschläge mit diesem Status gefunden.'
                 }
             `;

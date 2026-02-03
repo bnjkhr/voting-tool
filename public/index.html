@@ -8,23 +8,14 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Feature Voting">
     <title>App Feature Voting</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <div class="header-decoration"></div>
-            <div class="header-content">
-                <div class="header-badge">Feature Requests</div>
-                <h1>Shape the <span>Future</span></h1>
-                <p>Vote für Features die du brauchst oder schlage neue Ideen vor</p>
-            </div>
-            <div class="header-actions">
-                <button class="settings-btn" id="settingsBtn" title="Einstellungen">⚙</button>
-            </div>
+            <h1>Feature Voting</h1>
+            <p>Schlage neue Features vor oder vote für bestehende Ideen</p>
+            <button class="settings-btn" id="settingsBtn" title="Einstellungen">⚙️</button>
         </header>
 
         <main class="main">
@@ -41,8 +32,10 @@
                 <div class="view-header">
                     <button class="back-btn" id="backBtn" title="Zurück"></button>
                     <h2 id="currentAppName">App Name</h2>
-                    <button class="submit-btn" id="fabBtn" title="Neuen Vorschlag einreichen">Vorschlag einreichen</button>
                 </div>
+
+                <!-- Floating Action Button will replace this -->
+                <button class="fab" id="fabBtn" title="Neuen Vorschlag einreichen">+</button>
 
                 <div class="suggestions-list" id="suggestionsList">
                     <div class="loading">Vorschläge werden geladen...</div>
@@ -69,26 +62,6 @@
                                   placeholder="Detaillierte Beschreibung des Features..." rows="4"></textarea>
                     </div>
 
-                    <div class="form-group" style="border-top: 1px solid var(--border-light); padding-top: 20px; margin-top: 20px;">
-                        <h3 style="font-size: 1rem; margin-bottom: 8px; color: var(--text-primary);">Benachrichtigungen (optional)</h3>
-                        <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5;">
-                            Möchtest du per E-Mail benachrichtigt werden, wenn sich der Status deines Vorschlags ändert oder ein Admin-Kommentar hinzugefügt wird?
-                        </p>
-
-                        <label for="suggestionEmail">E-Mail-Adresse (optional)</label>
-                        <input type="email" id="suggestionEmail" placeholder="deine.email@beispiel.de"
-                               pattern="[^\s@]+@[^\s@]+\.[^\s@]+">
-                        <small class="form-hint">Deine E-Mail wird nur für Benachrichtigungen zu diesem und zukünftigen Vorschlägen verwendet</small>
-
-                        <div style="margin-top: 12px;">
-                            <label class="checkbox-container" style="display: inline-flex; align-items: center; flex-direction: row;">
-                                <input type="checkbox" id="suggestionNotificationsEnabled">
-                                <span class="checkmark"></span>
-                                <span>Benachrichtigungen aktivieren</span>
-                            </label>
-                        </div>
-                    </div>
-
                     <div class="form-actions">
                         <button type="button" class="secondary-btn" id="cancelBtn">Abbrechen</button>
                         <button type="submit" class="primary-btn">Vorschlag einreichen</button>
@@ -109,14 +82,14 @@
                         <div class="settings-section">
                             <h3>Benachrichtigungen</h3>
                             <p class="settings-description">
-                                Erhalte E-Mail-Benachrichtigungen, wenn sich der Status deiner Vorschläge ändert oder neue Kommentare hinzugefügt werden.
+                                Erhalten Sie E-Mail-Benachrichtigungen, wenn sich der Status Ihrer Vorschläge ändert oder neue Kommentare hinzugefügt werden.
                             </p>
-
+                            
                             <div class="form-group">
                                 <label for="userEmail">E-Mail-Adresse (optional)</label>
-                                <input type="email" id="userEmail" placeholder="deine.email@beispiel.de"
+                                <input type="email" id="userEmail" placeholder="ihre.email@beispiel.de"
                                        pattern="[^\s@]+@[^\s@]+\.[^\s@]+">
-                                <small class="form-hint">Deine E-Mail-Adresse wird nur für Benachrichtigungen verwendet</small>
+                                <small class="form-hint">Ihre E-Mail-Adresse wird nur für Benachrichtigungen verwendet</small>
                             </div>
                             
                             <div class="form-group">
@@ -137,25 +110,6 @@
             </section>
         </main>
     </div>
-
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-info">
-                    <p>&copy; 2025 Ben Kohler // Indie Apps</p>
-                    <p class="footer-description">
-                        Ein Tool für Feature-Voting und Feedback zu meinen Indie-Apps.
-                    </p>
-                </div>
-                <div class="footer-links">
-                    <a href="https://benkohler.de" target="_blank" rel="noopener">Über mich</a>
-                    <a href="https://benkohler.de/impressum.html" target="_blank" rel="noopener">Impressum</a>
-                    <a href="https://benkohler.de/datenschutz.html" target="_blank" rel="noopener">Datenschutz</a>
-                </div>
-            </div>
-        </div>
-    </footer>
 
     <!-- Toast Notifications -->
     <div class="toast" id="toast"></div>
