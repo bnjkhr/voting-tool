@@ -1,4 +1,4 @@
-// Firebase initialization script - run once to create demo apps
+// Firebase initialization script - can be re-run safely to ensure default apps exist
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin (make sure to set environment variables)
@@ -12,26 +12,32 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-async function initializeApps() {
-  const demoApps = [
+async function ensureDefaultApps() {
+  const defaultApps = [
     {
-      name: 'Datenplaner V2',
-      description: 'Tool zur Verwaltung und Planung von Datenprojekten'
-    },
-    {
-      name: 'Gym App',
+      name: 'GymBo',
       description: 'Fitness-Tracking und Workout-Planung'
     },
     {
-      name: 'Website',
-      description: 'Persönliche Website und Portfolio'
+      name: 'FamilyManager',
+      description: 'Familienorganisation, Aufgaben und Alltagsplanung'
     }
   ];
 
-  console.log('Creating demo apps...');
+  console.log('Ensuring default apps exist...');
 
-  for (const app of demoApps) {
+  for (const app of defaultApps) {
     try {
+      const existing = await db.collection('apps')
+        .where('name', '==', app.name)
+        .limit(1)
+        .get();
+
+      if (!existing.empty) {
+        console.log(`↩︎ App already exists: ${app.name} (ID: ${existing.docs[0].id})`);
+        continue;
+      }
+
       const docRef = await db.collection('apps').add(app);
       console.log(`✅ Created app: ${app.name} (ID: ${docRef.id})`);
     } catch (error) {
@@ -39,26 +45,17 @@ async function initializeApps() {
     }
   }
 
-  console.log('Demo apps initialization complete!');
+  console.log('Default apps ensured.');
   process.exit(0);
 }
 
-// Check if apps already exist
-async function checkAndInit() {
+async function run() {
   try {
-    const appsSnapshot = await db.collection('apps').limit(1).get();
-
-    if (appsSnapshot.empty) {
-      console.log('No apps found. Initializing demo apps...');
-      await initializeApps();
-    } else {
-      console.log('Apps already exist. No initialization needed.');
-      process.exit(0);
-    }
+    await ensureDefaultApps();
   } catch (error) {
     console.error('Error checking apps:', error);
     process.exit(1);
   }
 }
 
-checkAndInit();
+run();

@@ -41,11 +41,13 @@ cp .env.example .env
 npm install
 ```
 
-### 4. Demo Apps erstellen (optional)
+### 4. Standard-Apps erstellen (optional)
 
 ```bash
 npm run init-firebase
 ```
+
+Das Skript kann jederzeit erneut ausgefuehrt werden und legt fehlende Standard-Apps (z.B. `GymBo` und `FamilyManager`) an, ohne bestehende Apps zu duplizieren.
 
 ### 5. Lokal testen
 
