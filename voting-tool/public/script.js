@@ -309,16 +309,35 @@ class VotingApp {
         const visibleFilters = filters.filter(f => f.id === 'all' || f.count > 0);
 
         const filterBar = `
-            <div class="filter-bar">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; padding: 16px; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow);">
                 ${visibleFilters.map(filter => `
                     <button
                         onclick="app.setFilter('${filter.id}')"
                         class="filter-pill ${this.currentFilter === filter.id ? 'active' : ''}"
-                        style="--filter-color: ${filter.color};"
+                        style="
+                            padding: 8px 16px;
+                            border: 2px solid ${this.currentFilter === filter.id ? filter.color : 'var(--border)'};
+                            background: ${this.currentFilter === filter.id ? filter.color : 'var(--surface)'};
+                            color: ${this.currentFilter === filter.id ? 'white' : 'var(--text-primary)'};
+                            border-radius: var(--radius-full);
+                            font-size: 0.875rem;
+                            font-weight: 600;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 6px;
+                        "
+                        onmouseover="if ('${this.currentFilter}' !== '${filter.id}') { this.style.borderColor = '${filter.color}'; this.style.background = '${filter.color}15'; }"
+                        onmouseout="if ('${this.currentFilter}' !== '${filter.id}') { this.style.borderColor = 'var(--border)'; this.style.background = 'var(--surface)'; }"
                     >
-                        <span class="filter-dot" aria-hidden="true"></span>
                         <span>${filter.label}</span>
-                        <span class="filter-count">${filter.count}</span>
+                        <span style="
+                            background: ${this.currentFilter === filter.id ? 'rgba(255,255,255,0.3)' : 'var(--border-light)'};
+                            padding: 2px 8px;
+                            border-radius: var(--radius-full);
+                            font-size: 0.75rem;
+                        ">${filter.count}</span>
                     </button>
                 `).join('')}
             </div>
@@ -397,8 +416,7 @@ class VotingApp {
 
         const suggestionsHTML = suggestions.map(suggestion => {
             // Check if suggestion is implemented (ausgegraut)
-            const normalizedTag = (suggestion.tag || '').trim().toLowerCase();
-            const isImplemented = normalizedTag === 'ist umgesetzt' || normalizedTag === 'umgesetzt';
+            const isImplemented = suggestion.tag === 'ist umgesetzt';
             const cardOpacity = isImplemented ? 'opacity: 0.5;' : '';
 
             // Generate tag badge if tag exists
@@ -416,10 +434,6 @@ class VotingApp {
                         tagColor = '#059669'; // darker green
                         tagIcon = '✓✓';
                         break;
-                    case 'umgesetzt':
-                        tagColor = '#059669'; // alias for "ist umgesetzt"
-                        tagIcon = '✓✓';
-                        break;
                     case 'wird nicht umgesetzt':
                         tagColor = '#ef4444'; // red
                         tagIcon = '✗';
@@ -432,8 +446,7 @@ class VotingApp {
 
                 tagBadge = `
                     <div style="margin-top: 8px;">
-                        <span class="label" style="--label-color: ${tagColor};">
-                            <span class="label-dot" aria-hidden="true"></span>
+                        <span style="display: inline-flex; align-items: center; gap: 4px; background: ${tagColor}; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 500;">
                             <span>${tagIcon}</span>
                             <span>${this.escapeHtml(suggestion.tag)}</span>
                         </span>
@@ -447,12 +460,10 @@ class VotingApp {
                 <div style="margin-top: 8px;">
                     <button
                         onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
-                        class="label label-button"
-                        style="--label-color: #3b82f6;"
+                        style="display: inline-flex; align-items: center; gap: 4px; background: #3b82f6; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 500; border: none; cursor: pointer;"
                     >
-                        <span class="label-dot" aria-hidden="true"></span>
-                        <span>Kommentare</span>
-                        <span>(${suggestion.commentCount})</span>
+                        <span>💬</span>
+                        <span>${suggestion.commentCount} Admin-Kommentar${suggestion.commentCount > 1 ? 'e' : ''}</span>
                     </button>
                 </div>
             ` : '';

@@ -1,8 +1,12 @@
 # Vercel Ignore - Exclude unnecessary files for Node.js deployment
 node_modules/
+voting-tool/
 .git/
+.vercel/
 .DS_Store
 *.log
+.env
+.env.*
 .gitattributes
 .vscode/
 *.swp

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Feature Voting Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { background: #f5f5f5; padding: 20px; margin: 20px 0; border-radius: 8px; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        .success { background: #4CAF50; color: white; }
+        .warning { background: #ff9800; color: white; }
+        .error { background: #f44336; color: white; }
+        #log { background: #000; color: #0f0; padding: 10px; font-family: monospace; max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Admin Test-Bereich - E-Mail Benachrichtigungen</h1>
+    
+    <div class="test-section">
+        <h2>1. Vorbereitung</h2>
+        <p><strong>Wichtig:</strong> Stelle sicher, dass diese Umgebungsvariablen gesetzt sind:</p>
+        <ul>
+            <li><code>EMAIL_USER</code> - Deine Gmail-Adresse</li>
+            <li><code>EMAIL_PASSWORD</code> - App-Passwort für Gmail</li>
+            <li><code>ADMIN_PASSWORD</code> - Admin-Passwort für API-Zugriff</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>2. E-Mail-Einstellungen testen</h2>
+        <button onclick="testSaveSettings()" class="success">E-Mail-Einstellungen speichern</button>
+        <button onclick="testLoadSettings()" class="warning">E-Mail-Einstellungen laden</button>
+        <div id="settingsResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Vorschlag testen</h2>
+        <button onclick="createTestSuggestion()" class="success">Test-Vorschlag erstellen</button>
+        <div id="suggestionResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Admin-Aktionen testen</h2>
+        <p>Gib die Suggestion-ID ein:</p>
+        <input type="text" id="suggestionId" placeholder="Suggestion ID">
+        <br><br>
+        <button onclick="approveSuggestion()" class="success">Vorschlag genehmigen (sendet E-Mail)</button>
+        <button onclick="rejectSuggestion()" class="error">Vorschlag ablehnen (sendet E-Mail)</button>
+        <button onclick="addComment()" class="warning">Kommentar hinzufügen (sendet E-Mail)</button>
+        <div id="adminResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>5. Debug-Log</h2>
+        <div id="log"></div>
+        <button onclick="clearLog()">Log löschen</button>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        const ADMIN_PASSWORD = prompt('Admin-Passwort eingeben:') || 'test';
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ff6666' : type === 'success' ? '#66ff66' : '#ffffff';
+            logDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function testSaveSettings() {
+            try {
+                const email = prompt('Test-E-Mail-Adresse eingeben:', 'test@beispiel.de');
+                if (!email) return;
+
+                log(`Speichere Einstellungen für: ${email}`);
+                
+                const response = await fetch(`${API_BASE}/api/user/notification-settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: email,
+                        notificationsEnabled: true
+                    })
+                });
+
+                const result = await response.json();
+                document.getElementById('settingsResult').innerHTML = 
+                    `<p style="color: ${response.ok ? 'green' : 'red'}">Ergebnis: ${JSON.stringify(result)}</p>`;
+                
+                log(`Einstellungen gespeichert: ${JSON.stringify(result)}`, response.ok ? 'success' : 'error');
+            } catch (error) {
+                log(`Fehler: ${error.message}`, 'error');
+            }
+        }
+
+        async function testLoadSettings() {
+            try {
+                log('Lade Einstellungen...');
+                
+                const response = await fetch(`${API_BASE}/api/user/notification-settings`);
+                const result = await response.json();
+                
+                document.getElementById('settingsResult').innerHTML = 
+                    `<p style="color: ${response.ok ? 'green' : 'red'}">Geladene Einstellungen: ${JSON.stringify(result)}</p>`;
+                
+                log(`Einstellungen geladen: ${JSON.stringify(result)}`, response.ok ? 'success' : 'error');
+            } catch (error) {
+                log(`Fehler: ${error.message}`, 'error');
+            }
+        }
+
+        async function createTestSuggestion() {
+            try {
+                // Zuerst Apps abrufen
+                log('Lade verfügbare Apps...');
+                const appsResponse = await fetch(`${API_BASE}/api/apps`);
+                const apps = await appsResponse.json();
+                
+                if (apps.length === 0) {
+                    alert('Keine Apps verfügbar. Bitte erstelle zuerst eine App im Admin-Bereich.');
+                    return;
+                }
+
+                const appId = apps[0].id;
+                log(`Erstelle Vorschlag für App: ${apps[0].name} (${appId})`);
+
+                const response = await fetch(`${API_BASE}/api/apps/${appId}/suggestions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: 'Test-Vorschlag für E-Mail-Benachrichtigung ' + Date.now(),
+                        description: 'Dies ist ein Test-Vorschlag um die E-Mail-Benachrichtigung zu testen. Der Admin sollte eine E-Mail erhalten.'
+                    })
+                });
+
+                const result = await response.json();
+                document.getElementById('suggestionResult').innerHTML = 
+                    `<p style="color: ${response.ok ? 'green' : 'red'}">Vorschlag erstellt: ${JSON.stringify(result)}</p>`;
+                
+                log(`Vorschlag erstellt: ${JSON.stringify(result)}`, response.ok ? 'success' : 'error');
+                
+                if (response.ok) {
+                    alert(`Vorschlag erstellt! ID: ${result.id}\n\nDer Admin sollte jetzt eine E-Mail erhalten haben.`);
+                }
+            } catch (error) {
+                log(`Fehler: ${error.message}`, 'error');
+            }
+        }
+
+        async function approveSuggestion() {
+            const suggestionId = document.getElementById('suggestionId').value;
+            if (!suggestionId) {
+                alert('Bitte gib eine Suggestion-ID ein');
+                return;
+            }
+
+            try {
+                log(`Genehmige Vorschlag: ${suggestionId}`);
+                
+                const response = await fetch(`${API_BASE}/api/admin/suggestions/${suggestionId}/approve`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${ADMIN_PASSWORD}` }
+                });
+
+                const result = await response.json();
+                document.getElementById('adminResult').innerHTML = 
+                    `<p style="color: ${response.ok ? 'green' : 'red'}">Ergebnis: ${JSON.stringify(result)}</p>`;
+                
+                log(`Vorschlag genehmigt: ${JSON.stringify(result)}`, response.ok ? 'success' : 'error');
+                
+                if (response.ok) {
+                    alert('Vorschlag genehmigt! Der Benutzer sollte eine E-Mail erhalten.');
+                }
+            } catch (error) {
+                log(`Fehler: ${error.message}`, 'error');
+            }
+        }
+
+        async function rejectSuggestion() {
+            const suggestionId = document.getElementById('suggestionId').value;
+            if (!suggestionId) {
+                alert('Bitte gib eine Suggestion-ID ein');
+                return;
+            }
+
+            if (confirm('Möchtest du diesen Vorschlag wirklich ablehnen?')) {
+                try {
+                    log(`Lehne Vorschlag ab: ${suggestionId}`);
+                    
+                    const response = await fetch(`${API_BASE}/api/admin/suggestions/${suggestionId}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${ADMIN_PASSWORD}` }
+                    });
+
+                    const result = await response.json();
+                    document.getElementById('adminResult').innerHTML = 
+                        `<p style="color: ${response.ok ? 'green' : 'red'}">Ergebnis: ${JSON.stringify(result)}</p>`;
+                    
+                    log(`Vorschlag abgelehnt: ${JSON.stringify(result)}`, response.ok ? 'success' : 'error');
+                    
+                    if (response.ok) {
+                        alert('Vorschlag abgelehnt! Der Benutzer sollte eine E-Mail erhalten.');
+                    }
+                } catch (error) {
+                    log(`Fehler: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        async function addComment() {
+            const suggestionId = document.getElementById('suggestionId').value;
+            if (!suggestionId) {
+                alert('Bitte gib eine Suggestion-ID ein');
+                return;
+            }
+
+            const comment = prompt('Kommentar eingeben:');
+            if (!comment) return;
+
+            try {
+                log(`Füge Kommentar hinzu: ${suggestionId}`);
+                
+                const response = await fetch(`${API_BASE}/api/admin/suggestions/${suggestionId}/comments`, {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': `Bearer ${ADMIN_PASSWORD}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: comment })
+                });
+
+                const result = await response.json();
+                document.getElementById('adminResult').innerHTML = 
+                    `<p style="color: ${response.ok ? 'green' : 'red'}">Ergebnis: ${JSON.stringify(result)}</p>`;
+                
+                log(`Kommentar hinzugefügt: ${JSON.stringify(result)}`, response.ok ? 'success' : 'error');
+                
+                if (response.ok) {
+                    alert('Kommentar hinzugefügt! Der Benutzer sollte eine E-Mail erhalten.');
+                }
+            } catch (error) {
+                log(`Fehler: ${error.message}`, 'error');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Automatisch laden
+        window.addEventListener('load', () => {
+            log('Test-Bereich geladen. Starte mit dem Testen!');
+        });
+    </script>
+</body>
+</html>

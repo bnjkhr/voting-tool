@@ -59,11 +59,6 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Convenience routes (people tend to type /admin instead of /admin.html)
-app.get(['/admin', '/admin/'], (req, res) => {
-  res.redirect(302, '/admin.html');
-});
-
 // Firebase Admin initialization
 if (!admin.apps.length) {
   try {
@@ -327,40 +322,15 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
       hasVoted: userVotesSet.has(doc.id)
     }));
 
-    // Sort so that still-votable (not implemented + not voted) suggestions appear first.
-    // Implemented suggestions ("ist umgesetzt") should sink to the bottom.
+    // Sort by votes (desc) then by createdAt (desc)
     suggestions.sort((a, b) => {
-      const aTag = (a.tag || '').trim().toLowerCase();
-      const bTag = (b.tag || '').trim().toLowerCase();
-
-      const aImplemented = aTag === 'ist umgesetzt' || aTag === 'umgesetzt';
-      const bImplemented = bTag === 'ist umgesetzt' || bTag === 'umgesetzt';
-
-      if (aImplemented !== bImplemented) {
-        return aImplemented ? 1 : -1; // implemented last
+      if (b.votes !== a.votes) {
+        return (b.votes || 0) - (a.votes || 0);
       }
-
-      const aVotable = !aImplemented && !a.hasVoted;
-      const bVotable = !bImplemented && !b.hasVoted;
-      if (aVotable !== bVotable) {
-        return aVotable ? -1 : 1; // votable first
-      }
-
-      // Then: newest first
+      // Compare timestamps
       const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
       const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
-      if (bTime - aTime !== 0) {
-        return bTime - aTime;
-      }
-
-      // Then: most votes first (stable-ish fallback)
-      const aVotes = a.votes || 0;
-      const bVotes = b.votes || 0;
-      if (bVotes !== aVotes) {
-        return bVotes - aVotes;
-      }
-
-      return (a.title || a.id || '').localeCompare((b.title || b.id || ''));
+      return bTime - aTime;
     });
 
     res.json(suggestions);
