@@ -6,18 +6,15 @@
     <meta name="theme-color" content="#FFFFFF">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="Feature Voting">
-    <title>App Feature Voting</title>
+    <meta name="apple-mobile-web-app-title" content="Feedback Board">
+    <title>App Feedback Board</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <h1>Feature Voting</h1>
-            <p class="subtitle">Schlage neue Features vor oder vote für bestehende Ideen</p>
-            <button class="settings-btn" id="settingsBtn" title="Einstellungen">
-                <svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
+            <h1>Feedback Board</h1>
+            <p class="subtitle">Schlage Features vor, melde Bugs und unterstütze bestehende Einträge mit Votes</p>
         </header>
 
         <main class="main">
@@ -37,10 +34,10 @@
                 </div>
 
                 <!-- Floating Action Button will replace this -->
-                <button class="fab" id="fabBtn" title="Neuen Vorschlag einreichen">+</button>
+                <button class="fab" id="fabBtn" title="Neuen Eintrag erstellen">+</button>
 
                 <div class="suggestions-list" id="suggestionsList">
-                    <div class="loading">Vorschläge werden geladen...</div>
+                    <div class="loading">Einträge werden geladen...</div>
                 </div>
             </section>
 
@@ -48,10 +45,18 @@
             <section class="suggestion-form hidden" id="suggestionForm">
                 <div class="view-header">
                     <button class="back-btn" id="formBackBtn" title="Zurück"></button>
-                    <h2>Neuen Vorschlag einreichen</h2>
+                    <h2 id="entryFormTitle">Neuen Eintrag erstellen</h2>
                 </div>
 
                 <form id="newSuggestionForm">
+                    <div class="form-group">
+                        <label for="reportType">Typ</label>
+                        <select id="reportType" required>
+                            <option value="feature">Feature vorschlagen</option>
+                            <option value="bug">Bug melden</option>
+                        </select>
+                    </div>
+
                     <div class="form-group">
                         <label for="suggestionTitle">Titel</label>
                         <input type="text" id="suggestionTitle" required maxlength="100"
@@ -64,51 +69,78 @@
                                   placeholder="Detaillierte Beschreibung des Features..." rows="4"></textarea>
                     </div>
 
-                    <div class="form-actions">
-                        <button type="button" class="secondary-btn" id="cancelBtn">Abbrechen</button>
-                        <button type="submit" class="primary-btn">Vorschlag einreichen</button>
-                    </div>
-                </form>
-            </section>
+                    <div id="bugFields" class="hidden">
+                        <div class="form-group">
+                            <label for="bugSeverity">Schweregrad</label>
+                            <select id="bugSeverity">
+                                <option value="medium">Mittel</option>
+                                <option value="low">Niedrig</option>
+                                <option value="high">Hoch</option>
+                                <option value="critical">Kritisch</option>
+                            </select>
+                        </div>
 
-            <!-- Settings Modal -->
-            <section class="settings-modal hidden" id="settingsModal">
-                <div class="modal-backdrop" id="settingsBackdrop"></div>
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h2>Einstellungen</h2>
-                        <button class="close-btn" id="closeSettingsBtn">×</button>
-                    </div>
-                    
-                    <div class="modal-body">
-                        <div class="settings-section">
-                            <h3>Benachrichtigungen</h3>
-                            <p class="settings-description">
-                                Erhalten Sie E-Mail-Benachrichtigungen, wenn sich der Status Ihrer Vorschläge ändert oder neue Kommentare hinzugefügt werden.
-                            </p>
-                            
-                            <div class="form-group">
-                                <label for="userEmail">E-Mail-Adresse (optional)</label>
-                                <input type="email" id="userEmail" placeholder="ihre.email@beispiel.de"
-                                       pattern="[^\s@]+@[^\s@]+\.[^\s@]+">
-                                <small class="form-hint">Ihre E-Mail-Adresse wird nur für Benachrichtigungen verwendet</small>
-                            </div>
-                            
-                            <div class="form-group">
-                                <label class="checkbox-container">
-                                    <input type="checkbox" id="notificationsEnabled">
-                                    <span class="checkmark"></span>
-                                    Benachrichtigungen aktivieren
-                                </label>
-                            </div>
+                        <div class="form-group">
+                            <label for="stepsToReproduce">Schritte zur Reproduktion</label>
+                            <textarea id="stepsToReproduce" maxlength="2000" rows="4"
+                                      placeholder="1. ...&#10;2. ...&#10;3. ..."></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="expectedBehavior">Erwartetes Verhalten</label>
+                            <textarea id="expectedBehavior" maxlength="1000" rows="3"
+                                      placeholder="Was hätte passieren sollen?"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="actualBehavior">Tatsächliches Verhalten</label>
+                            <textarea id="actualBehavior" maxlength="1000" rows="3"
+                                      placeholder="Was ist stattdessen passiert?"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="environmentPlatform">Plattform (optional)</label>
+                            <input type="text" id="environmentPlatform" maxlength="100"
+                                   placeholder="z. B. iOS, Android, Web">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="environmentBrowser">Browser (optional)</label>
+                            <input type="text" id="environmentBrowser" maxlength="100"
+                                   placeholder="z. B. Safari 17, Chrome 122">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="environmentAppVersion">App-Version (optional)</label>
+                            <input type="text" id="environmentAppVersion" maxlength="100"
+                                   placeholder="z. B. 2.3.1">
                         </div>
                     </div>
-                    
-                    <div class="modal-footer">
-                        <button class="secondary-btn" id="cancelSettingsBtn">Abbrechen</button>
-                        <button class="primary-btn" id="saveSettingsBtn">Speichern</button>
+
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="entryNotificationsEnabled">
+                            <span class="checkmark"></span>
+                            Über Status-Updates per E-Mail informiert werden
+                        </label>
                     </div>
-                </div>
+
+                    <div class="form-group hidden" id="entryNotificationEmailGroup">
+                        <label for="entryNotificationEmail">E-Mail-Adresse</label>
+                        <input
+                            type="email"
+                            id="entryNotificationEmail"
+                            placeholder="ihre.email@beispiel.de"
+                            pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
+                        >
+                        <small class="form-hint">Diese E-Mail gilt nur für diesen Vorgang.</small>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="secondary-btn" id="cancelBtn">Abbrechen</button>
+                        <button type="submit" class="primary-btn" id="submitEntryBtn">Eintrag einreichen</button>
+                    </div>
+                </form>
             </section>
         </main>
     </div>
@@ -120,9 +152,9 @@
     <div class="overlay" id="successOverlay" style="display: none;">
         <div class="overlay-content">
             <div class="overlay-icon">✓</div>
-            <h2 style="margin: 0 0 12px 0; color: var(--text-primary); font-family: var(--font-heading);">Vorschlag eingereicht!</h2>
-            <p style="margin: 0 0 24px 0; color: var(--text-secondary); text-align: center; line-height: 1.6;">
-                Dein Vorschlag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.
+            <h2 id="successOverlayTitle" style="margin: 0 0 12px 0; color: var(--text-primary); font-family: var(--font-heading);">Eintrag eingereicht!</h2>
+            <p id="successOverlayMessage" style="margin: 0 0 24px 0; color: var(--text-secondary); text-align: center; line-height: 1.6;">
+                Dein Eintrag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.
             </p>
             <button class="primary-btn" onclick="app.closeSuccessOverlay()" style="width: 100%;">
                 Verstanden

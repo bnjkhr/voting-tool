@@ -5,6 +5,7 @@
   "main": "api/index.js",
   "scripts": {
     "init-firebase": "node init-firebase.js",
+    "migrate-suggestion-types": "node scripts/migrate-suggestion-types.js",
     "start": "node api/index.js",
     "dev": "node api/index.js",
     "build": "echo 'Build complete - Node.js API ready'",

@@ -96,9 +96,13 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+const FEATURE_TAGS = ['wird umgesetzt', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
+const BUG_TAGS = ['neu', 'in analyse', 'behoben', 'nicht reproduzierbar'];
+const VALID_SUGGESTION_TYPES = ['feature', 'bug'];
+const VALID_BUG_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 
 // Helper function to send admin notification email
-async function sendAdminNotificationEmail(suggestionId, title, description, appName) {
+async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}) {
   // Check if email is configured
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
     console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
@@ -121,13 +125,20 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
 
     const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
 
+    const reportTypeLabel = reportMeta.type === 'bug' ? 'Bug' : 'Feature';
+    const severityLine = reportMeta.type === 'bug' && reportMeta.severity
+      ? `<p><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
+      : '';
+
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: 'ben.kohler@me.com',
-      subject: `Neuer Vorschlag wartet auf Freigabe: ${title}`,
+      subject: `Neuer ${reportTypeLabel}-Eintrag wartet auf Freigabe: ${title}`,
       html: `
-        <h2>Neuer Vorschlag eingereicht</h2>
+        <h2>Neuer ${reportTypeLabel}-Eintrag eingereicht</h2>
         <p><strong>App:</strong> ${appName}</p>
+        <p><strong>Typ:</strong> ${reportTypeLabel}</p>
+        ${severityLine}
         <p><strong>Titel:</strong> ${title}</p>
         <p><strong>Beschreibung:</strong> ${description}</p>
         <p><strong>Suggestion ID:</strong> ${suggestionId}</p>
@@ -146,7 +157,7 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
 }
 
 // Helper function to send user notification email
-async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName) {
+async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName, entryType = 'feature') {
   // Check if email is configured
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
     console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
@@ -188,31 +199,38 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
         statusText = 'Neuer Kommentar';
         statusColor = '#007bff';
         break;
+      case 'tag_updated':
+        statusText = 'Status aktualisiert';
+        statusColor = '#6366f1';
+        break;
       default:
         statusText = 'Status aktualisiert';
         statusColor = '#6c757d';
     }
 
+    const entryLabel = entryType === 'bug' ? 'Bug' : 'Eintrag';
+
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: userEmail,
-      subject: `Ihr Vorschlag "${title}" - ${statusText}`,
+      subject: `Ihr ${entryLabel} "${title}" - ${statusText}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Update zu Ihrem Vorschlag</h2>
+          <h2 style="color: #333;">Update zu Ihrem ${entryLabel}</h2>
           
           <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
             <h3 style="margin-top: 0; color: ${statusColor};">${statusText}</h3>
-            <p><strong>Vorschlag:</strong> ${title}</p>
+            <p><strong>${entryLabel}:</strong> ${title}</p>
             <p><strong>App:</strong> ${appName}</p>
+            <p><strong>Typ:</strong> ${entryType === 'bug' ? 'Bug Report' : 'Feature'}</p>
             ${comment ? `<p><strong>Kommentar:</strong> ${comment}</p>` : ''}
           </div>
           
-          <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Vorschlag ansehen</a></p>
+          <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Eintrag ansehen</a></p>
           
           <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
           <p style="color: #6c757d; font-size: 12px;">
-            Sie erhalten diese E-Mail, weil Sie Benachrichtigungen für diesen Vorschlag aktiviert haben.
+            Sie erhalten diese E-Mail, weil Sie Benachrichtigungen für diesen Eintrag aktiviert haben.
             <br>Um keine Benachrichtigungen mehr zu erhalten, deaktivieren Sie die Benachrichtigungen in den Einstellungen.
           </p>
         </div>
@@ -320,21 +338,33 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
       [...votesSnapshot.docs, ...additionalVotes].map(doc => doc.data().suggestionId)
     );
 
-    const suggestions = suggestionsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      commentCount: commentCountMap[doc.id] || 0,
-      hasVoted: userVotesSet.has(doc.id)
-    }));
+    const suggestions = suggestionsSnapshot.docs.map(doc => {
+      const data = doc.data();
+      const type = normalizeSuggestionType(data.type);
+
+      return {
+        id: doc.id,
+        ...data,
+        type,
+        commentCount: commentCountMap[doc.id] || 0,
+        hasVoted: type === 'feature' && userVotesSet.has(doc.id)
+      };
+    });
 
     // Sort so that still-votable (not implemented + not voted) suggestions appear first.
     // Implemented suggestions ("ist umgesetzt") should sink to the bottom.
     suggestions.sort((a, b) => {
       const aTag = (a.tag || '').trim().toLowerCase();
       const bTag = (b.tag || '').trim().toLowerCase();
+      const aType = normalizeSuggestionType(a.type);
+      const bType = normalizeSuggestionType(b.type);
 
-      const aImplemented = aTag === 'ist umgesetzt' || aTag === 'umgesetzt';
-      const bImplemented = bTag === 'ist umgesetzt' || bTag === 'umgesetzt';
+      const aImplemented = aType === 'bug'
+        ? aTag === 'behoben'
+        : (aTag === 'ist umgesetzt' || aTag === 'umgesetzt');
+      const bImplemented = bType === 'bug'
+        ? bTag === 'behoben'
+        : (bTag === 'ist umgesetzt' || bTag === 'umgesetzt');
 
       if (aImplemented !== bImplemented) {
         return aImplemented ? 1 : -1; // implemented last
@@ -374,16 +404,7 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
 app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) => {
   try {
     const { appId } = req.params;
-    const { title, description } = req.body;
     const userFingerprint = generateUserFingerprint(req);
-
-    // Validate inputs
-    const validTitle = validateInput(title, 100);
-    const validDescription = validateInput(description, 500);
-
-    if (!validTitle || !validDescription) {
-      return res.status(400).json({ error: 'Invalid title or description' });
-    }
 
     // Check if app exists
     const appDoc = await db.collection('apps').doc(appId).get();
@@ -391,21 +412,22 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
       return res.status(404).json({ error: 'App not found' });
     }
 
-    const suggestion = {
-      appId,
-      title: validTitle,
-      description: validDescription,
-      votes: 0,
-      approved: false,
-      userFingerprint: userFingerprint,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
+    const { suggestion, error } = buildSuggestionFromRequest(req.body, appId, userFingerprint);
+    if (error) {
+      return res.status(400).json({ error });
+    }
 
     const docRef = await db.collection('suggestions').add(suggestion);
 
     // Send email notification to admin
     try {
-      await sendAdminNotificationEmail(docRef.id, validTitle, validDescription, appDoc.data().name);
+      await sendAdminNotificationEmail(
+        docRef.id,
+        suggestion.title,
+        suggestion.description,
+        appDoc.data().name,
+        { type: suggestion.type, severity: suggestion.severity || null }
+      );
     } catch (emailError) {
       console.error('Error sending notification email:', emailError);
       // Continue even if email fails
@@ -415,7 +437,9 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
       id: docRef.id,
       ...suggestion,
       createdAt: new Date(),
-      message: 'Vorschlag erfolgreich eingereicht. Er wird geprüft und dann freigegeben.'
+      message: suggestion.type === 'bug'
+        ? 'Bug erfolgreich gemeldet. Er wird geprüft und dann freigegeben.'
+        : 'Vorschlag erfolgreich eingereicht. Er wird geprüft und dann freigegeben.'
     });
   } catch (error) {
     console.error('Error creating suggestion:', error);
@@ -438,6 +462,9 @@ app.post('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (req,
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
     if (!suggestionDoc.exists) {
       return res.status(404).json({ error: 'Suggestion not found' });
+    }
+    if (normalizeSuggestionType(suggestionDoc.data()?.type) === 'bug') {
+      return res.status(400).json({ error: 'Voting is not supported for bug reports' });
     }
 
     // Check if user already voted
@@ -491,6 +518,9 @@ app.delete('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (re
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
     if (!suggestionDoc.exists) {
       return res.status(404).json({ error: 'Suggestion not found' });
+    }
+    if (normalizeSuggestionType(suggestionDoc.data()?.type) === 'bug') {
+      return res.status(400).json({ error: 'Voting is not supported for bug reports' });
     }
 
     // Check if user has voted
@@ -564,6 +594,74 @@ function validateInput(text, maxLength = 500) {
   // Basic XSS prevention
   const sanitized = cleaned.replace(/<[^>]*>/g, '');
   return sanitized;
+}
+
+function normalizeSuggestionType(type) {
+  const normalized = (type || '').toString().trim().toLowerCase();
+  return VALID_SUGGESTION_TYPES.includes(normalized) ? normalized : 'feature';
+}
+
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email.trim());
+}
+
+function buildSuggestionFromRequest(body, appId, userFingerprint) {
+  const type = normalizeSuggestionType(body.type);
+  const validTitle = validateInput(body.title, 100);
+  const validDescription = validateInput(body.description, 1000);
+
+  if (!validTitle || !validDescription) {
+    return { error: 'Invalid title or description' };
+  }
+
+  const suggestion = {
+    appId,
+    type,
+    title: validTitle,
+    description: validDescription,
+    notificationEnabled: Boolean(body.notificationEnabled),
+    notificationEmail: null,
+    votes: 0,
+    approved: false,
+    userFingerprint,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+
+  if (suggestion.notificationEnabled) {
+    if (!isValidEmail(body.notificationEmail)) {
+      return { error: 'Valid notification email is required when notifications are enabled' };
+    }
+    suggestion.notificationEmail = body.notificationEmail.trim();
+  }
+
+  if (type === 'bug') {
+    const severity = (body.severity || '').toString().trim().toLowerCase();
+    const stepsToReproduce = validateInput(body.stepsToReproduce, 2000);
+    const expectedBehavior = validateInput(body.expectedBehavior, 1000);
+    const actualBehavior = validateInput(body.actualBehavior, 1000);
+
+    if (!VALID_BUG_SEVERITIES.includes(severity)) {
+      return { error: 'Invalid bug severity' };
+    }
+
+    if (!stepsToReproduce || !expectedBehavior || !actualBehavior) {
+      return { error: 'Missing required bug details' };
+    }
+
+    suggestion.severity = severity;
+    suggestion.stepsToReproduce = stepsToReproduce;
+    suggestion.expectedBehavior = expectedBehavior;
+    suggestion.actualBehavior = actualBehavior;
+    suggestion.environment = {
+      appVersion: validateInput(body?.environment?.appVersion, 100) || null,
+      platform: validateInput(body?.environment?.platform, 100) || null,
+      browser: validateInput(body?.environment?.browser, 100) || null
+    };
+  }
+
+  return { suggestion };
 }
 
 // Rate limiting store (in production use Redis)
@@ -729,7 +827,8 @@ app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
     const stats = {
       totalApps: appsSnapshot.size,
       totalSuggestions: suggestionsSnapshot.size,
-      totalVotes: votesSnapshot.size
+      totalVotes: votesSnapshot.size,
+      totalBugs: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'bug').length
     };
 
     res.json(stats);
@@ -784,12 +883,16 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const suggestions = suggestionsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      app: appsMap[doc.data().appId] || { name: 'Unknown App' },
-      commentCount: commentCountMap[doc.id] || 0
-    }));
+    const suggestions = suggestionsSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        type: normalizeSuggestionType(data.type),
+        app: appsMap[data.appId] || { name: 'Unknown App' },
+        commentCount: commentCountMap[doc.id] || 0
+      };
+    });
 
     // Sort by approval status (pending first), then by votes (desc), then by createdAt (desc)
     suggestions.sort((a, b) => {
@@ -869,23 +972,37 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
       return res.status(400).json({ error: 'Invalid suggestion ID format' });
     }
 
-    // Validate tag value (allow null to remove tag)
-    const validTags = ['wird umgesetzt', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt', null];
-    if (tag !== undefined && !validTags.includes(tag)) {
-      return res.status(400).json({ error: 'Invalid tag value' });
-    }
-
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
     if (!suggestionDoc.exists) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
+    const previousTag = suggestionDoc.data()?.tag || null;
+    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const validTags = suggestionType === 'bug' ? BUG_TAGS : FEATURE_TAGS;
+    const normalizedTag = tag ? tag.toString().trim() : null;
+
+    if (normalizedTag !== null && !validTags.includes(normalizedTag)) {
+      return res.status(400).json({ error: 'Invalid tag value' });
+    }
+
     // Update suggestion tag
     await db.collection('suggestions').doc(suggestionId).update({
-      tag: tag || null,
+      tag: normalizedTag,
       tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    if (previousTag !== normalizedTag && suggestionType === 'bug') {
+      try {
+        const statusDescription = normalizedTag
+          ? `Neuer Status: ${normalizedTag}`
+          : 'Status wurde entfernt';
+        await notifySuggestionCreator(suggestionId, 'tag_updated', statusDescription);
+      } catch (notificationError) {
+        console.error('Error sending tag update notification:', notificationError);
+      }
+    }
 
     res.json({
       success: true,
@@ -1247,23 +1364,35 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
     const appDoc = await db.collection('apps').doc(suggestion.appId).get();
     const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
 
-    // For now, we'll use a simplified approach to find the user
-    // In a real implementation, you'd want to track the creator's fingerprint
+    // Primary flow: per-entry notification settings.
+    if (suggestion.notificationEnabled && isValidEmail(suggestion.notificationEmail)) {
+      await sendUserNotificationEmail(
+        suggestion.notificationEmail.trim(),
+        suggestionId,
+        suggestion.title,
+        status,
+        comment,
+        appName,
+        normalizeSuggestionType(suggestion.type)
+      );
+      return;
+    }
+
+    // Backward compatibility for old entries created before per-entry notifications.
     const userFingerprint = suggestion.userFingerprint;
-    
-    if (userFingerprint) {
-      const userSettings = await getUserNotificationSettings(userFingerprint);
-      
-      if (userSettings.email && userSettings.notificationsEnabled) {
-        await sendUserNotificationEmail(
-          userSettings.email,
-          suggestionId,
-          suggestion.title,
-          status,
-          comment,
-          appName
-        );
-      }
+    if (!userFingerprint) return;
+
+    const userSettings = await getUserNotificationSettings(userFingerprint);
+    if (userSettings.email && userSettings.notificationsEnabled) {
+      await sendUserNotificationEmail(
+        userSettings.email,
+        suggestionId,
+        suggestion.title,
+        status,
+        comment,
+        appName,
+        normalizeSuggestionType(suggestion.type)
+      );
     }
   } catch (error) {
     console.error('Error notifying suggestion creator:', error);

@@ -4,10 +4,7 @@ class VotingApp {
         this.votedSuggestions = new Set(this.getVotedSuggestions());
         this.currentFilter = 'all';
         this.allSuggestions = [];
-        this.userSettings = {
-            email: null,
-            notificationsEnabled: false
-        };
+        this.currentReportType = 'feature';
         this.init();
     }
 
@@ -23,15 +20,12 @@ class VotingApp {
         document.getElementById('fabBtn').addEventListener('click', () => this.showSuggestionForm());
         document.getElementById('cancelBtn').addEventListener('click', () => this.showSuggestions());
 
-        // Settings
-        document.getElementById('settingsBtn').addEventListener('click', () => this.showSettingsModal());
-        document.getElementById('closeSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
-        document.getElementById('settingsBackdrop').addEventListener('click', () => this.hideSettingsModal());
-        document.getElementById('cancelSettingsBtn').addEventListener('click', () => this.hideSettingsModal());
-        document.getElementById('saveSettingsBtn').addEventListener('click', () => this.saveSettings());
-
         // Form submission
         document.getElementById('newSuggestionForm').addEventListener('submit', (e) => this.submitSuggestion(e));
+        document.getElementById('reportType').addEventListener('change', (e) => this.updateReportTypeUI(e.target.value));
+        document.getElementById('entryNotificationsEnabled').addEventListener('change', (e) => {
+            this.updateEntryNotificationUI(e.target.checked);
+        });
     }
 
     // Navigation methods
@@ -58,69 +52,40 @@ class VotingApp {
 
         // Clear form
         document.getElementById('newSuggestionForm').reset();
+        this.updateReportTypeUI('feature');
+        this.updateEntryNotificationUI(false);
     }
 
-    // Settings methods
-    showSettingsModal() {
-        document.getElementById('settingsModal').classList.remove('hidden');
-        this.loadUserSettings();
+    updateReportTypeUI(type) {
+        this.currentReportType = type === 'bug' ? 'bug' : 'feature';
+        const bugFields = document.getElementById('bugFields');
+        const formTitle = document.getElementById('entryFormTitle');
+        const submitBtn = document.getElementById('submitEntryBtn');
+        const isBug = this.currentReportType === 'bug';
+
+        bugFields.classList.toggle('hidden', !isBug);
+
+        document.getElementById('stepsToReproduce').required = isBug;
+        document.getElementById('expectedBehavior').required = isBug;
+        document.getElementById('actualBehavior').required = isBug;
+        document.getElementById('bugSeverity').required = isBug;
+
+        const descriptionEl = document.getElementById('suggestionDescription');
+        descriptionEl.placeholder = isBug
+            ? 'Kurze Zusammenfassung des Fehlers...'
+            : 'Detaillierte Beschreibung des Features...';
+
+        formTitle.textContent = isBug ? 'Bug melden' : 'Feature vorschlagen';
+        submitBtn.textContent = isBug ? 'Bug melden' : 'Feature einreichen';
     }
 
-    hideSettingsModal() {
-        document.getElementById('settingsModal').classList.add('hidden');
-    }
-
-    async loadUserSettings() {
-        try {
-            const response = await fetch('/api/user/notification-settings');
-            if (response.ok) {
-                const settings = await response.json();
-                this.userSettings = settings;
-                
-                // Update form fields
-                document.getElementById('userEmail').value = settings.email || '';
-                document.getElementById('notificationsEnabled').checked = settings.notificationsEnabled;
-            }
-        } catch (error) {
-            console.error('Error loading user settings:', error);
-            this.showToast('Fehler beim Laden der Einstellungen', 'error');
-        }
-    }
-
-    async saveSettings() {
-        const email = document.getElementById('userEmail').value.trim();
-        const notificationsEnabled = document.getElementById('notificationsEnabled').checked;
-
-        // Validate email if provided
-        if (email && !this.validateEmail(email)) {
-            this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
-            return;
-        }
-
-        try {
-            const response = await fetch('/api/user/notification-settings', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    email: email,
-                    notificationsEnabled: notificationsEnabled
-                })
-            });
-
-            if (response.ok) {
-                const settings = await response.json();
-                this.userSettings = settings;
-                this.hideSettingsModal();
-                this.showToast('Einstellungen gespeichert', 'success');
-            } else {
-                const error = await response.json();
-                this.showToast(error.error || 'Fehler beim Speichern der Einstellungen', 'error');
-            }
-        } catch (error) {
-            console.error('Error saving settings:', error);
-            this.showToast('Fehler beim Speichern der Einstellungen', 'error');
+    updateEntryNotificationUI(enabled) {
+        const emailGroup = document.getElementById('entryNotificationEmailGroup');
+        const emailInput = document.getElementById('entryNotificationEmail');
+        emailGroup.classList.toggle('hidden', !enabled);
+        emailInput.required = enabled;
+        if (!enabled) {
+            emailInput.value = '';
         }
     }
 
@@ -176,19 +141,57 @@ class VotingApp {
             this.renderSuggestions(this.filterSuggestions(suggestions));
         } catch (error) {
             console.error('Error loading suggestions:', error);
-            this.showToast('Fehler beim Laden der Vorschläge', 'error');
+            this.showToast('Fehler beim Laden der Einträge', 'error');
         }
     }
 
     async submitSuggestion(e) {
         e.preventDefault();
 
+        const type = document.getElementById('reportType').value;
         const title = document.getElementById('suggestionTitle').value.trim();
         const description = document.getElementById('suggestionDescription').value.trim();
+        const notificationEnabled = document.getElementById('entryNotificationsEnabled').checked;
+        const notificationEmail = document.getElementById('entryNotificationEmail').value.trim();
 
         if (!title || !description) {
             this.showToast('Bitte füllen Sie alle Felder aus', 'error');
             return;
+        }
+
+        if (notificationEnabled) {
+            if (!notificationEmail) {
+                this.showToast('Bitte E-Mail-Adresse für Benachrichtigungen eingeben', 'error');
+                return;
+            }
+            if (!this.validateEmail(notificationEmail)) {
+                this.showToast('Bitte geben Sie eine gültige E-Mail-Adresse ein', 'error');
+                return;
+            }
+        }
+
+        const payload = { type, title, description };
+        payload.notificationEnabled = notificationEnabled;
+        payload.notificationEmail = notificationEnabled ? notificationEmail : null;
+        if (type === 'bug') {
+            const stepsToReproduce = document.getElementById('stepsToReproduce').value.trim();
+            const expectedBehavior = document.getElementById('expectedBehavior').value.trim();
+            const actualBehavior = document.getElementById('actualBehavior').value.trim();
+
+            if (!stepsToReproduce || !expectedBehavior || !actualBehavior) {
+                this.showToast('Bitte füllen Sie alle Bug-Felder aus', 'error');
+                return;
+            }
+
+            payload.severity = document.getElementById('bugSeverity').value;
+            payload.stepsToReproduce = stepsToReproduce;
+            payload.expectedBehavior = expectedBehavior;
+            payload.actualBehavior = actualBehavior;
+            payload.environment = {
+                platform: document.getElementById('environmentPlatform').value.trim(),
+                browser: document.getElementById('environmentBrowser').value.trim(),
+                appVersion: document.getElementById('environmentAppVersion').value.trim()
+            };
         }
 
         try {
@@ -197,20 +200,20 @@ class VotingApp {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ title, description })
+                body: JSON.stringify(payload)
             });
 
             if (response.ok) {
-                const result = await response.json();
-                this.showSuccessOverlay();
+                await response.json();
+                this.showSuccessOverlay(type);
                 this.loadSuggestions(this.currentApp.id);
             } else {
                 const error = await response.json();
-                this.showToast(error.error || 'Fehler beim Einreichen des Vorschlags', 'error');
+                this.showToast(error.error || 'Fehler beim Einreichen des Eintrags', 'error');
             }
         } catch (error) {
             console.error('Error submitting suggestion:', error);
-            this.showToast('Fehler beim Einreichen des Vorschlags', 'error');
+            this.showToast('Fehler beim Einreichen des Eintrags', 'error');
         }
     }
 
@@ -285,13 +288,17 @@ class VotingApp {
             'ist umgesetzt': 0,
             'wird geprüft': 0,
             'wird nicht umgesetzt': 0,
+            'neu': 0,
+            'in analyse': 0,
+            'behoben': 0,
+            'nicht reproduzierbar': 0,
             'keine': 0
         };
 
         this.allSuggestions.forEach(s => {
             if (s.tag && counts.hasOwnProperty(s.tag)) {
                 counts[s.tag]++;
-            } else if (!s.tag) {
+            } else {
                 counts['keine']++;
             }
         });
@@ -302,6 +309,10 @@ class VotingApp {
             { id: 'ist umgesetzt', label: 'Ist umgesetzt', count: counts['ist umgesetzt'], color: '#059669' },
             { id: 'wird geprüft', label: 'Wird geprüft', count: counts['wird geprüft'], color: '#f59e0b' },
             { id: 'wird nicht umgesetzt', label: 'Wird nicht umgesetzt', count: counts['wird nicht umgesetzt'], color: '#ef4444' },
+            { id: 'neu', label: 'Bug: Neu', count: counts['neu'], color: '#ef4444' },
+            { id: 'in analyse', label: 'Bug: In Analyse', count: counts['in analyse'], color: '#f59e0b' },
+            { id: 'behoben', label: 'Bug: Behoben', count: counts['behoben'], color: '#10b981' },
+            { id: 'nicht reproduzierbar', label: 'Bug: Nicht reproduzierbar', count: counts['nicht reproduzierbar'], color: '#64748b' },
             { id: 'keine', label: 'Ohne Status', count: counts['keine'], color: '#64748b' }
         ];
 
@@ -387,8 +398,8 @@ class VotingApp {
             noResultsMsg.className = 'loading';
             noResultsMsg.innerHTML = `
                 ${this.currentFilter === 'all' ?
-                    'Noch keine Vorschläge vorhanden.<br>Seien Sie der Erste und reichen Sie einen Vorschlag ein!' :
-                    'Keine Vorschläge mit diesem Status gefunden.'
+                    'Noch keine Einträge vorhanden.<br>Seien Sie der Erste und reichen Sie einen Eintrag ein!' :
+                    'Keine Einträge mit diesem Status gefunden.'
                 }
             `;
             suggestionsList.appendChild(noResultsMsg);
@@ -396,10 +407,14 @@ class VotingApp {
         }
 
         const suggestionsHTML = suggestions.map(suggestion => {
+            const suggestionType = suggestion.type || 'feature';
             // Check if suggestion is implemented (ausgegraut)
             const normalizedTag = (suggestion.tag || '').trim().toLowerCase();
-            const isImplemented = normalizedTag === 'ist umgesetzt' || normalizedTag === 'umgesetzt';
+            const isImplemented = suggestionType === 'feature'
+                ? (normalizedTag === 'ist umgesetzt' || normalizedTag === 'umgesetzt')
+                : normalizedTag === 'behoben';
             const cardOpacity = isImplemented ? 'opacity: 0.5;' : '';
+            const isBug = suggestionType === 'bug';
 
             // Generate tag badge if tag exists
             let tagBadge = '';
@@ -428,6 +443,25 @@ class VotingApp {
                         tagColor = '#f59e0b'; // orange
                         tagIcon = '⏳';
                         break;
+                    case 'neu':
+                        tagColor = '#ef4444';
+                        tagIcon = '🐞';
+                        break;
+                    case 'in analyse':
+                        tagColor = '#f59e0b';
+                        tagIcon = '🔎';
+                        break;
+                    case 'behoben':
+                        tagColor = '#10b981';
+                        tagIcon = '✓';
+                        break;
+                    case 'nicht reproduzierbar':
+                        tagColor = '#64748b';
+                        tagIcon = '∅';
+                        break;
+                    default:
+                        tagColor = '#64748b';
+                        tagIcon = '•';
                 }
 
                 tagBadge = `
@@ -440,6 +474,18 @@ class VotingApp {
                     </div>
                 `;
             }
+
+            const typeBadge = isBug
+                ? `
+                    <div style="margin-top: 8px;">
+                        <span class="label" style="--label-color: #ef4444;">
+                            <span class="label-dot" aria-hidden="true"></span>
+                            <span>🐞 Bug</span>
+                            <span>${this.escapeHtml((suggestion.severity || 'medium').toUpperCase())}</span>
+                        </span>
+                    </div>
+                `
+                : '';
 
             // Generate comment badge if comments exist
             const hasComments = suggestion.commentCount > 0;
@@ -463,6 +509,7 @@ class VotingApp {
                         <div class="suggestion-content">
                             <h3 class="suggestion-title">${this.escapeHtml(suggestion.title)}</h3>
                             <p class="suggestion-description">${this.escapeHtml(suggestion.description)}</p>
+                            ${typeBadge}
                             ${tagBadge}
                             ${commentBadge}
                             <div id="comments-${suggestion.id}" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light);">
@@ -472,16 +519,22 @@ class VotingApp {
                     </div>
                     <div class="suggestion-footer">
                         <div class="vote-info">
-                            <span class="vote-count">${suggestion.votes || 0}</span>
-                            <span>Vote${(suggestion.votes || 0) !== 1 ? 's' : ''}</span>
+                            ${isBug
+                                ? '<span>Bug-Report</span>'
+                                : `<span class="vote-count">${suggestion.votes || 0}</span>
+                                   <span>Vote${(suggestion.votes || 0) !== 1 ? 's' : ''}</span>`
+                            }
                         </div>
-                        <button
-                            class="vote-btn ${suggestion.hasVoted ? 'voted' : ''}"
-                            ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
-                            onclick="app.voteSuggestion('${suggestion.id}', this)"
-                        >
-                            ${suggestion.hasVoted ? 'Gevotet ✓' : 'Vote'}
-                        </button>
+                        ${isBug
+                            ? `<button class="vote-btn" disabled>Nur Status-Tracking</button>`
+                            : `<button
+                                class="vote-btn ${suggestion.hasVoted ? 'voted' : ''}"
+                                ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
+                                onclick="app.voteSuggestion('${suggestion.id}', this)"
+                            >
+                                ${suggestion.hasVoted ? 'Gevotet ✓' : 'Vote'}
+                            </button>`
+                        }
                     </div>
                 </div>
             `;
@@ -575,8 +628,19 @@ class VotingApp {
         }
     }
 
-    showSuccessOverlay() {
+    showSuccessOverlay(type = 'feature') {
         const overlay = document.getElementById('successOverlay');
+        const title = document.getElementById('successOverlayTitle');
+        const message = document.getElementById('successOverlayMessage');
+
+        if (type === 'bug') {
+            title.textContent = 'Bug gemeldet!';
+            message.textContent = 'Dein Bug-Report wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.';
+        } else {
+            title.textContent = 'Vorschlag eingereicht!';
+            message.textContent = 'Dein Vorschlag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.';
+        }
+
         overlay.style.display = 'flex';
         // Prevent body scroll
         document.body.style.overflow = 'hidden';

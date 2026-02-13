@@ -64,6 +64,10 @@ class AdminApp {
                 document.getElementById('totalApps').textContent = stats.totalApps;
                 document.getElementById('totalSuggestions').textContent = stats.totalSuggestions;
                 document.getElementById('totalVotes').textContent = stats.totalVotes;
+                const totalBugsEl = document.getElementById('totalBugs');
+                if (totalBugsEl) {
+                    totalBugsEl.textContent = stats.totalBugs || 0;
+                }
             } else {
                 throw new Error(stats.error);
             }
@@ -159,9 +163,14 @@ class AdminApp {
         }
 
         suggestionsList.innerHTML = suggestions.map(suggestion => {
+            const suggestionType = suggestion.type || 'feature';
+            const isBug = suggestionType === 'bug';
             const isApproved = suggestion.approved === true;
-            const isImplemented = suggestion.tag === 'ist umgesetzt';
+            const isImplemented = isBug ? suggestion.tag === 'behoben' : suggestion.tag === 'ist umgesetzt';
             const itemOpacity = isImplemented ? 'opacity: 0.5;' : '';
+            const typeBadge = isBug
+                ? '<span style="background: #ef4444; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">🐞 Bug</span>'
+                : '<span style="background: #4f46e5; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">✨ Feature</span>';
 
             const statusBadge = isApproved
                 ? '<span style="background: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">✓ Freigegeben</span>'
@@ -180,6 +189,7 @@ class AdminApp {
                         <div class="suggestion-content">
                             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;">
                                 <h4 style="margin: 0;">${this.escapeHtml(suggestion.title)}</h4>
+                                ${typeBadge}
                                 ${statusBadge}
                                 ${commentBadge}
                             </div>
@@ -189,7 +199,7 @@ class AdminApp {
                                     <strong>App:</strong> ${this.escapeHtml(suggestion.app.name)}
                                 </div>
                                 <div class="meta-item">
-                                    <strong>Votes:</strong> ${suggestion.votes || 0}
+                                    <strong>${isBug ? 'Schweregrad' : 'Votes'}:</strong> ${isBug ? this.escapeHtml((suggestion.severity || 'medium').toUpperCase()) : (suggestion.votes || 0)}
                                 </div>
                                 <div class="meta-item">
                                     <strong>Erstellt:</strong> ${this.formatDate(suggestion.createdAt)}
@@ -208,10 +218,7 @@ class AdminApp {
                                     onchange="adminApp.updateSuggestionTag('${suggestion.id}', this.value)"
                                     style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 0.85rem; cursor: pointer; min-width: 200px;">
                                     <option value="">Kein Tag</option>
-                                    <option value="wird umgesetzt" ${suggestion.tag === 'wird umgesetzt' ? 'selected' : ''}>wird umgesetzt</option>
-                                    <option value="wird nicht umgesetzt" ${suggestion.tag === 'wird nicht umgesetzt' ? 'selected' : ''}>wird nicht umgesetzt</option>
-                                    <option value="wird geprüft" ${suggestion.tag === 'wird geprüft' ? 'selected' : ''}>wird geprüft</option>
-                                    <option value="ist umgesetzt" ${suggestion.tag === 'ist umgesetzt' ? 'selected' : ''}>ist umgesetzt</option>
+                                    ${this.getTagOptionsForType(suggestionType, suggestion.tag)}
                                 </select>
                             </div>
                             <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light);">
@@ -237,6 +244,16 @@ class AdminApp {
                 </div>
             `;
         }).join('');
+    }
+
+    getTagOptionsForType(type, currentTag) {
+        const featureTags = ['wird umgesetzt', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
+        const bugTags = ['neu', 'in analyse', 'behoben', 'nicht reproduzierbar'];
+        const tags = type === 'bug' ? bugTags : featureTags;
+
+        return tags.map(tag => `
+            <option value="${tag}" ${currentTag === tag ? 'selected' : ''}>${tag}</option>
+        `).join('');
     }
 
     showAppModal(app = null) {
