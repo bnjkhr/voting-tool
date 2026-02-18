@@ -9,8 +9,6 @@
     --primary-color: #4F46E5;        /* Indigo – einziger Akzent */
     --primary-hover: #4338CA;
     --primary-light: #EEF2FF;        /* Indigo-50 for focus rings */
-    --accent-color: #4F46E5;
-    --accent-hover: #4338CA;
     --success-color: #10B981;
     --success-light: #D1FAE5;
     --danger-color: #EF4444;
@@ -131,44 +129,11 @@ body {
     position: relative;
 }
 
-.settings-btn {
-    position: absolute;
-    top: var(--spacing-lg);
-    right: 0;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    color: var(--text-secondary);
-    transition: var(--transition);
-    z-index: 10;
-}
-
-.settings-btn svg {
-    width: 18px;
-    height: 18px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-}
-
-.settings-btn:hover {
-    background: var(--surface-hover);
-    color: var(--text-primary);
-    border-color: var(--text-muted);
-}
-
+/* Header icon buttons (shared) */
+.settings-btn,
 .theme-toggle-btn {
     position: absolute;
     top: var(--spacing-lg);
-    right: 52px;
     background: transparent;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -183,6 +148,10 @@ body {
     z-index: 10;
 }
 
+.settings-btn { right: 0; }
+.theme-toggle-btn { right: 52px; }
+
+.settings-btn svg,
 .theme-toggle-btn svg {
     width: 18px;
     height: 18px;
@@ -193,6 +162,7 @@ body {
     stroke-linejoin: round;
 }
 
+.settings-btn:hover,
 .theme-toggle-btn:hover {
     background: var(--surface-hover);
     color: var(--text-primary);
@@ -651,7 +621,6 @@ body {
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--label-color);
-    background: rgba(100, 100, 100, 0.1);
     background: color-mix(in srgb, var(--label-color) 10%, var(--label-bg-mix));
     border: none;
     line-height: 1.4;
@@ -659,13 +628,9 @@ body {
 
 .label-button {
     cursor: pointer;
-    background: rgba(100, 100, 100, 0.1);
-    background: color-mix(in srgb, var(--label-color) 10%, var(--label-bg-mix));
-    border: none;
 }
 
 .label-button:hover {
-    background: rgba(100, 100, 100, 0.14);
     background: color-mix(in srgb, var(--label-color) 16%, var(--label-bg-mix));
 }
 
@@ -975,6 +940,155 @@ body {
 @keyframes scaleIn {
     from { transform: scale(0); }
     to { transform: scale(1); }
+}
+
+/* Success Overlay content */
+.overlay-content h2 {
+    margin: 0 0 12px 0;
+    color: var(--text-primary);
+    font-family: var(--font-heading);
+}
+
+.overlay-content p {
+    margin: 0 0 24px 0;
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.6;
+}
+
+.overlay-content .primary-btn {
+    width: 100%;
+}
+
+/* Image Modal */
+.image-modal-inner {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-modal-inner img {
+    max-width: 100%;
+    max-height: 90vh;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-floating);
+}
+
+.image-modal-close {
+    position: absolute;
+    top: -15px;
+    right: -15px;
+    background: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+}
+
+/* Comments section (rendered via JS) */
+.comments-section {
+    display: none;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+}
+
+.comments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.comment-card {
+    background: var(--border-light);
+    border-radius: var(--radius-md);
+    padding: 12px;
+}
+
+.comment-header {
+    display: flex;
+    align-items: start;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.comment-admin-badge {
+    background: var(--primary-color);
+    color: white;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.comment-date {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.comment-text {
+    margin: 8px 0 0 0;
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+}
+
+.comment-screenshots {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.comment-screenshot {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    border: 2px solid var(--border);
+    object-fit: cover;
+    box-shadow: var(--shadow);
+    transition: transform 0.2s;
+}
+
+.comment-screenshot:hover {
+    transform: scale(1.05);
+}
+
+.comments-error {
+    color: var(--danger-color);
+    padding: 8px;
+    font-size: 0.9rem;
+}
+
+.comments-empty {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-style: italic;
+}
+
+/* Badge spacing (used in suggestion cards) */
+.badge-row {
+    margin-top: 8px;
+}
+
+/* Form hint text */
+.form-hint {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-top: var(--spacing-xs);
 }
 
 /* Responsive */

@@ -1,4 +1,18 @@
 class VotingApp {
+    static TAG_STYLES = {
+        'wird umgesetzt':       { color: '#10b981', icon: '\u2713' },
+        'ist umgesetzt':        { color: '#059669', icon: '\u2713\u2713' },
+        'umgesetzt':            { color: '#059669', icon: '\u2713\u2713' },
+        'wird nicht umgesetzt': { color: '#ef4444', icon: '\u2717' },
+        'wird gepr\u00fcft':    { color: '#f59e0b', icon: '\u231B' },
+        'neu':                  { color: '#ef4444', icon: '\uD83D\uDC1E' },
+        'in analyse':           { color: '#f59e0b', icon: '\uD83D\uDD0E' },
+        'behoben':              { color: '#10b981', icon: '\u2713' },
+        'nicht reproduzierbar': { color: '#64748b', icon: '\u2205' },
+    };
+
+    static DEFAULT_TAG_STYLE = { color: '#64748b', icon: '\u2022' };
+
     constructor() {
         this.currentApp = null;
         this.votedSuggestions = new Set(this.getVotedSuggestions());
@@ -76,28 +90,25 @@ class VotingApp {
     }
 
     // Navigation methods
+    showSection(sectionId, showFab = false) {
+        const sections = ['appSelection', 'suggestionsView', 'suggestionForm'];
+        for (const id of sections) {
+            document.getElementById(id).classList.toggle('hidden', id !== sectionId);
+        }
+        document.getElementById('fabBtn').style.display = showFab ? 'flex' : 'none';
+    }
+
     showAppSelection() {
-        document.getElementById('appSelection').classList.remove('hidden');
-        document.getElementById('suggestionsView').classList.add('hidden');
-        document.getElementById('suggestionForm').classList.add('hidden');
-        document.getElementById('fabBtn').style.display = 'none';
+        this.showSection('appSelection');
         this.currentApp = null;
     }
 
     showSuggestions() {
-        document.getElementById('appSelection').classList.add('hidden');
-        document.getElementById('suggestionsView').classList.remove('hidden');
-        document.getElementById('suggestionForm').classList.add('hidden');
-        document.getElementById('fabBtn').style.display = 'flex';
+        this.showSection('suggestionsView', true);
     }
 
     showSuggestionForm() {
-        document.getElementById('appSelection').classList.add('hidden');
-        document.getElementById('suggestionsView').classList.add('hidden');
-        document.getElementById('suggestionForm').classList.remove('hidden');
-        document.getElementById('fabBtn').style.display = 'none';
-
-        // Clear form
+        this.showSection('suggestionForm');
         document.getElementById('newSuggestionForm').reset();
         this.updateReportTypeUI('feature');
         this.updateEntryNotificationUI(false);
@@ -152,19 +163,12 @@ class VotingApp {
             }
 
             const apps = await response.json();
-
-            if (apps.length === 0) {
-                this.renderApps([]);
-                return;
-            }
-
             this.renderApps(apps);
         } catch (error) {
             console.error('Error loading apps:', error);
             this.showToast('Fehler beim Laden der Apps', 'error');
         }
     }
-
 
     async loadSuggestions(appId) {
         try {
@@ -177,12 +181,10 @@ class VotingApp {
 
             const suggestions = await response.json();
 
-            // Ensure suggestions is an array
             if (!Array.isArray(suggestions)) {
                 throw new Error('Invalid response format from server');
             }
 
-            // hasVoted is now included in the response from backend
             this.allSuggestions = suggestions;
             this.renderFilterBar();
             this.renderSuggestions(this.filterSuggestions(suggestions));
@@ -217,9 +219,14 @@ class VotingApp {
             }
         }
 
-        const payload = { type, title, description };
-        payload.notificationEnabled = notificationEnabled;
-        payload.notificationEmail = notificationEnabled ? notificationEmail : null;
+        const payload = {
+            type,
+            title,
+            description,
+            notificationEnabled,
+            notificationEmail: notificationEnabled ? notificationEmail : null,
+        };
+
         if (type === 'bug') {
             const stepsToReproduce = document.getElementById('stepsToReproduce').value.trim();
             const expectedBehavior = document.getElementById('expectedBehavior').value.trim();
@@ -268,51 +275,44 @@ class VotingApp {
         if (button.disabled) return;
 
         const isVoted = button.classList.contains('voted');
+        button.disabled = true;
 
         try {
-            button.disabled = true;
-
-            const url = `/api/suggestions/${suggestionId}/vote`;
-            const method = isVoted ? 'DELETE' : 'POST';
-
-            const response = await fetch(url, {
-                method: method,
-                headers: {
-                    'Content-Type': 'application/json'
-                }
+            const response = await fetch(`/api/suggestions/${suggestionId}/vote`, {
+                method: isVoted ? 'DELETE' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
             });
 
-            if (response.ok) {
-                const voteCountEl = button.parentElement.querySelector('.vote-count');
-                if (!voteCountEl) return;
-                const currentCount = parseInt(voteCountEl.textContent);
-
-                if (isVoted) {
-                    // Unvote
-                    this.showToast('Vote erfolgreich entfernt!', 'success');
-                    button.classList.remove('voted');
-                    voteCountEl.classList.remove('voted');
-                    voteCountEl.textContent = Math.max(0, currentCount - 1);
-                    this.votedSuggestions.delete(suggestionId);
-                } else {
-                    // Vote
-                    this.showToast('Vote erfolgreich abgegeben!', 'success');
-                    button.classList.add('voted');
-                    voteCountEl.classList.add('voted');
-                    voteCountEl.textContent = currentCount + 1;
-                    this.votedSuggestions.add(suggestionId);
-                }
-
-                this.saveVotedSuggestions();
-                button.disabled = false;
-            } else {
+            if (!response.ok) {
                 const error = await response.json();
                 this.showToast(error.error || 'Fehler beim Voten', 'error');
-                button.disabled = false;
+                return;
             }
+
+            const voteCountEl = button.parentElement.querySelector('.vote-count');
+            if (!voteCountEl) return;
+
+            const currentCount = parseInt(voteCountEl.textContent);
+
+            if (isVoted) {
+                this.showToast('Vote erfolgreich entfernt!', 'success');
+                button.classList.remove('voted');
+                voteCountEl.classList.remove('voted');
+                voteCountEl.textContent = Math.max(0, currentCount - 1);
+                this.votedSuggestions.delete(suggestionId);
+            } else {
+                this.showToast('Vote erfolgreich abgegeben!', 'success');
+                button.classList.add('voted');
+                voteCountEl.classList.add('voted');
+                voteCountEl.textContent = currentCount + 1;
+                this.votedSuggestions.add(suggestionId);
+            }
+
+            this.saveVotedSuggestions();
         } catch (error) {
             console.error('Error voting:', error);
             this.showToast('Fehler beim Voten', 'error');
+        } finally {
             button.disabled = false;
         }
     }
@@ -399,13 +399,9 @@ class VotingApp {
     }
 
     filterSuggestions(suggestions) {
-        if (this.currentFilter === 'all') {
-            return suggestions;
-        } else if (this.currentFilter === 'keine') {
-            return suggestions.filter(s => !s.tag);
-        } else {
-            return suggestions.filter(s => s.tag === this.currentFilter);
-        }
+        if (this.currentFilter === 'all') return suggestions;
+        if (this.currentFilter === 'keine') return suggestions.filter(s => !s.tag);
+        return suggestions.filter(s => s.tag === this.currentFilter);
     }
 
     // Rendering methods
@@ -428,11 +424,8 @@ class VotingApp {
     renderSuggestions(suggestions) {
         const suggestionsList = document.getElementById('suggestionsList');
 
-        // Remove existing suggestions but keep filter bar
-        const existingCards = suggestionsList.querySelectorAll('.suggestion-card');
-        existingCards.forEach(card => card.remove());
+        suggestionsList.querySelectorAll('.suggestion-card').forEach(card => card.remove());
 
-        // Remove loading message if exists
         const loadingMsg = suggestionsList.querySelector('.loading:not(.filter-bar-container .loading)');
         if (loadingMsg && !loadingMsg.closest('.filter-bar-container')) {
             loadingMsg.remove();
@@ -461,56 +454,13 @@ class VotingApp {
             const cardOpacity = isImplemented ? 'opacity: 0.5;' : '';
             const isBug = suggestionType === 'bug';
 
-            // Generate tag badge if tag exists
             let tagBadge = '';
             if (suggestion.tag) {
-                let tagColor = '';
-                let tagIcon = '';
-
-                switch (suggestion.tag) {
-                    case 'wird umgesetzt':
-                        tagColor = '#10b981'; // green
-                        tagIcon = '✓';
-                        break;
-                    case 'ist umgesetzt':
-                        tagColor = '#059669'; // darker green
-                        tagIcon = '✓✓';
-                        break;
-                    case 'umgesetzt':
-                        tagColor = '#059669'; // alias for "ist umgesetzt"
-                        tagIcon = '✓✓';
-                        break;
-                    case 'wird nicht umgesetzt':
-                        tagColor = '#ef4444'; // red
-                        tagIcon = '✗';
-                        break;
-                    case 'wird geprüft':
-                        tagColor = '#f59e0b'; // orange
-                        tagIcon = '⏳';
-                        break;
-                    case 'neu':
-                        tagColor = '#ef4444';
-                        tagIcon = '🐞';
-                        break;
-                    case 'in analyse':
-                        tagColor = '#f59e0b';
-                        tagIcon = '🔎';
-                        break;
-                    case 'behoben':
-                        tagColor = '#10b981';
-                        tagIcon = '✓';
-                        break;
-                    case 'nicht reproduzierbar':
-                        tagColor = '#64748b';
-                        tagIcon = '∅';
-                        break;
-                    default:
-                        tagColor = '#64748b';
-                        tagIcon = '•';
-                }
+                const { color: tagColor, icon: tagIcon } =
+                    VotingApp.TAG_STYLES[suggestion.tag] || VotingApp.DEFAULT_TAG_STYLE;
 
                 tagBadge = `
-                    <div style="margin-top: 8px;">
+                    <div class="badge-row">
                         <span class="label" style="--label-color: ${tagColor};">
                             <span class="label-dot" aria-hidden="true"></span>
                             <span>${tagIcon}</span>
@@ -521,32 +471,28 @@ class VotingApp {
             }
 
             const typeBadge = isBug
-                ? `
-                    <div style="margin-top: 8px;">
+                ? `<div class="badge-row">
                         <span class="label" style="--label-color: #ef4444;">
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>🐞 Bug</span>
+                            <span>\uD83D\uDC1E Bug</span>
                             <span>${this.escapeHtml((suggestion.severity || 'medium').toUpperCase())}</span>
                         </span>
-                    </div>
-                `
+                    </div>`
                 : '';
 
-            // Generate comment badge if comments exist
-            const hasComments = suggestion.commentCount > 0;
-            const commentBadge = hasComments ? `
-                <div style="margin-top: 8px;">
-                    <button
-                        onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
-                        class="label label-button"
-                        style="--label-color: #3b82f6;"
-                    >
-                        <span class="label-dot" aria-hidden="true"></span>
-                        <span>Kommentare</span>
-                        <span>(${suggestion.commentCount})</span>
-                    </button>
-                </div>
-            ` : '';
+            const commentBadge = suggestion.commentCount > 0
+                ? `<div class="badge-row">
+                        <button
+                            onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
+                            class="label label-button"
+                            style="--label-color: #3b82f6;"
+                        >
+                            <span class="label-dot" aria-hidden="true"></span>
+                            <span>Kommentare</span>
+                            <span>(${suggestion.commentCount})</span>
+                        </button>
+                    </div>`
+                : '';
 
             return `
                 <div class="suggestion-card" style="${cardOpacity}">
@@ -569,8 +515,8 @@ class VotingApp {
                             ${typeBadge}
                             ${tagBadge}
                             ${commentBadge}
-                            <div id="comments-${suggestion.id}" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light);">
-                                <div class="loading" style="font-size: 0.9rem;">Kommentare werden geladen...</div>
+                            <div id="comments-${suggestion.id}" class="comments-section">
+                                <div class="loading">Kommentare werden geladen...</div>
                             </div>
                         </div>
                     </div>
@@ -578,11 +524,8 @@ class VotingApp {
             `;
         }).join('');
 
-        // Create a temporary container and append all suggestions
         const tempContainer = document.createElement('div');
         tempContainer.innerHTML = suggestionsHTML;
-
-        // Append all suggestion cards to the list
         Array.from(tempContainer.children).forEach(child => {
             suggestionsList.appendChild(child);
         });
@@ -667,40 +610,31 @@ class VotingApp {
     }
 
     showSuccessOverlay(type = 'feature') {
-        const overlay = document.getElementById('successOverlay');
-        const title = document.getElementById('successOverlayTitle');
-        const message = document.getElementById('successOverlayMessage');
+        const isBug = type === 'bug';
+        document.getElementById('successOverlayTitle').textContent =
+            isBug ? 'Bug gemeldet!' : 'Vorschlag eingereicht!';
+        document.getElementById('successOverlayMessage').textContent =
+            isBug
+                ? 'Dein Bug-Report wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.'
+                : 'Dein Vorschlag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.';
 
-        if (type === 'bug') {
-            title.textContent = 'Bug gemeldet!';
-            message.textContent = 'Dein Bug-Report wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.';
-        } else {
-            title.textContent = 'Vorschlag eingereicht!';
-            message.textContent = 'Dein Vorschlag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.';
-        }
-
-        overlay.style.display = 'flex';
-        // Prevent body scroll
+        document.getElementById('successOverlay').classList.remove('hidden');
         document.body.style.overflow = 'hidden';
     }
 
     closeSuccessOverlay() {
-        const overlay = document.getElementById('successOverlay');
-        overlay.style.display = 'none';
-        // Restore body scroll
+        document.getElementById('successOverlay').classList.add('hidden');
         document.body.style.overflow = '';
-        // Navigate back to suggestions
         this.showSuggestions();
     }
 
     async toggleComments(suggestionId) {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
+        const isHidden = commentsDiv.style.display === 'none' || !commentsDiv.style.display;
 
-        if (commentsDiv.style.display === 'none') {
-            commentsDiv.style.display = 'block';
+        commentsDiv.style.display = isHidden ? 'block' : 'none';
+        if (isHidden) {
             await this.loadComments(suggestionId);
-        } else {
-            commentsDiv.style.display = 'none';
         }
     }
 
@@ -718,7 +652,7 @@ class VotingApp {
             }
         } catch (error) {
             console.error('Error loading comments:', error);
-            commentsDiv.innerHTML = '<div style="color: var(--danger-color); padding: 8px; font-size: 0.9rem;">Fehler beim Laden der Kommentare</div>';
+            commentsDiv.innerHTML = '<div class="comments-error">Fehler beim Laden der Kommentare</div>';
         }
     }
 
@@ -726,56 +660,44 @@ class VotingApp {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
 
         if (comments.length === 0) {
-            commentsDiv.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem; font-style: italic;">Noch keine Kommentare vorhanden.</p>';
+            commentsDiv.innerHTML = '<p class="comments-empty">Noch keine Kommentare vorhanden.</p>';
             return;
         }
 
-        let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
-
-        comments.forEach((comment, commentIdx) => {
-            html += `
-                <div style="background: var(--border-light); border-radius: 8px; padding: 12px;">
-                    <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 4px;">
-                        <span style="background: var(--primary-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">ADMIN</span>
-                        <span style="color: var(--text-secondary); font-size: 0.8rem;">
-                            ${this.formatDate(comment.createdAt)}
-                        </span>
-                    </div>
-                    <p style="margin: 8px 0 0 0; white-space: pre-wrap; font-size: 0.9rem; line-height: 1.5; color: var(--text-primary);">${this.escapeHtml(comment.text)}</p>
-                    ${comment.screenshots && comment.screenshots.length > 0 ? `
-                        <div style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
-                            ${comment.screenshots.map((screenshot, idx) => `
-                                <img
-                                    src="${screenshot}"
-                                    alt="Screenshot ${idx + 1}"
-                                    data-screenshot-index="${commentIdx}-${idx}"
-                                    onclick="app.showImageModal(this.src)"
-                                    style="max-width: 200px; max-height: 200px; border-radius: 8px; cursor: pointer; border: 2px solid var(--border); object-fit: cover; box-shadow: var(--shadow); transition: transform 0.2s;"
-                                    onmouseover="this.style.transform='scale(1.05)'"
-                                    onmouseout="this.style.transform='scale(1)'"
-                                >
-                            `).join('')}
-                        </div>
-                    ` : ''}
+        const commentsHTML = comments.map((comment, commentIdx) => `
+            <div class="comment-card">
+                <div class="comment-header">
+                    <span class="comment-admin-badge">ADMIN</span>
+                    <span class="comment-date">${this.formatDate(comment.createdAt)}</span>
                 </div>
-            `;
-        });
+                <p class="comment-text">${this.escapeHtml(comment.text)}</p>
+                ${comment.screenshots && comment.screenshots.length > 0 ? `
+                    <div class="comment-screenshots">
+                        ${comment.screenshots.map((screenshot, idx) => `
+                            <img
+                                src="${screenshot}"
+                                alt="Screenshot ${idx + 1}"
+                                class="comment-screenshot"
+                                data-screenshot-index="${commentIdx}-${idx}"
+                                onclick="app.showImageModal(this.src)"
+                            >
+                        `).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `).join('');
 
-        html += '</div>';
-        commentsDiv.innerHTML = html;
+        commentsDiv.innerHTML = `<div class="comments-list">${commentsHTML}</div>`;
     }
 
     showImageModal(imageSrc) {
-        const modal = document.getElementById('imageModal');
-        const modalImage = document.getElementById('modalImage');
-        modalImage.src = imageSrc;
-        modal.style.display = 'flex';
+        document.getElementById('modalImage').src = imageSrc;
+        document.getElementById('imageModal').classList.remove('hidden');
         document.body.style.overflow = 'hidden';
     }
 
     closeImageModal() {
-        const modal = document.getElementById('imageModal');
-        modal.style.display = 'none';
+        document.getElementById('imageModal').classList.add('hidden');
         document.body.style.overflow = '';
     }
 }

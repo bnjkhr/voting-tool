@@ -125,7 +125,7 @@
                         </div>
                     </div>
 
-                    <div class="form-group" style="margin-top: 16px;">
+                    <div class="form-group">
                         <label class="checkbox-container">
                             <input type="checkbox" id="entryNotificationsEnabled">
                             <span class="checkmark"></span>
@@ -157,27 +157,24 @@
     <div class="toast" id="toast"></div>
 
     <!-- Success Overlay -->
-    <div class="overlay" id="successOverlay" style="display: none;">
+    <div class="overlay hidden" id="successOverlay">
         <div class="overlay-content">
             <div class="overlay-icon">✓</div>
-            <h2 id="successOverlayTitle" style="margin: 0 0 12px 0; color: var(--text-primary); font-family: var(--font-heading);">Eintrag eingereicht!</h2>
-            <p id="successOverlayMessage" style="margin: 0 0 24px 0; color: var(--text-secondary); text-align: center; line-height: 1.6;">
+            <h2 id="successOverlayTitle">Eintrag eingereicht!</h2>
+            <p id="successOverlayMessage">
                 Dein Eintrag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.
             </p>
-            <button class="primary-btn" onclick="app.closeSuccessOverlay()" style="width: 100%;">
+            <button class="primary-btn" onclick="app.closeSuccessOverlay()">
                 Verstanden
             </button>
         </div>
     </div>
 
     <!-- Image Modal -->
-    <div class="overlay" id="imageModal" style="display: none;" onclick="app.closeImageModal()">
-        <div style="position: relative; max-width: 90vw; max-height: 90vh; display: flex; align-items: center; justify-content: center;" onclick="event.stopPropagation()">
-            <img id="modalImage" src="" alt="Screenshot" style="max-width: 100%; max-height: 90vh; border-radius: 12px; box-shadow: var(--shadow-floating);">
-            <button
-                onclick="app.closeImageModal()"
-                style="position: absolute; top: -15px; right: -15px; background: white; border: none; border-radius: 50%; width: 40px; height: 40px; font-size: 24px; cursor: pointer; box-shadow: var(--shadow-lg); display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
-            >×</button>
+    <div class="overlay hidden" id="imageModal" onclick="app.closeImageModal()">
+        <div class="image-modal-inner" onclick="event.stopPropagation()">
+            <img id="modalImage" src="" alt="Screenshot">
+            <button class="image-modal-close" onclick="app.closeImageModal()">×</button>
         </div>
     </div>
 
