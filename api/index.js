@@ -858,9 +858,16 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       };
     });
 
-    // Sort by approval status (pending first), then by votes (desc), then by createdAt (desc)
+    // Sort: open/new first, implemented/resolved last; then pending before approved; then votes desc; then newest first
     suggestions.sort((a, b) => {
-      // First: pending suggestions (not approved) come first
+      // First: implemented/resolved items sink to the bottom
+      const aResolved = (a.type === 'bug' ? a.tag === 'behoben' : a.tag === 'ist umgesetzt') ? 1 : 0;
+      const bResolved = (b.type === 'bug' ? b.tag === 'behoben' : b.tag === 'ist umgesetzt') ? 1 : 0;
+      if (aResolved !== bResolved) {
+        return aResolved - bResolved;
+      }
+
+      // Then: pending suggestions (not approved) come before approved
       const aApproved = a.approved === true ? 1 : 0;
       const bApproved = b.approved === true ? 1 : 0;
       if (aApproved !== bApproved) {
