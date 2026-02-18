@@ -71,6 +71,7 @@
     --transition: all 0.15s ease;
     --transition-fast: all 0.1s ease;
     --transition-slow: all 0.2s ease;
+    --label-bg-mix: white;
 }
 
 [data-theme="dark"] {
@@ -85,8 +86,8 @@
     --text-muted: #606060;
     --text-inverse: #0F0F0F;
 
-    --border: #2A2A2A;
-    --border-light: #222222;
+    --border: #222222;
+    --border-light: #2A2A2A;
     --border-focus: #6366F1;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -100,6 +101,7 @@
     --success-light: rgba(16, 185, 129, 0.15);
     --danger-light: rgba(239, 68, 68, 0.15);
     --warning-light: rgba(245, 158, 11, 0.15);
+    --label-bg-mix: #1A1A1A;
 }
 
 body {
@@ -661,19 +663,19 @@ body {
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--label-color);
-    background: color-mix(in srgb, var(--label-color) 8%, white);
+    background: color-mix(in srgb, var(--label-color) 10%, var(--label-bg-mix));
     border: none;
     line-height: 1.4;
 }
 
 .label-button {
     cursor: pointer;
-    background: color-mix(in srgb, var(--label-color) 8%, white);
+    background: color-mix(in srgb, var(--label-color) 10%, var(--label-bg-mix));
     border: none;
 }
 
 .label-button:hover {
-    background: color-mix(in srgb, var(--label-color) 14%, white);
+    background: color-mix(in srgb, var(--label-color) 16%, var(--label-bg-mix));
 }
 
 .label-dot {
