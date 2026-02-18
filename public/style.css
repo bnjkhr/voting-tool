@@ -165,6 +165,40 @@ body {
     border-color: var(--text-muted);
 }
 
+.theme-toggle-btn {
+    position: absolute;
+    top: var(--spacing-lg);
+    right: 52px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: var(--transition);
+    z-index: 10;
+}
+
+.theme-toggle-btn svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.theme-toggle-btn:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
 .header h1 {
     font-family: var(--font-heading);
     font-size: clamp(2.25rem, 5vw, 3.5rem);
