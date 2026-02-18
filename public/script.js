@@ -24,6 +24,8 @@ class VotingApp {
     applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('theme', theme);
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) metaTheme.setAttribute('content', theme === 'dark' ? '#0F0F0F' : '#FFFFFF');
 
         const btn = document.getElementById('themeToggleBtn');
         if (!btn) return;
@@ -282,6 +284,7 @@ class VotingApp {
 
             if (response.ok) {
                 const voteCountEl = button.parentElement.querySelector('.vote-count');
+                if (!voteCountEl) return;
                 const currentCount = parseInt(voteCountEl.textContent);
 
                 if (isVoted) {

@@ -651,6 +651,7 @@ body {
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--label-color);
+    background: rgba(100, 100, 100, 0.1);
     background: color-mix(in srgb, var(--label-color) 10%, var(--label-bg-mix));
     border: none;
     line-height: 1.4;
@@ -658,11 +659,13 @@ body {
 
 .label-button {
     cursor: pointer;
+    background: rgba(100, 100, 100, 0.1);
     background: color-mix(in srgb, var(--label-color) 10%, var(--label-bg-mix));
     border: none;
 }
 
 .label-button:hover {
+    background: rgba(100, 100, 100, 0.14);
     background: color-mix(in srgb, var(--label-color) 16%, var(--label-bg-mix));
 }
 
