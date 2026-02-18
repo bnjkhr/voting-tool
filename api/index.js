@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const path = require('path');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const fs = require('fs');
 
 const app = express();
@@ -103,35 +103,23 @@ const VALID_BUG_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 
 // Helper function to send admin notification email
 async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}) {
-  // Check if email is configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Email not configured - RESEND_API_KEY missing');
     return;
   }
 
-  console.log('Attempting to send email notification...');
-  console.log('EMAIL_USER:', process.env.EMAIL_USER);
-  console.log('BASE_URL:', process.env.BASE_URL);
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+  const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
+
+  const reportTypeLabel = reportMeta.type === 'bug' ? 'Bug' : 'Feature';
+  const severityLine = reportMeta.type === 'bug' && reportMeta.severity
+    ? `<p><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
+    : '';
 
   try {
-    // Configure email transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-      }
-    });
-
-    const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
-
-    const reportTypeLabel = reportMeta.type === 'bug' ? 'Bug' : 'Feature';
-    const severityLine = reportMeta.type === 'bug' && reportMeta.severity
-      ? `<p><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
-      : '';
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
       to: 'ben.kohler@me.com',
       subject: `Neuer ${reportTypeLabel}-Eintrag wartet auf Freigabe: ${title}`,
       html: `
@@ -145,79 +133,56 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
         <br>
         <p><a href="${adminUrl}">Zum Admin-Bereich</a></p>
       `
-    };
+    });
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Email sent successfully:', info.messageId);
+    if (error) {
+      console.error('Failed to send admin email:', error);
+      return;
+    }
+    console.log('Admin email sent successfully:', data.id);
   } catch (error) {
-    console.error('Failed to send email:', error.message);
-    console.error('Full error:', error);
+    console.error('Failed to send admin email:', error.message);
     throw error;
   }
 }
 
 // Helper function to send user notification email
 async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName, entryType = 'feature') {
-  // Check if email is configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-    console.warn('Email not configured - EMAIL_USER or EMAIL_PASSWORD missing');
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Email not configured - RESEND_API_KEY missing');
     return;
   }
 
-  // Validate email address
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(userEmail)) {
     console.warn('Invalid user email format:', userEmail);
     return;
   }
 
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+  const suggestionUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
+
+  let statusText = '';
+  let statusColor = '';
+  switch (status) {
+    case 'approved':    statusText = 'Genehmigt';          statusColor = '#28a745'; break;
+    case 'rejected':    statusText = 'Abgelehnt';           statusColor = '#dc3545'; break;
+    case 'commented':   statusText = 'Neuer Kommentar';     statusColor = '#007bff'; break;
+    case 'tag_updated': statusText = 'Status aktualisiert'; statusColor = '#6366f1'; break;
+    default:            statusText = 'Status aktualisiert'; statusColor = '#6c757d';
+  }
+
+  const entryLabel = entryType === 'bug' ? 'Bug' : 'Eintrag';
+
   try {
-    // Configure email transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-      }
-    });
-
-    const suggestionUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
-    
-    let statusText = '';
-    let statusColor = '';
-    
-    switch(status) {
-      case 'approved':
-        statusText = 'Genehmigt';
-        statusColor = '#28a745';
-        break;
-      case 'rejected':
-        statusText = 'Abgelehnt';
-        statusColor = '#dc3545';
-        break;
-      case 'commented':
-        statusText = 'Neuer Kommentar';
-        statusColor = '#007bff';
-        break;
-      case 'tag_updated':
-        statusText = 'Status aktualisiert';
-        statusColor = '#6366f1';
-        break;
-      default:
-        statusText = 'Status aktualisiert';
-        statusColor = '#6c757d';
-    }
-
-    const entryLabel = entryType === 'bug' ? 'Bug' : 'Eintrag';
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
       to: userEmail,
       subject: `Ihr ${entryLabel} "${title}" - ${statusText}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Update zu Ihrem ${entryLabel}</h2>
-          
           <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
             <h3 style="margin-top: 0; color: ${statusColor};">${statusText}</h3>
             <p><strong>${entryLabel}:</strong> ${title}</p>
@@ -225,23 +190,22 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
             <p><strong>Typ:</strong> ${entryType === 'bug' ? 'Bug Report' : 'Feature'}</p>
             ${comment ? `<p><strong>Kommentar:</strong> ${comment}</p>` : ''}
           </div>
-          
           <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Eintrag ansehen</a></p>
-          
           <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
           <p style="color: #6c757d; font-size: 12px;">
             Sie erhalten diese E-Mail, weil Sie Benachrichtigungen für diesen Eintrag aktiviert haben.
-            <br>Um keine Benachrichtigungen mehr zu erhalten, deaktivieren Sie die Benachrichtigungen in den Einstellungen.
           </p>
         </div>
       `
-    };
+    });
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log('User notification email sent successfully:', info.messageId);
+    if (error) {
+      console.error('Failed to send user notification email:', error);
+      return;
+    }
+    console.log('User notification email sent successfully:', data.id);
   } catch (error) {
     console.error('Failed to send user notification email:', error.message);
-    console.error('Full error:', error);
     throw error;
   }
 }
