@@ -269,7 +269,6 @@ class VotingApp {
 
         try {
             button.disabled = true;
-            button.textContent = isVoted ? 'Removing...' : 'Voting...';
 
             const url = `/api/suggestions/${suggestionId}/vote`;
             const method = isVoted ? 'DELETE' : 'POST';
@@ -288,15 +287,15 @@ class VotingApp {
                 if (isVoted) {
                     // Unvote
                     this.showToast('Vote erfolgreich entfernt!', 'success');
-                    button.textContent = 'Vote';
                     button.classList.remove('voted');
+                    voteCountEl.classList.remove('voted');
                     voteCountEl.textContent = Math.max(0, currentCount - 1);
                     this.votedSuggestions.delete(suggestionId);
                 } else {
                     // Vote
                     this.showToast('Vote erfolgreich abgegeben!', 'success');
-                    button.textContent = 'Gevotet';
                     button.classList.add('voted');
+                    voteCountEl.classList.add('voted');
                     voteCountEl.textContent = currentCount + 1;
                     this.votedSuggestions.add(suggestionId);
                 }
@@ -307,13 +306,11 @@ class VotingApp {
                 const error = await response.json();
                 this.showToast(error.error || 'Fehler beim Voten', 'error');
                 button.disabled = false;
-                button.textContent = isVoted ? 'Gevotet' : 'Vote';
             }
         } catch (error) {
             console.error('Error voting:', error);
             this.showToast('Fehler beim Voten', 'error');
             button.disabled = false;
-            button.textContent = isVoted ? 'Gevotet' : 'Vote';
         }
     }
 
@@ -550,7 +547,19 @@ class VotingApp {
 
             return `
                 <div class="suggestion-card" style="${cardOpacity}">
-                    <div class="suggestion-header">
+                    <div class="suggestion-layout">
+                        ${isBug
+                            ? `<div class="bug-icon-column">🐞</div>`
+                            : `<div class="vote-column">
+                                   <button
+                                       class="upvote-btn ${suggestion.hasVoted ? 'voted' : ''}"
+                                       ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
+                                       onclick="app.voteSuggestion('${suggestion.id}', this)"
+                                       title="${suggestion.hasVoted ? 'Vote entfernen' : 'Upvoten'}"
+                                   >▲</button>
+                                   <span class="vote-count ${suggestion.hasVoted ? 'voted' : ''}">${suggestion.votes || 0}</span>
+                               </div>`
+                        }
                         <div class="suggestion-content">
                             <h3 class="suggestion-title">${this.escapeHtml(suggestion.title)}</h3>
                             <p class="suggestion-description">${this.escapeHtml(suggestion.description)}</p>
@@ -561,25 +570,6 @@ class VotingApp {
                                 <div class="loading" style="font-size: 0.9rem;">Kommentare werden geladen...</div>
                             </div>
                         </div>
-                    </div>
-                    <div class="suggestion-footer">
-                        <div class="vote-info">
-                            ${isBug
-                                ? '<span>Bug-Report</span>'
-                                : `<span class="vote-count">${suggestion.votes || 0}</span>
-                                   <span>Vote${(suggestion.votes || 0) !== 1 ? 's' : ''}</span>`
-                            }
-                        </div>
-                        ${isBug
-                            ? `<button class="vote-btn" disabled>Nur Status-Tracking</button>`
-                            : `<button
-                                class="vote-btn ${suggestion.hasVoted ? 'voted' : ''}"
-                                ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
-                                onclick="app.voteSuggestion('${suggestion.id}', this)"
-                            >
-                                ${suggestion.hasVoted ? 'Gevotet ✓' : 'Vote'}
-                            </button>`
-                        }
                     </div>
                 </div>
             `;
