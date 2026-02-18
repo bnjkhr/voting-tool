@@ -167,12 +167,12 @@ body {
 
 .header h1 {
     font-family: var(--font-heading);
-    font-size: clamp(2.25rem, 5vw, 3.25rem);
-    font-weight: 700;
+    font-size: clamp(2.25rem, 5vw, 3.5rem);
+    font-weight: 800;
     color: var(--text-primary);
     margin-bottom: var(--spacing-sm);
-    letter-spacing: -0.02em;
-    line-height: 1.15;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
 }
 
 .header .subtitle {
@@ -416,7 +416,7 @@ body {
 .app-card h3 {
     font-family: var(--font-heading);
     font-size: 1.3rem;
-    font-weight: 700;
+    font-weight: 800;
     color: var(--text-primary);
     margin-bottom: var(--spacing-sm);
     line-height: 1.3;
