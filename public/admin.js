@@ -2,6 +2,7 @@ class AdminApp {
     constructor() {
         this.adminToken = null;
         this.apps = [];
+        this.selectedAppFilter = '';
         this.init();
     }
 
@@ -150,19 +151,39 @@ class AdminApp {
         `).join('');
     }
 
+    filterByApp(appId) {
+        this.selectedAppFilter = appId;
+        this.renderSuggestions(this.suggestions);
+    }
+
     renderSuggestions(suggestions) {
         const suggestionsList = document.getElementById('suggestionsList');
 
-        if (suggestions.length === 0) {
+        // Populate app filter dropdown
+        const appFilter = document.getElementById('appFilter');
+        if (appFilter && this.apps.length > 0) {
+            const currentValue = this.selectedAppFilter;
+            appFilter.innerHTML = '<option value="">Alle Apps</option>' +
+                this.apps.map(app =>
+                    `<option value="${app.id}" ${currentValue === app.id ? 'selected' : ''}>${this.escapeHtml(app.name)}</option>`
+                ).join('');
+        }
+
+        // Apply filter
+        const filtered = this.selectedAppFilter
+            ? suggestions.filter(s => s.appId === this.selectedAppFilter)
+            : suggestions;
+
+        if (filtered.length === 0) {
             suggestionsList.innerHTML = `
                 <div class="loading">
-                    Noch keine Vorschläge vorhanden.
+                    ${this.selectedAppFilter ? 'Keine Vorschläge für diese App.' : 'Noch keine Vorschläge vorhanden.'}
                 </div>
             `;
             return;
         }
 
-        suggestionsList.innerHTML = suggestions.map(suggestion => {
+        suggestionsList.innerHTML = filtered.map(suggestion => {
             const suggestionType = suggestion.type || 'feature';
             const isBug = suggestionType === 'bug';
             const isApproved = suggestion.approved === true;

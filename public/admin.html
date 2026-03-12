@@ -386,6 +386,11 @@
                 <div class="management-section">
                     <div class="suggestions-list">
                         <h3>Vorschläge verwalten</h3>
+                        <div class="form-group" style="margin-bottom: 16px;">
+                            <select id="appFilter" onchange="adminApp.filterByApp(this.value)">
+                                <option value="">Alle Apps</option>
+                            </select>
+                        </div>
                         <div id="suggestionsList">
                             <div class="loading">Vorschläge werden geladen...</div>
                         </div>
