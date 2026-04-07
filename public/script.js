@@ -1,6 +1,6 @@
 class VotingApp {
     static TAG_STYLES = {
-        'wird umgesetzt':       { color: '#10b981', icon: '\u2713' },
+        'wird umgesetzt':       { color: '#3b82f6', icon: '\u2713' },
         'ist umgesetzt':        { color: '#059669', icon: '\u2713\u2713' },
         'umgesetzt':            { color: '#059669', icon: '\u2713\u2713' },
         'wird nicht umgesetzt': { color: '#ef4444', icon: '\u2717' },
@@ -350,7 +350,7 @@ class VotingApp {
 
         const filters = [
             { id: 'all', label: 'Alle', count: counts.all, color: '#6366F1' },
-            { id: 'wird umgesetzt', label: 'Wird umgesetzt', count: counts['wird umgesetzt'], color: '#10b981' },
+            { id: 'wird umgesetzt', label: 'Wird umgesetzt', count: counts['wird umgesetzt'], color: '#3b82f6' },
             { id: 'ist umgesetzt', label: 'Ist umgesetzt', count: counts['ist umgesetzt'], color: '#059669' },
             { id: 'wird geprüft', label: 'Wird geprüft', count: counts['wird geprüft'], color: '#f59e0b' },
             { id: 'wird nicht umgesetzt', label: 'Wird nicht umgesetzt', count: counts['wird nicht umgesetzt'], color: '#ef4444' },
