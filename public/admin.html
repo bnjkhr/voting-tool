@@ -231,7 +231,7 @@
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: var(--spacing-md);
             margin-bottom: var(--spacing-xl);
         }
@@ -321,6 +321,35 @@
             }
         }
 
+        .admin-filter-select {
+            flex: 1;
+            min-width: 120px;
+            max-width: 200px;
+        }
+
+        /* Activity timeline */
+        .activity-timeline {
+            padding: var(--spacing-sm) 0;
+        }
+
+        .activity-entry {
+            display: flex;
+            gap: var(--spacing-sm);
+            padding: var(--spacing-xs) 0;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            border-left: 2px solid var(--border);
+            padding-left: var(--spacing-md);
+            margin-left: var(--spacing-xs);
+        }
+
+        .activity-entry .activity-time {
+            flex-shrink: 0;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            min-width: 90px;
+        }
+
         @media (max-width: 480px) {
             .stat-number {
                 font-size: 1.25rem;
@@ -347,16 +376,20 @@
                     <span class="stat-label">Apps</span>
                 </div>
                 <div class="stat-card">
-                    <span class="stat-number" id="totalSuggestions">-</span>
-                    <span class="stat-label">Vorschläge</span>
+                    <span class="stat-number" id="totalFeatures">-</span>
+                    <span class="stat-label">Features</span>
                 </div>
                 <div class="stat-card">
-                    <span class="stat-number" id="totalVotes">-</span>
-                    <span class="stat-label">Votes</span>
+                    <span class="stat-number" id="totalTickets">-</span>
+                    <span class="stat-label">Tickets</span>
                 </div>
                 <div class="stat-card">
                     <span class="stat-number" id="totalBugs">-</span>
                     <span class="stat-label">Bugs</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-number" id="totalVotes">-</span>
+                    <span class="stat-label">Votes</span>
                 </div>
             </section>
 
@@ -385,10 +418,26 @@
                 <!-- Suggestions Management -->
                 <div class="management-section">
                     <div class="suggestions-list">
-                        <h3>Vorschläge verwalten</h3>
-                        <div class="form-group" style="margin-bottom: 16px;">
-                            <select id="appFilter" onchange="adminApp.filterByApp(this.value)">
+                        <h3>Einträge verwalten</h3>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; padding: 0 var(--spacing-lg); margin-bottom: 16px;">
+                            <select id="appFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
                                 <option value="">Alle Apps</option>
+                            </select>
+                            <select id="typeFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                <option value="">Alle Typen</option>
+                                <option value="feature">Features</option>
+                                <option value="bug">Bugs</option>
+                                <option value="ticket">Tickets</option>
+                            </select>
+                            <select id="statusFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                <option value="">Alle Status</option>
+                            </select>
+                            <select id="priorityFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                <option value="">Alle Prioritäten</option>
+                                <option value="niedrig">Niedrig</option>
+                                <option value="mittel">Mittel</option>
+                                <option value="hoch">Hoch</option>
+                                <option value="kritisch">Kritisch</option>
                             </select>
                         </div>
                         <div id="suggestionsList">
@@ -421,6 +470,14 @@
                     <label for="appDescription">Beschreibung</label>
                     <textarea id="appDescription" required maxlength="300"
                               placeholder="Kurze Beschreibung der App..." rows="3"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="appTicketPrefix">Ticket-Präfix (2-5 Buchstaben)</label>
+                    <input type="text" id="appTicketPrefix" maxlength="5"
+                           placeholder="z.B. GYM" pattern="[A-Za-z]{2,5}"
+                           style="text-transform: uppercase;">
+                    <small class="form-hint">Wird für Ticket-Nummern verwendet, z.B. GYM-001</small>
                 </div>
 
                 <div class="form-actions">

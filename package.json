@@ -6,6 +6,8 @@
   "scripts": {
     "init-firebase": "node init-firebase.js",
     "migrate-suggestion-types": "node scripts/migrate-suggestion-types.js",
+    "migrate-ticketing": "node scripts/migrate-to-ticketing-v1.js",
+    "migrate-ticketing:dry-run": "node scripts/migrate-to-ticketing-v1.js --dry-run",
     "start": "node api/index.js",
     "dev": "node api/index.js",
     "build": "echo 'Build complete - Node.js API ready'",

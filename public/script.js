@@ -1,15 +1,32 @@
 class VotingApp {
     static TAG_STYLES = {
+        // Feature statuses
         'wird umgesetzt':       { color: '#3b82f6', icon: '\u2713' },
         'ist umgesetzt':        { color: '#059669', icon: '\u2713\u2713' },
         'umgesetzt':            { color: '#059669', icon: '\u2713\u2713' },
         'wird nicht umgesetzt': { color: '#ef4444', icon: '\u2717' },
         'wird gepr\u00fcft':    { color: '#f59e0b', icon: '\u231B' },
+        // Legacy bug tags
         'neu':                  { color: '#ef4444', icon: '\uD83D\uDC1E' },
         'in analyse':           { color: '#f59e0b', icon: '\uD83D\uDD0E' },
         'behoben':              { color: '#10b981', icon: '\u2713' },
         'nicht reproduzierbar': { color: '#64748b', icon: '\u2205' },
+        // Ticket/Bug statuses
+        'offen':                { color: '#3b82f6', icon: '\u25CB' },
+        'in Bearbeitung':       { color: '#f59e0b', icon: '\u231B' },
+        'wartend':              { color: '#a855f7', icon: '\u23F8' },
+        'gel\u00f6st':          { color: '#10b981', icon: '\u2713' },
+        'geschlossen':          { color: '#64748b', icon: '\u2717' },
     };
+
+    static PRIORITY_STYLES = {
+        'niedrig':  { color: '#3b82f6', label: 'Niedrig' },
+        'mittel':   { color: '#f59e0b', label: 'Mittel' },
+        'hoch':     { color: '#f97316', label: 'Hoch' },
+        'kritisch': { color: '#ef4444', label: 'Kritisch' },
+    };
+
+    static RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
 
     static DEFAULT_TAG_STYLE = { color: '#64748b', icon: '\u2022' };
 
@@ -115,13 +132,16 @@ class VotingApp {
     }
 
     updateReportTypeUI(type) {
-        this.currentReportType = type === 'bug' ? 'bug' : 'feature';
+        this.currentReportType = ['bug', 'ticket'].includes(type) ? type : 'feature';
         const bugFields = document.getElementById('bugFields');
+        const ticketFields = document.getElementById('ticketFields');
         const formTitle = document.getElementById('entryFormTitle');
         const submitBtn = document.getElementById('submitEntryBtn');
         const isBug = this.currentReportType === 'bug';
+        const isTicket = this.currentReportType === 'ticket';
 
         bugFields.classList.toggle('hidden', !isBug);
+        ticketFields.classList.toggle('hidden', !isTicket);
 
         document.getElementById('stepsToReproduce').required = isBug;
         document.getElementById('expectedBehavior').required = isBug;
@@ -129,12 +149,18 @@ class VotingApp {
         document.getElementById('bugSeverity').required = isBug;
 
         const descriptionEl = document.getElementById('suggestionDescription');
-        descriptionEl.placeholder = isBug
-            ? 'Kurze Zusammenfassung des Fehlers...'
-            : 'Detaillierte Beschreibung des Features...';
+        if (isBug) {
+            descriptionEl.placeholder = 'Kurze Zusammenfassung des Fehlers...';
+        } else if (isTicket) {
+            descriptionEl.placeholder = 'Beschreibe dein Anliegen...';
+        } else {
+            descriptionEl.placeholder = 'Detaillierte Beschreibung des Features...';
+        }
 
-        formTitle.textContent = isBug ? 'Bug melden' : 'Feature vorschlagen';
-        submitBtn.textContent = isBug ? 'Bug melden' : 'Feature einreichen';
+        const titles = { bug: 'Bug melden', ticket: 'Support-Ticket erstellen', feature: 'Feature vorschlagen' };
+        const buttons = { bug: 'Bug melden', ticket: 'Ticket erstellen', feature: 'Feature einreichen' };
+        formTitle.textContent = titles[this.currentReportType];
+        submitBtn.textContent = buttons[this.currentReportType];
     }
 
     updateEntryNotificationUI(enabled) {
@@ -248,6 +274,10 @@ class VotingApp {
             };
         }
 
+        if (type === 'ticket') {
+            payload.priority = document.getElementById('ticketPriority').value;
+        }
+
         try {
             const response = await fetch(`/api/apps/${this.currentApp.id}/suggestions`, {
                 method: 'POST',
@@ -321,45 +351,45 @@ class VotingApp {
     renderFilterBar() {
         const suggestionsList = document.getElementById('suggestionsList');
 
-        // Don't render filter bar if no suggestions at all
         if (this.allSuggestions.length === 0) {
             return;
         }
 
-        // Count suggestions by tag
-        const counts = {
-            all: this.allSuggestions.length,
-            'wird umgesetzt': 0,
-            'ist umgesetzt': 0,
-            'wird geprüft': 0,
-            'wird nicht umgesetzt': 0,
-            'neu': 0,
-            'in analyse': 0,
-            'behoben': 0,
-            'nicht reproduzierbar': 0,
-            'keine': 0
-        };
+        // Count suggestions by status
+        const counts = {};
+        counts['all'] = this.allSuggestions.length;
 
         this.allSuggestions.forEach(s => {
-            if (s.tag && counts.hasOwnProperty(s.tag)) {
-                counts[s.tag]++;
-            } else {
-                counts['keine']++;
-            }
+            const status = s.status || 'keine';
+            counts[status] = (counts[status] || 0) + 1;
         });
 
-        const filters = [
-            { id: 'all', label: 'Alle', count: counts.all, color: '#6366F1' },
-            { id: 'wird umgesetzt', label: 'Wird umgesetzt', count: counts['wird umgesetzt'], color: '#3b82f6' },
-            { id: 'ist umgesetzt', label: 'Ist umgesetzt', count: counts['ist umgesetzt'], color: '#059669' },
-            { id: 'wird geprüft', label: 'Wird geprüft', count: counts['wird geprüft'], color: '#f59e0b' },
-            { id: 'wird nicht umgesetzt', label: 'Wird nicht umgesetzt', count: counts['wird nicht umgesetzt'], color: '#ef4444' },
-            { id: 'neu', label: 'Bug: Neu', count: counts['neu'], color: '#ef4444' },
-            { id: 'in analyse', label: 'Bug: In Analyse', count: counts['in analyse'], color: '#f59e0b' },
-            { id: 'behoben', label: 'Bug: Behoben', count: counts['behoben'], color: '#10b981' },
-            { id: 'nicht reproduzierbar', label: 'Bug: Nicht reproduzierbar', count: counts['nicht reproduzierbar'], color: '#64748b' },
-            { id: 'keine', label: 'Ohne Status', count: counts['keine'], color: '#64748b' }
-        ];
+        // Build filter list from actual statuses present
+        const statusMeta = {
+            'all':                  { label: 'Alle', color: '#6366F1' },
+            // Feature statuses
+            'neu':                  { label: 'Neu', color: '#ef4444' },
+            'wird geprüft':        { label: 'Wird geprüft', color: '#f59e0b' },
+            'wird umgesetzt':       { label: 'Wird umgesetzt', color: '#3b82f6' },
+            'ist umgesetzt':        { label: 'Umgesetzt', color: '#059669' },
+            'wird nicht umgesetzt': { label: 'Abgelehnt', color: '#ef4444' },
+            // Ticket/Bug statuses
+            'offen':                { label: 'Offen', color: '#3b82f6' },
+            'in Bearbeitung':       { label: 'In Bearbeitung', color: '#f59e0b' },
+            'wartend':              { label: 'Wartend', color: '#a855f7' },
+            'gelöst':               { label: 'Gelöst', color: '#10b981' },
+            'geschlossen':          { label: 'Geschlossen', color: '#64748b' },
+            'keine':                { label: 'Ohne Status', color: '#64748b' },
+        };
+
+        const filters = Object.entries(statusMeta)
+            .filter(([id]) => id === 'all' || (counts[id] && counts[id] > 0))
+            .map(([id, meta]) => ({
+                id,
+                label: meta.label,
+                count: counts[id] || 0,
+                color: meta.color,
+            }));
 
         // Only show filters with count > 0 (except 'all')
         const visibleFilters = filters.filter(f => f.id === 'all' || f.count > 0);
@@ -400,8 +430,8 @@ class VotingApp {
 
     filterSuggestions(suggestions) {
         if (this.currentFilter === 'all') return suggestions;
-        if (this.currentFilter === 'keine') return suggestions.filter(s => !s.tag);
-        return suggestions.filter(s => s.tag === this.currentFilter);
+        if (this.currentFilter === 'keine') return suggestions.filter(s => !s.status);
+        return suggestions.filter(s => s.status === this.currentFilter);
     }
 
     // Rendering methods
@@ -446,38 +476,75 @@ class VotingApp {
 
         const suggestionsHTML = suggestions.map(suggestion => {
             const suggestionType = suggestion.type || 'feature';
-            // Check if suggestion is implemented (ausgegraut)
-            const normalizedTag = (suggestion.tag || '').trim().toLowerCase();
-            const isImplemented = suggestionType === 'feature'
-                ? (normalizedTag === 'ist umgesetzt' || normalizedTag === 'umgesetzt')
-                : normalizedTag === 'behoben';
+            const status = suggestion.status || '';
+
+            // Check if resolved (faded out)
+            const resolvedStatuses = VotingApp.RESOLVED_STATUSES;
+            const isImplemented = resolvedStatuses.includes(status);
             const cardOpacity = isImplemented ? 'opacity: 0.5;' : '';
             const isBug = suggestionType === 'bug';
+            const isTicket = suggestionType === 'ticket';
+            const isFeature = suggestionType === 'feature';
 
-            let tagBadge = '';
-            if (suggestion.tag) {
-                const { color: tagColor, icon: tagIcon } =
-                    VotingApp.TAG_STYLES[suggestion.tag] || VotingApp.DEFAULT_TAG_STYLE;
+            // Ticket number badge
+            const ticketNumberBadge = suggestion.ticketNumber
+                ? `<span class="ticket-number">${this.escapeHtml(suggestion.ticketNumber)}</span>`
+                : '';
 
-                tagBadge = `
+            // Status badge (uses status field)
+            let statusBadge = '';
+            if (status && status !== 'neu') {
+                const { color: statusColor, icon: statusIcon } =
+                    VotingApp.TAG_STYLES[status] || VotingApp.DEFAULT_TAG_STYLE;
+
+                statusBadge = `
                     <div class="badge-row">
-                        <span class="label" style="--label-color: ${tagColor};">
+                        <span class="label" style="--label-color: ${statusColor};">
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>${tagIcon}</span>
-                            <span>${this.escapeHtml(suggestion.tag)}</span>
+                            <span>${statusIcon}</span>
+                            <span>${this.escapeHtml(status)}</span>
                         </span>
                     </div>
                 `;
             }
 
-            const typeBadge = isBug
-                ? `<div class="badge-row">
+            // Priority badge (for all types)
+            let priorityBadge = '';
+            if (suggestion.priority && suggestion.priority !== 'mittel') {
+                const pStyle = VotingApp.PRIORITY_STYLES[suggestion.priority];
+                if (pStyle) {
+                    priorityBadge = `
+                        <span class="priority-badge" style="--priority-color: ${pStyle.color};">
+                            ${this.escapeHtml(pStyle.label)}
+                        </span>
+                    `;
+                }
+            }
+
+            // Type badge
+            let typeBadge = '';
+            if (isBug) {
+                typeBadge = `<div class="badge-row">
                         <span class="label" style="--label-color: #ef4444;">
                             <span class="label-dot" aria-hidden="true"></span>
                             <span>\uD83D\uDC1E Bug</span>
                             <span>${this.escapeHtml((suggestion.severity || 'medium').toUpperCase())}</span>
                         </span>
-                    </div>`
+                    </div>`;
+            } else if (isTicket) {
+                typeBadge = `<div class="badge-row">
+                        <span class="label" style="--label-color: #a855f7;">
+                            <span class="label-dot" aria-hidden="true"></span>
+                            <span>\uD83C\uDFAB Ticket</span>
+                        </span>
+                    </div>`;
+            }
+
+            // Labels
+            const labelBadges = (suggestion.labels || []).length > 0
+                ? `<div class="badge-row">${suggestion.labels.map(l =>
+                    `<span class="label-pill">${this.escapeHtml(l)}</span>`
+                  ).join('')}</div>`
                 : '';
 
             const commentBadge = suggestion.commentCount > 0
@@ -494,26 +561,38 @@ class VotingApp {
                     </div>`
                 : '';
 
+            // Icon column: vote for features, icons for bugs/tickets
+            let iconColumn;
+            if (isFeature) {
+                iconColumn = `<div class="vote-column">
+                    <button
+                        class="upvote-btn ${suggestion.hasVoted ? 'voted' : ''}"
+                        ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
+                        onclick="app.voteSuggestion('${suggestion.id}', this)"
+                        title="${suggestion.hasVoted ? 'Vote entfernen' : 'Upvoten'}"
+                    >▲</button>
+                    <span class="vote-count ${suggestion.hasVoted ? 'voted' : ''}">${suggestion.votes || 0}</span>
+                </div>`;
+            } else if (isBug) {
+                iconColumn = `<div class="bug-icon-column">\uD83D\uDC1E</div>`;
+            } else {
+                iconColumn = `<div class="ticket-icon-column">\uD83C\uDFAB</div>`;
+            }
+
             return `
                 <div class="suggestion-card" style="${cardOpacity}">
                     <div class="suggestion-layout">
-                        ${isBug
-                            ? `<div class="bug-icon-column">🐞</div>`
-                            : `<div class="vote-column">
-                                   <button
-                                       class="upvote-btn ${suggestion.hasVoted ? 'voted' : ''}"
-                                       ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
-                                       onclick="app.voteSuggestion('${suggestion.id}', this)"
-                                       title="${suggestion.hasVoted ? 'Vote entfernen' : 'Upvoten'}"
-                                   >▲</button>
-                                   <span class="vote-count ${suggestion.hasVoted ? 'voted' : ''}">${suggestion.votes || 0}</span>
-                               </div>`
-                        }
+                        ${iconColumn}
                         <div class="suggestion-content">
-                            <h3 class="suggestion-title">${this.escapeHtml(suggestion.title)}</h3>
+                            <div class="suggestion-title-row">
+                                ${ticketNumberBadge}
+                                <h3 class="suggestion-title">${this.escapeHtml(suggestion.title)}</h3>
+                                ${priorityBadge}
+                            </div>
                             <p class="suggestion-description">${this.escapeHtml(suggestion.description)}</p>
                             ${typeBadge}
-                            ${tagBadge}
+                            ${statusBadge}
+                            ${labelBadges}
                             ${commentBadge}
                             <div id="comments-${suggestion.id}" class="comments-section">
                                 <div class="loading">Kommentare werden geladen...</div>
@@ -610,13 +689,19 @@ class VotingApp {
     }
 
     showSuccessOverlay(type = 'feature') {
-        const isBug = type === 'bug';
-        document.getElementById('successOverlayTitle').textContent =
-            isBug ? 'Bug gemeldet!' : 'Vorschlag eingereicht!';
-        document.getElementById('successOverlayMessage').textContent =
-            isBug
-                ? 'Dein Bug-Report wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.'
-                : 'Dein Vorschlag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.';
+        const titles = {
+            bug: 'Bug gemeldet!',
+            ticket: 'Ticket erstellt!',
+            feature: 'Vorschlag eingereicht!',
+        };
+        const messages = {
+            bug: 'Dein Bug-Report wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.',
+            ticket: 'Dein Ticket wurde erfolgreich erstellt und wartet nun auf Freigabe durch einen Administrator.',
+            feature: 'Dein Vorschlag wurde erfolgreich eingereicht und wartet nun auf Freigabe durch einen Administrator.',
+        };
+
+        document.getElementById('successOverlayTitle').textContent = titles[type] || titles.feature;
+        document.getElementById('successOverlayMessage').textContent = messages[type] || messages.feature;
 
         document.getElementById('successOverlay').classList.remove('hidden');
         document.body.style.overflow = 'hidden';

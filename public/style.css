@@ -1003,7 +1003,8 @@ body::after {
     color: var(--primary-color);
 }
 
-.bug-icon-column {
+.bug-icon-column,
+.ticket-icon-column {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1018,6 +1019,58 @@ body::after {
 .suggestion-layout .suggestion-content {
     flex: 1;
     min-width: 0;
+}
+
+/* Ticket number */
+.ticket-number {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.suggestion-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.suggestion-title-row .suggestion-title {
+    margin: 0;
+}
+
+/* Priority badge */
+.priority-badge {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--priority-color) 15%, transparent);
+    color: var(--priority-color);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Label pills */
+.label-pill {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    margin-right: 4px;
 }
 
 /* Form */

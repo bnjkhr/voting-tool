@@ -65,6 +65,7 @@
                         <select id="reportType" required>
                             <option value="feature">Feature vorschlagen</option>
                             <option value="bug">Bug melden</option>
+                            <option value="ticket">Support-Ticket erstellen</option>
                         </select>
                     </div>
 
@@ -125,6 +126,18 @@
                             <label for="environmentAppVersion">App-Version (optional)</label>
                             <input type="text" id="environmentAppVersion" maxlength="100"
                                    placeholder="z. B. 2.3.1">
+                        </div>
+                    </div>
+
+                    <div id="ticketFields" class="hidden">
+                        <div class="form-group">
+                            <label for="ticketPriority">Priorität</label>
+                            <select id="ticketPriority">
+                                <option value="mittel">Mittel</option>
+                                <option value="niedrig">Niedrig</option>
+                                <option value="hoch">Hoch</option>
+                                <option value="kritisch">Kritisch</option>
+                            </select>
                         </div>
                     </div>
 

@@ -98,8 +98,111 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const FEATURE_TAGS = ['wird umgesetzt', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
 const BUG_TAGS = ['neu', 'in analyse', 'behoben', 'nicht reproduzierbar'];
-const VALID_SUGGESTION_TYPES = ['feature', 'bug'];
+const VALID_SUGGESTION_TYPES = ['feature', 'bug', 'ticket'];
 const VALID_BUG_SEVERITIES = ['low', 'medium', 'high', 'critical'];
+const VALID_PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
+
+const TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'wartend', 'gelöst', 'geschlossen'];
+const FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'ist umgesetzt', 'wird nicht umgesetzt'];
+const RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
+
+function getValidStatusesForType(type) {
+  if (type === 'feature') return FEATURE_STATUSES;
+  return TICKET_STATUSES; // tickets and bugs share the same workflow
+}
+
+function mapStatusToLegacyTag(type, status) {
+  if (type === 'feature') {
+    // Feature statuses map 1:1 to legacy tags (except 'neu')
+    if (status === 'neu') return null;
+    return FEATURE_TAGS.includes(status) ? status : null;
+  }
+  // Bug/ticket status → legacy bug tag
+  switch (status) {
+    case 'neu': return null;
+    case 'offen': return 'neu';
+    case 'in Bearbeitung': return 'in analyse';
+    case 'gelöst': return 'behoben';
+    case 'geschlossen': return 'nicht reproduzierbar';
+    default: return null;
+  }
+}
+
+function mapLegacyTagToStatus(type, tag, approved) {
+  if (type === 'bug' || type === 'ticket') {
+    if (!tag && !approved) return 'neu';
+    if (!tag && approved) return 'offen';
+    switch ((tag || '').trim().toLowerCase()) {
+      case 'neu': return 'offen';
+      case 'in analyse': return 'in Bearbeitung';
+      case 'behoben': return 'gelöst';
+      case 'nicht reproduzierbar': return 'geschlossen';
+      default: return approved ? 'offen' : 'neu';
+    }
+  }
+  // feature
+  if (!tag && !approved) return 'neu';
+  if (!tag && approved) return 'wird geprüft';
+  switch ((tag || '').trim().toLowerCase()) {
+    case 'wird geprüft': return 'wird geprüft';
+    case 'wird umgesetzt': return 'wird umgesetzt';
+    case 'ist umgesetzt': return 'ist umgesetzt';
+    case 'wird nicht umgesetzt': return 'wird nicht umgesetzt';
+    default: return approved ? 'wird geprüft' : 'neu';
+  }
+}
+
+function mapSeverityToPriority(severity) {
+  switch ((severity || '').trim().toLowerCase()) {
+    case 'low': return 'niedrig';
+    case 'medium': return 'mittel';
+    case 'high': return 'hoch';
+    case 'critical': return 'kritisch';
+    default: return 'mittel';
+  }
+}
+
+async function generateTicketNumber(appId) {
+  const counterRef = db.collection('counters').doc(appId);
+
+  const result = await db.runTransaction(async (transaction) => {
+    const counterDoc = await transaction.get(counterRef);
+
+    let prefix, nextNumber;
+    if (counterDoc.exists) {
+      prefix = counterDoc.data().prefix;
+      nextNumber = counterDoc.data().nextNumber || 1;
+    } else {
+      // Fallback: derive prefix from app name
+      const appDoc = await transaction.get(db.collection('apps').doc(appId));
+      const appName = appDoc.exists ? appDoc.data().name : 'APP';
+      prefix = appName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'APP';
+      nextNumber = 1;
+    }
+
+    transaction.set(counterRef, { prefix, nextNumber: nextNumber + 1 }, { merge: true });
+
+    return `${prefix}-${String(nextNumber).padStart(3, '0')}`;
+  });
+
+  return result;
+}
+
+async function logActivity(ticketId, action, { oldValue = null, newValue = null, detail = null, actor = 'admin' } = {}) {
+  try {
+    await db.collection('activity').add({
+      ticketId,
+      action,
+      oldValue,
+      newValue,
+      detail,
+      actor,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (error) {
+    console.error('Error logging activity:', error.message);
+  }
+}
 
 // Helper function to send admin notification email
 async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}) {
@@ -112,7 +215,8 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
   const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
 
-  const reportTypeLabel = reportMeta.type === 'bug' ? 'Bug' : 'Feature';
+  const reportTypeLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Feature' };
+  const reportTypeLabel = reportTypeLabels[reportMeta.type] || 'Feature';
   const severityLine = reportMeta.type === 'bug' && reportMeta.severity
     ? `<p><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
     : '';
@@ -173,7 +277,8 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
     default:            statusText = 'Status aktualisiert'; statusColor = '#6c757d';
   }
 
-  const entryLabel = entryType === 'bug' ? 'Bug' : 'Eintrag';
+  const entryLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Vorschlag' };
+  const entryLabel = entryLabels[entryType] || 'Eintrag';
 
   try {
     const { data, error } = await resend.emails.send({
@@ -187,7 +292,7 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
             <h3 style="margin-top: 0; color: ${statusColor};">${statusText}</h3>
             <p><strong>${entryLabel}:</strong> ${title}</p>
             <p><strong>App:</strong> ${appName}</p>
-            <p><strong>Typ:</strong> ${entryType === 'bug' ? 'Bug Report' : 'Feature'}</p>
+            <p><strong>Typ:</strong> ${entryLabel}</p>
             ${comment ? `<p><strong>Kommentar:</strong> ${comment}</p>` : ''}
           </div>
           <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Eintrag ansehen</a></p>
@@ -310,25 +415,23 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
         id: doc.id,
         ...data,
         type,
+        status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+        priority: data.priority || 'mittel',
+        labels: data.labels || [],
+        ticketNumber: data.ticketNumber || null,
         commentCount: commentCountMap[doc.id] || 0,
         hasVoted: type === 'feature' && userVotesSet.has(doc.id)
       };
     });
 
-    // Sort so that still-votable (not implemented + not voted) suggestions appear first.
-    // Implemented suggestions ("ist umgesetzt") should sink to the bottom.
+    // Sort: resolved/implemented items sink to the bottom, votable first, then newest
     suggestions.sort((a, b) => {
-      const aTag = (a.tag || '').trim().toLowerCase();
-      const bTag = (b.tag || '').trim().toLowerCase();
-      const aType = normalizeSuggestionType(a.type);
-      const bType = normalizeSuggestionType(b.type);
+      const aStatus = a.status || '';
+      const bStatus = b.status || '';
 
-      const aImplemented = aType === 'bug'
-        ? aTag === 'behoben'
-        : (aTag === 'ist umgesetzt' || aTag === 'umgesetzt');
-      const bImplemented = bType === 'bug'
-        ? bTag === 'behoben'
-        : (bTag === 'ist umgesetzt' || bTag === 'umgesetzt');
+      const resolvedStatuses = RESOLVED_STATUSES;
+      const aImplemented = resolvedStatuses.includes(aStatus);
+      const bImplemented = resolvedStatuses.includes(bStatus);
 
       if (aImplemented !== bImplemented) {
         return aImplemented ? 1 : -1; // implemented last
@@ -381,7 +484,17 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
       return res.status(400).json({ error });
     }
 
+    // Generate ticket number
+    const ticketNumber = await generateTicketNumber(appId);
+    suggestion.ticketNumber = ticketNumber;
+
     const docRef = await db.collection('suggestions').add(suggestion);
+
+    // Log activity
+    await logActivity(docRef.id, 'created', {
+      detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" erstellt`,
+      actor: `user:${userFingerprint}`,
+    });
 
     // Send email notification to admin
     try {
@@ -397,13 +510,17 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
       // Continue even if email fails
     }
 
+    const typeMessages = {
+      bug: 'Bug erfolgreich gemeldet. Er wird geprüft und dann freigegeben.',
+      ticket: 'Ticket erfolgreich erstellt. Es wird geprüft und dann freigegeben.',
+      feature: 'Vorschlag erfolgreich eingereicht. Er wird geprüft und dann freigegeben.',
+    };
+
     res.status(201).json({
       id: docRef.id,
       ...suggestion,
       createdAt: new Date(),
-      message: suggestion.type === 'bug'
-        ? 'Bug erfolgreich gemeldet. Er wird geprüft und dann freigegeben.'
-        : 'Vorschlag erfolgreich eingereicht. Er wird geprüft und dann freigegeben.'
+      message: typeMessages[suggestion.type] || typeMessages.feature
     });
   } catch (error) {
     console.error('Error creating suggestion:', error);
@@ -427,8 +544,9 @@ app.post('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (req,
     if (!suggestionDoc.exists) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
-    if (normalizeSuggestionType(suggestionDoc.data()?.type) === 'bug') {
-      return res.status(400).json({ error: 'Voting is not supported for bug reports' });
+    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    if (suggestionType !== 'feature') {
+      return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
     }
 
     // Check if user already voted
@@ -483,8 +601,9 @@ app.delete('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (re
     if (!suggestionDoc.exists) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
-    if (normalizeSuggestionType(suggestionDoc.data()?.type) === 'bug') {
-      return res.status(400).json({ error: 'Voting is not supported for bug reports' });
+    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    if (suggestionType !== 'feature') {
+      return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
     }
 
     // Check if user has voted
@@ -589,6 +708,9 @@ function buildSuggestionFromRequest(body, appId, userFingerprint) {
     notificationEmail: null,
     votes: 0,
     approved: false,
+    status: 'neu',
+    priority: 'mittel',
+    labels: [],
     userFingerprint,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   };
@@ -623,6 +745,15 @@ function buildSuggestionFromRequest(body, appId, userFingerprint) {
       platform: validateInput(body?.environment?.platform, 100) || null,
       browser: validateInput(body?.environment?.browser, 100) || null
     };
+    // Map bug severity to unified priority
+    suggestion.priority = mapSeverityToPriority(severity);
+  }
+
+  if (type === 'ticket') {
+    const priority = (body.priority || '').toString().trim().toLowerCase();
+    if (priority && VALID_PRIORITIES.includes(priority)) {
+      suggestion.priority = priority;
+    }
   }
 
   return { suggestion };
@@ -690,13 +821,23 @@ app.post('/api/admin/apps', requireAdminAuth, rateLimit(60000, 10), async (req, 
       return res.status(400).json({ error: 'Invalid name or description' });
     }
 
+    const ticketPrefix = (req.body.ticketPrefix || '').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 5);
+
     const app = {
       name: validName,
       description: validDescription,
+      ticketPrefix: ticketPrefix || validName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'APP',
+      labels: [],
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
     const docRef = await db.collection('apps').add(app);
+
+    // Initialize counter for ticket numbers
+    await db.collection('counters').doc(docRef.id).set({
+      prefix: app.ticketPrefix,
+      nextNumber: 1,
+    });
 
     res.status(201).json({
       id: docRef.id,
@@ -724,6 +865,14 @@ app.put('/api/admin/apps/:appId', requireAdminAuth, async (req, res) => {
       description: description.trim(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
+
+    // Update ticketPrefix if provided
+    const ticketPrefix = (req.body.ticketPrefix || '').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 5);
+    if (ticketPrefix) {
+      updateData.ticketPrefix = ticketPrefix;
+      // Sync counter prefix
+      await db.collection('counters').doc(appId).set({ prefix: ticketPrefix }, { merge: true });
+    }
 
     await db.collection('apps').doc(appId).update(updateData);
 
@@ -792,7 +941,9 @@ app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
       totalApps: appsSnapshot.size,
       totalSuggestions: suggestionsSnapshot.size,
       totalVotes: votesSnapshot.size,
-      totalBugs: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'bug').length
+      totalBugs: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'bug').length,
+      totalTickets: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'ticket').length,
+      totalFeatures: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'feature').length,
     };
 
     res.json(stats);
@@ -849,20 +1000,25 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
 
     const suggestions = suggestionsSnapshot.docs.map(doc => {
       const data = doc.data();
+      const type = normalizeSuggestionType(data.type);
       return {
         id: doc.id,
         ...data,
-        type: normalizeSuggestionType(data.type),
+        type,
+        status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+        priority: data.priority || 'mittel',
+        labels: data.labels || [],
+        ticketNumber: data.ticketNumber || null,
         app: appsMap[data.appId] || { name: 'Unknown App' },
         commentCount: commentCountMap[doc.id] || 0
       };
     });
 
-    // Sort: open/new first, implemented/resolved last; then pending before approved; then votes desc; then newest first
+    // Sort: resolved last, then pending before approved, then votes desc, then newest first
     suggestions.sort((a, b) => {
-      // First: implemented/resolved items sink to the bottom
-      const aResolved = (a.type === 'bug' ? a.tag === 'behoben' : a.tag === 'ist umgesetzt') ? 1 : 0;
-      const bResolved = (b.type === 'bug' ? b.tag === 'behoben' : b.tag === 'ist umgesetzt') ? 1 : 0;
+      const resolvedStatuses = RESOLVED_STATUSES;
+      const aResolved = resolvedStatuses.includes(a.status) ? 1 : 0;
+      const bResolved = resolvedStatuses.includes(b.status) ? 1 : 0;
       if (aResolved !== bResolved) {
         return aResolved - bResolved;
       }
@@ -908,10 +1064,23 @@ app.post('/api/admin/suggestions/:suggestionId/approve', requireAdminAuth, async
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
+    // Determine initial status after approval
+    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const newStatus = suggestionType === 'feature' ? 'wird geprüft' : 'offen';
+    const legacyTag = mapStatusToLegacyTag(suggestionType, newStatus);
+
     // Update suggestion to approved
     await db.collection('suggestions').doc(suggestionId).update({
       approved: true,
+      status: newStatus,
+      tag: legacyTag,
       approvedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    await logActivity(suggestionId, 'approved', {
+      oldValue: 'neu',
+      newValue: newStatus,
+      detail: `${suggestionType === 'bug' ? 'Bug' : suggestionType === 'ticket' ? 'Ticket' : 'Vorschlag'} freigegeben`,
     });
 
     // Send notification to suggestion creator
@@ -919,7 +1088,6 @@ app.post('/api/admin/suggestions/:suggestionId/approve', requireAdminAuth, async
       await notifySuggestionCreator(suggestionId, 'approved');
     } catch (notificationError) {
       console.error('Error sending approval notification:', notificationError);
-      // Continue even if notification fails
     }
 
     res.json({
@@ -950,6 +1118,7 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
     }
 
     const previousTag = suggestionDoc.data()?.tag || null;
+    const previousStatus = suggestionDoc.data()?.status || null;
     const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
     const validTags = suggestionType === 'bug' ? BUG_TAGS : FEATURE_TAGS;
     const normalizedTag = tag ? tag.toString().trim() : null;
@@ -958,13 +1127,27 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
       return res.status(400).json({ error: 'Invalid tag value' });
     }
 
-    // Update suggestion tag
+    // Sync tag to status
+    const newStatus = normalizedTag
+      ? mapLegacyTagToStatus(suggestionType, normalizedTag, true)
+      : (suggestionDoc.data()?.approved ? (suggestionType === 'feature' ? 'wird geprüft' : 'offen') : 'neu');
+
+    // Update suggestion tag + status
     await db.collection('suggestions').doc(suggestionId).update({
       tag: normalizedTag,
+      status: newStatus,
       tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    if (previousTag !== normalizedTag && suggestionType === 'bug') {
+    if (previousStatus !== newStatus) {
+      await logActivity(suggestionId, 'status_changed', {
+        oldValue: previousStatus,
+        newValue: newStatus,
+        detail: `Status geändert: ${previousStatus || 'keiner'} → ${newStatus}`,
+      });
+    }
+
+    if (previousTag !== normalizedTag) {
       try {
         const statusDescription = normalizedTag
           ? `Neuer Status: ${normalizedTag}`
@@ -1009,26 +1192,25 @@ app.delete('/api/admin/suggestions/:suggestionId', requireAdminAuth, async (req,
       // Continue even if notification fails
     }
 
-    // Delete votes for this suggestion
-    const votesSnapshot = await db.collection('votes')
-      .where('suggestionId', '==', suggestionId)
-      .get();
+    // Delete votes, comments, and activity for this suggestion
+    const [votesSnapshot, commentsSnapshot, activitySnapshot] = await Promise.all([
+      db.collection('votes').where('suggestionId', '==', suggestionId).get(),
+      db.collection('comments').where('suggestionId', '==', suggestionId).get(),
+      db.collection('activity').where('ticketId', '==', suggestionId).get(),
+    ]);
 
     const batch = db.batch();
 
-    // Delete all votes
-    votesSnapshot.docs.forEach(voteDoc => {
-      batch.delete(voteDoc.ref);
-    });
-
-    // Delete suggestion
+    votesSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+    commentsSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+    activitySnapshot.docs.forEach(doc => batch.delete(doc.ref));
     batch.delete(db.collection('suggestions').doc(suggestionId));
 
     await batch.commit();
 
     res.json({
       success: true,
-      message: 'Suggestion and all related votes deleted successfully',
+      message: 'Eintrag und alle zugehörigen Daten gelöscht',
       deletedVotes: votesSnapshot.size
     });
   } catch (error) {
@@ -1092,12 +1274,15 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
 
     const commentRef = await db.collection('comments').add(comment);
 
+    await logActivity(suggestionId, 'commented', {
+      detail: `Kommentar hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
+    });
+
     // Send notification about new comment
     try {
       await notifySuggestionCreator(suggestionId, 'commented', validText);
     } catch (notificationError) {
       console.error('Error sending comment notification:', notificationError);
-      // Continue even if notification fails
     }
 
     res.status(201).json({
@@ -1133,8 +1318,8 @@ app.get('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, async
 
     // Sort by createdAt descending (newest first)
     comments.sort((a, b) => {
-      const aTime = a.createdAt?.toDate?.() || a.createdAt?._seconds ? new Date(a.createdAt._seconds * 1000) : new Date(0);
-      const bTime = b.createdAt?.toDate?.() || b.createdAt?._seconds ? new Date(b.createdAt._seconds * 1000) : new Date(0);
+      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
+      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
       return bTime - aTime;
     });
 
@@ -1174,8 +1359,8 @@ app.get('/api/suggestions/:suggestionId/comments', async (req, res) => {
 
     // Sort by createdAt descending (newest first)
     comments.sort((a, b) => {
-      const aTime = a.createdAt?.toDate?.() || a.createdAt?._seconds ? new Date(a.createdAt._seconds * 1000) : new Date(0);
-      const bTime = b.createdAt?.toDate?.() || b.createdAt?._seconds ? new Date(b.createdAt._seconds * 1000) : new Date(0);
+      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
+      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
       return bTime - aTime;
     });
 
@@ -1369,6 +1554,234 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
     console.error('Error notifying suggestion creator:', error);
   }
 }
+
+// Admin: Update ticket status
+app.put('/api/admin/suggestions/:suggestionId/status', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+    const { status } = req.body;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const validStatuses = getValidStatusesForType(suggestionType);
+    const normalizedStatus = status ? status.toString().trim() : null;
+
+    if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
+      return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${validStatuses.join(', ')}` });
+    }
+
+    const previousStatus = suggestionDoc.data()?.status || null;
+    const legacyTag = mapStatusToLegacyTag(suggestionType, normalizedStatus);
+
+    // If status moves beyond 'neu', also set approved
+    const isApproved = normalizedStatus !== 'neu';
+
+    const updateData = {
+      status: normalizedStatus,
+      tag: legacyTag,
+      tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (isApproved && !suggestionDoc.data()?.approved) {
+      updateData.approved = true;
+      updateData.approvedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    await db.collection('suggestions').doc(suggestionId).update(updateData);
+
+    if (previousStatus !== normalizedStatus) {
+      await logActivity(suggestionId, 'status_changed', {
+        oldValue: previousStatus,
+        newValue: normalizedStatus,
+        detail: `Status geändert: ${previousStatus || 'keiner'} → ${normalizedStatus}`,
+      });
+
+      try {
+        await notifySuggestionCreator(suggestionId, 'tag_updated', `Neuer Status: ${normalizedStatus}`);
+      } catch (notificationError) {
+        console.error('Error sending status notification:', notificationError);
+      }
+    }
+
+    res.json({ success: true, message: 'Status erfolgreich aktualisiert' });
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
+// Admin: Update ticket priority
+app.put('/api/admin/suggestions/:suggestionId/priority', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+    const { priority } = req.body;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const normalizedPriority = (priority || '').toString().trim().toLowerCase();
+    if (!VALID_PRIORITIES.includes(normalizedPriority)) {
+      return res.status(400).json({ error: `Ungültige Priorität. Erlaubt: ${VALID_PRIORITIES.join(', ')}` });
+    }
+
+    const previousPriority = suggestionDoc.data()?.priority || null;
+
+    await db.collection('suggestions').doc(suggestionId).update({
+      priority: normalizedPriority,
+    });
+
+    if (previousPriority !== normalizedPriority) {
+      await logActivity(suggestionId, 'priority_changed', {
+        oldValue: previousPriority,
+        newValue: normalizedPriority,
+        detail: `Priorität geändert: ${previousPriority || 'keine'} → ${normalizedPriority}`,
+      });
+    }
+
+    res.json({ success: true, message: 'Priorität erfolgreich aktualisiert' });
+  } catch (error) {
+    console.error('Error updating priority:', error);
+    res.status(500).json({ error: 'Failed to update priority' });
+  }
+});
+
+// Admin: Add label to suggestion
+app.post('/api/admin/suggestions/:suggestionId/labels', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+    const { label } = req.body;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const validLabel = validateInput(label, 50);
+    if (!validLabel) {
+      return res.status(400).json({ error: 'Ungültiges Label' });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    await db.collection('suggestions').doc(suggestionId).update({
+      labels: admin.firestore.FieldValue.arrayUnion(validLabel),
+    });
+
+    await logActivity(suggestionId, 'label_added', {
+      newValue: validLabel,
+      detail: `Label "${validLabel}" hinzugefügt`,
+    });
+
+    res.json({ success: true, message: 'Label hinzugefügt' });
+  } catch (error) {
+    console.error('Error adding label:', error);
+    res.status(500).json({ error: 'Failed to add label' });
+  }
+});
+
+// Admin: Remove label from suggestion
+app.delete('/api/admin/suggestions/:suggestionId/labels/:label', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId, label } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const decodedLabel = decodeURIComponent(label);
+
+    await db.collection('suggestions').doc(suggestionId).update({
+      labels: admin.firestore.FieldValue.arrayRemove(decodedLabel),
+    });
+
+    await logActivity(suggestionId, 'label_removed', {
+      oldValue: decodedLabel,
+      detail: `Label "${decodedLabel}" entfernt`,
+    });
+
+    res.json({ success: true, message: 'Label entfernt' });
+  } catch (error) {
+    console.error('Error removing label:', error);
+    res.status(500).json({ error: 'Failed to remove label' });
+  }
+});
+
+// Admin: Get activity log for a suggestion
+app.get('/api/admin/suggestions/:suggestionId/activity', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const activitySnapshot = await db.collection('activity')
+      .where('ticketId', '==', suggestionId)
+      .get();
+
+    const activities = activitySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    activities.sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
+      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
+      return bTime - aTime;
+    });
+
+    res.json(activities);
+  } catch (error) {
+    console.error('Error fetching activity:', error);
+    res.status(500).json({ error: 'Failed to fetch activity' });
+  }
+});
+
+// Admin: Set app labels vocabulary
+app.put('/api/admin/apps/:appId/labels', requireAdminAuth, async (req, res) => {
+  try {
+    const { appId } = req.params;
+    const { labels } = req.body;
+
+    if (!Array.isArray(labels)) {
+      return res.status(400).json({ error: 'Labels muss ein Array sein' });
+    }
+
+    const validLabels = labels
+      .map(l => validateInput(l, 50))
+      .filter(Boolean);
+
+    await db.collection('apps').doc(appId).update({
+      labels: validLabels,
+    });
+
+    res.json({ success: true, labels: validLabels });
+  } catch (error) {
+    console.error('Error updating app labels:', error);
+    res.status(500).json({ error: 'Failed to update labels' });
+  }
+});
 
 // For Vercel serverless functions
 module.exports = app;

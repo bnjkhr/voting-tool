@@ -1,8 +1,13 @@
 class AdminApp {
+    static FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'ist umgesetzt', 'wird nicht umgesetzt'];
+    static TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'wartend', 'gelöst', 'geschlossen'];
+    static PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
+    static RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
+
     constructor() {
         this.adminToken = null;
         this.apps = [];
-        this.selectedAppFilter = '';
+        this.filters = { app: '', type: '', status: '', priority: '' };
         this.init();
     }
 
@@ -63,12 +68,10 @@ class AdminApp {
 
             if (response.ok) {
                 document.getElementById('totalApps').textContent = stats.totalApps;
-                document.getElementById('totalSuggestions').textContent = stats.totalSuggestions;
+                document.getElementById('totalFeatures').textContent = stats.totalFeatures || 0;
+                document.getElementById('totalTickets').textContent = stats.totalTickets || 0;
+                document.getElementById('totalBugs').textContent = stats.totalBugs || 0;
                 document.getElementById('totalVotes').textContent = stats.totalVotes;
-                const totalBugsEl = document.getElementById('totalBugs');
-                if (totalBugsEl) {
-                    totalBugsEl.textContent = stats.totalBugs || 0;
-                }
             } else {
                 throw new Error(stats.error);
             }
@@ -136,7 +139,7 @@ class AdminApp {
         appsList.innerHTML = apps.map(app => `
             <div class="app-item">
                 <div class="app-details">
-                    <h4>${this.escapeHtml(app.name)}</h4>
+                    <h4>${this.escapeHtml(app.name)} ${app.ticketPrefix ? `<span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">[${this.escapeHtml(app.ticketPrefix)}]</span>` : ''}</h4>
                     <p>${this.escapeHtml(app.description)}</p>
                 </div>
                 <div class="app-actions">
@@ -151,8 +154,11 @@ class AdminApp {
         `).join('');
     }
 
-    filterByApp(appId) {
-        this.selectedAppFilter = appId;
+    applyFilters() {
+        this.filters.app = document.getElementById('appFilter').value;
+        this.filters.type = document.getElementById('typeFilter').value;
+        this.filters.status = document.getElementById('statusFilter').value;
+        this.filters.priority = document.getElementById('priorityFilter').value;
         this.renderSuggestions(this.suggestions);
     }
 
@@ -162,96 +168,122 @@ class AdminApp {
         // Populate app filter dropdown
         const appFilter = document.getElementById('appFilter');
         if (appFilter && this.apps.length > 0) {
-            const currentValue = this.selectedAppFilter;
+            const currentValue = this.filters.app;
             appFilter.innerHTML = '<option value="">Alle Apps</option>' +
                 this.apps.map(app =>
                     `<option value="${app.id}" ${currentValue === app.id ? 'selected' : ''}>${this.escapeHtml(app.name)}</option>`
                 ).join('');
         }
 
-        // Apply filter
-        const filtered = this.selectedAppFilter
-            ? suggestions.filter(s => s.appId === this.selectedAppFilter)
-            : suggestions;
+        // Populate status filter from available statuses
+        const statusFilter = document.getElementById('statusFilter');
+        if (statusFilter) {
+            const allStatuses = [...new Set(suggestions.map(s => s.status).filter(Boolean))];
+            const currentStatus = this.filters.status;
+            statusFilter.innerHTML = '<option value="">Alle Status</option>' +
+                allStatuses.map(s => `<option value="${s}" ${currentStatus === s ? 'selected' : ''}>${this.escapeHtml(s)}</option>`).join('');
+        }
+
+        // Apply all filters
+        let filtered = suggestions;
+        if (this.filters.app) filtered = filtered.filter(s => s.appId === this.filters.app);
+        if (this.filters.type) filtered = filtered.filter(s => s.type === this.filters.type);
+        if (this.filters.status) filtered = filtered.filter(s => s.status === this.filters.status);
+        if (this.filters.priority) filtered = filtered.filter(s => s.priority === this.filters.priority);
 
         if (filtered.length === 0) {
-            suggestionsList.innerHTML = `
-                <div class="loading">
-                    ${this.selectedAppFilter ? 'Keine Vorschläge für diese App.' : 'Noch keine Vorschläge vorhanden.'}
-                </div>
-            `;
+            suggestionsList.innerHTML = `<div class="loading">Keine Einträge gefunden.</div>`;
             return;
         }
 
         suggestionsList.innerHTML = filtered.map(suggestion => {
             const suggestionType = suggestion.type || 'feature';
-            const isBug = suggestionType === 'bug';
+            const status = suggestion.status || '';
             const isApproved = suggestion.approved === true;
-            const isImplemented = isBug ? suggestion.tag === 'behoben' : suggestion.tag === 'ist umgesetzt';
-            const itemOpacity = isImplemented ? 'opacity: 0.5;' : '';
-            const typeBadge = isBug
-                ? '<span style="background: #ef4444; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">🐞 Bug</span>'
-                : '<span style="background: #4f46e5; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">✨ Feature</span>';
+            const resolvedStatuses = AdminApp.RESOLVED_STATUSES;
+            const isResolved = resolvedStatuses.includes(status);
+            const itemOpacity = isResolved ? 'opacity: 0.5;' : '';
 
-            const statusBadge = isApproved
+            const typeIcons = { bug: '🐞 Bug', ticket: '🎫 Ticket', feature: '✨ Feature' };
+            const typeColors = { bug: '#ef4444', ticket: '#a855f7', feature: '#4f46e5' };
+            const typeBadge = `<span style="background: ${typeColors[suggestionType] || '#4f46e5'}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${typeIcons[suggestionType] || '✨ Feature'}</span>`;
+
+            const approvalBadge = isApproved
                 ? '<span style="background: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">✓ Freigegeben</span>'
-                : '<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Wartet auf Freigabe</span>';
+                : '<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Wartet</span>';
+
+            const ticketNumberBadge = suggestion.ticketNumber
+                ? `<span style="font-family: monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--border); padding: 3px 7px; border-radius: 4px; color: var(--text-muted); font-weight: 600;">${this.escapeHtml(suggestion.ticketNumber)}</span>`
+                : '';
 
             const hasComments = suggestion.commentCount > 0;
             const commentBadge = hasComments
-                ? `<span style="background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">
-                     💬 ${suggestion.commentCount} Kommentar${suggestion.commentCount > 1 ? 'e' : ''}
-                   </span>`
+                ? `<span style="background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">💬 ${suggestion.commentCount}</span>`
                 : '';
+
+            // Labels
+            const labelPills = (suggestion.labels || []).map(l =>
+                `<span style="font-size: 11px; padding: 2px 8px; border-radius: 9999px; background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary); margin-right: 4px;">${this.escapeHtml(l)} <button onclick="adminApp.removeLabel('${suggestion.id}', '${this.escapeHtml(l)}')" style="border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:11px;padding:0 0 0 2px;">×</button></span>`
+            ).join('');
+
+            // Status options for this type
+            const statuses = suggestionType === 'feature' ? AdminApp.FEATURE_STATUSES : AdminApp.TICKET_STATUSES;
+
+            // Priority color
+            const priorityColors = { niedrig: '#3b82f6', mittel: '#f59e0b', hoch: '#f97316', kritisch: '#ef4444' };
+            const pColor = priorityColors[suggestion.priority] || '#6b7280';
 
             return `
                 <div class="suggestion-item" style="border-left: 4px solid ${isApproved ? '#10b981' : '#f59e0b'}; ${itemOpacity}">
                     <div class="suggestion-header">
                         <div class="suggestion-content">
-                            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                                ${ticketNumberBadge}
                                 <h4 style="margin: 0;">${this.escapeHtml(suggestion.title)}</h4>
                                 ${typeBadge}
-                                ${statusBadge}
+                                ${approvalBadge}
                                 ${commentBadge}
                             </div>
                             <p>${this.escapeHtml(suggestion.description)}</p>
                             <div class="suggestion-meta">
-                                <div class="meta-item">
-                                    <strong>App:</strong> ${this.escapeHtml(suggestion.app.name)}
-                                </div>
-                                <div class="meta-item">
-                                    <strong>${isBug ? 'Schweregrad' : 'Votes'}:</strong> ${isBug ? this.escapeHtml((suggestion.severity || 'medium').toUpperCase()) : (suggestion.votes || 0)}
-                                </div>
-                                <div class="meta-item">
-                                    <strong>Erstellt:</strong> ${this.formatDate(suggestion.createdAt)}
-                                </div>
-                                ${isApproved && suggestion.approvedAt ? `
-                                    <div class="meta-item">
-                                        <strong>Freigegeben:</strong> ${this.formatDate(suggestion.approvedAt)}
-                                    </div>
-                                ` : ''}
+                                <div class="meta-item"><strong>App:</strong> ${this.escapeHtml(suggestion.app.name)}</div>
+                                ${suggestionType === 'feature' ? `<div class="meta-item"><strong>Votes:</strong> ${suggestion.votes || 0}</div>` : ''}
+                                <div class="meta-item"><strong>Erstellt:</strong> ${this.formatDate(suggestion.createdAt)}</div>
                             </div>
-                            <div style="margin-top: 12px;">
-                                <label style="display: block; margin-bottom: 4px; font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;">Status-Tag:</label>
-                                <select
-                                    class="tag-select"
-                                    data-suggestion-id="${suggestion.id}"
-                                    onchange="adminApp.updateSuggestionTag('${suggestion.id}', this.value)"
-                                    style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 0.85rem; cursor: pointer; min-width: 200px;">
-                                    <option value="">Kein Tag</option>
-                                    ${this.getTagOptionsForType(suggestionType, suggestion.tag)}
-                                </select>
+                            <div style="margin-top: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: end;">
+                                <div>
+                                    <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Status:</label>
+                                    <select onchange="adminApp.updateStatus('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 0.85rem; cursor: pointer;">
+                                        ${statuses.map(s => `<option value="${s}" ${status === s ? 'selected' : ''}>${s}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Priorität:</label>
+                                    <select onchange="adminApp.updatePriority('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: ${pColor}; font-size: 0.85rem; cursor: pointer; font-weight: 600;">
+                                        ${AdminApp.PRIORITIES.map(p => `<option value="${p}" ${suggestion.priority === p ? 'selected' : ''}>${p.charAt(0).toUpperCase() + p.slice(1)}</option>`).join('')}
+                                    </select>
+                                </div>
                             </div>
-                            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light);">
-                                <button class="secondary-btn btn-small" onclick="adminApp.toggleComments('${suggestion.id}')" style="width: 100%;">
-                                    ${hasComments ? `💬 Kommentare (${suggestion.commentCount})` : '💬 Kommentar hinzufügen'}
+                            ${labelPills ? `<div style="margin-top: 8px;">${labelPills}</div>` : ''}
+                            <div style="margin-top: 8px;">
+                                <button class="secondary-btn btn-small" onclick="adminApp.promptAddLabel('${suggestion.id}')" style="font-size: 11px; padding: 2px 8px;">+ Label</button>
+                            </div>
+                            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button class="secondary-btn btn-small" onclick="adminApp.toggleComments('${suggestion.id}')" style="flex: 1;">
+                                    ${hasComments ? `💬 Kommentare (${suggestion.commentCount})` : '💬 Kommentar'}
                                 </button>
-                                <div id="comments-${suggestion.id}" style="display: none; margin-top: 12px;">
-                                    <div class="loading">Kommentare werden geladen...</div>
-                                </div>
+                                <button class="secondary-btn btn-small" onclick="adminApp.toggleActivity('${suggestion.id}')" style="flex: 1;">
+                                    📋 Aktivität
+                                </button>
+                            </div>
+                            <div id="comments-${suggestion.id}" style="display: none; margin-top: 12px;">
+                                <div class="loading">Kommentare werden geladen...</div>
+                            </div>
+                            <div id="activity-${suggestion.id}" style="display: none; margin-top: 12px;">
+                                <div class="loading">Aktivität wird geladen...</div>
                             </div>
                         </div>
-                        <div class="suggestion-actions" style="display: flex; gap: 8px;">
+                        <div class="suggestion-actions" style="display: flex; gap: 8px; flex-direction: column;">
                             ${!isApproved ? `
                                 <button class="primary-btn btn-small" onclick="adminApp.approveSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">
                                     Freigeben
@@ -267,16 +299,6 @@ class AdminApp {
         }).join('');
     }
 
-    getTagOptionsForType(type, currentTag) {
-        const featureTags = ['wird umgesetzt', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
-        const bugTags = ['neu', 'in analyse', 'behoben', 'nicht reproduzierbar'];
-        const tags = type === 'bug' ? bugTags : featureTags;
-
-        return tags.map(tag => `
-            <option value="${tag}" ${currentTag === tag ? 'selected' : ''}>${tag}</option>
-        `).join('');
-    }
-
     showAppModal(app = null) {
         const modal = document.getElementById('appModal');
         const form = document.getElementById('appForm');
@@ -286,13 +308,12 @@ class AdminApp {
         form.reset();
 
         if (app) {
-            // Edit mode
             title.textContent = 'App bearbeiten';
             document.getElementById('appId').value = app.id;
             document.getElementById('appName').value = app.name;
             document.getElementById('appDescription').value = app.description;
+            document.getElementById('appTicketPrefix').value = app.ticketPrefix || '';
         } else {
-            // Add mode
             title.textContent = 'Neue App hinzufügen';
             document.getElementById('appId').value = '';
         }
@@ -311,6 +332,7 @@ class AdminApp {
         const appId = document.getElementById('appId').value;
         const name = document.getElementById('appName').value.trim();
         const description = document.getElementById('appDescription').value.trim();
+        const ticketPrefix = (document.getElementById('appTicketPrefix').value || '').trim().toUpperCase();
 
         if (!name || !description) {
             this.showToast('Bitte füllen Sie alle Felder aus', 'error');
@@ -322,9 +344,12 @@ class AdminApp {
             const url = isEdit ? `/api/admin/apps/${appId}` : '/api/admin/apps';
             const method = isEdit ? 'PUT' : 'POST';
 
+            const payload = { name, description };
+            if (ticketPrefix) payload.ticketPrefix = ticketPrefix;
+
             const response = await this.adminFetch(url, {
                 method,
-                body: JSON.stringify({ name, description })
+                body: JSON.stringify(payload)
             });
 
             const result = await response.json();
@@ -440,28 +465,118 @@ class AdminApp {
         }
     }
 
-    async updateSuggestionTag(suggestionId, tag) {
+    async updateStatus(suggestionId, status) {
         try {
-            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/tag`, {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/status`, {
                 method: 'PUT',
-                body: JSON.stringify({ tag })
+                body: JSON.stringify({ status })
             });
-
             const result = await response.json();
-
             if (response.ok) {
-                this.showToast('Tag erfolgreich aktualisiert!', 'success');
+                this.showToast('Status aktualisiert!', 'success');
                 this.loadData();
             } else {
                 throw new Error(result.error);
             }
         } catch (error) {
-            console.error('Error updating tag:', error);
-            if (error.message.includes('Unauthorized')) {
-                this.handleAuthError();
+            console.error('Error updating status:', error);
+            this.showToast(error.message || 'Fehler beim Aktualisieren', 'error');
+        }
+    }
+
+    async updatePriority(suggestionId, priority) {
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/priority`, {
+                method: 'PUT',
+                body: JSON.stringify({ priority })
+            });
+            const result = await response.json();
+            if (response.ok) {
+                this.showToast('Priorität aktualisiert!', 'success');
             } else {
-                this.showToast(error.message || 'Fehler beim Aktualisieren des Tags', 'error');
+                throw new Error(result.error);
             }
+        } catch (error) {
+            console.error('Error updating priority:', error);
+            this.showToast(error.message || 'Fehler beim Aktualisieren', 'error');
+        }
+    }
+
+    async promptAddLabel(suggestionId) {
+        const label = prompt('Label eingeben:');
+        if (!label || !label.trim()) return;
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/labels`, {
+                method: 'POST',
+                body: JSON.stringify({ label: label.trim() })
+            });
+            const result = await response.json();
+            if (response.ok) {
+                this.showToast('Label hinzugefügt!', 'success');
+                this.loadData();
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Error adding label:', error);
+            this.showToast(error.message || 'Fehler beim Hinzufügen', 'error');
+        }
+    }
+
+    async removeLabel(suggestionId, label) {
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/labels/${encodeURIComponent(label)}`, {
+                method: 'DELETE',
+            });
+            const result = await response.json();
+            if (response.ok) {
+                this.showToast('Label entfernt!', 'success');
+                this.loadData();
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Error removing label:', error);
+            this.showToast(error.message || 'Fehler beim Entfernen', 'error');
+        }
+    }
+
+    async toggleActivity(suggestionId) {
+        const activityDiv = document.getElementById(`activity-${suggestionId}`);
+        if (activityDiv.style.display === 'none') {
+            activityDiv.style.display = 'block';
+            await this.loadActivity(suggestionId);
+        } else {
+            activityDiv.style.display = 'none';
+        }
+    }
+
+    async loadActivity(suggestionId) {
+        const activityDiv = document.getElementById(`activity-${suggestionId}`);
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/activity`);
+            const activities = await response.json();
+
+            if (!response.ok) throw new Error(activities.error);
+
+            if (activities.length === 0) {
+                activityDiv.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.85rem; font-style: italic;">Keine Aktivität vorhanden.</p>';
+                return;
+            }
+
+            activityDiv.innerHTML = `
+                <div class="activity-timeline">
+                    ${activities.map(a => `
+                        <div class="activity-entry">
+                            <span class="activity-time">${this.formatDate(a.createdAt)}</span>
+                            <span>${this.escapeHtml(a.detail || a.action)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } catch (error) {
+            console.error('Error loading activity:', error);
+            activityDiv.innerHTML = '<div style="color: var(--danger-color); padding: 8px;">Fehler beim Laden</div>';
         }
     }
 
