@@ -223,6 +223,9 @@ class VotingApp {
     async submitSuggestion(e) {
         e.preventDefault();
 
+        const submitBtn = document.getElementById('submitEntryBtn');
+        if (submitBtn.disabled) return;
+
         const type = document.getElementById('reportType').value;
         const title = document.getElementById('suggestionTitle').value.trim();
         const description = document.getElementById('suggestionDescription').value.trim();
@@ -278,6 +281,7 @@ class VotingApp {
             payload.priority = document.getElementById('ticketPriority').value;
         }
 
+        submitBtn.disabled = true;
         try {
             const response = await fetch(`/api/apps/${this.currentApp.id}/suggestions`, {
                 method: 'POST',
@@ -298,6 +302,8 @@ class VotingApp {
         } catch (error) {
             console.error('Error submitting suggestion:', error);
             this.showToast('Fehler beim Einreichen des Eintrags', 'error');
+        } finally {
+            submitBtn.disabled = false;
         }
     }
 

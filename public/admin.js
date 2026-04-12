@@ -12,9 +12,11 @@ class AdminApp {
     }
 
     init() {
-        this.checkAuth();
+        const hadToken = this.checkAuth();
         this.bindEvents();
-        this.loadData();
+        if (hadToken) {
+            this.loadData();
+        }
     }
 
     checkAuth() {
@@ -22,7 +24,9 @@ class AdminApp {
         this.adminToken = localStorage.getItem('adminToken');
         if (!this.adminToken) {
             this.showAuthPrompt();
+            return false;
         }
+        return true;
     }
 
     showAuthPrompt() {
