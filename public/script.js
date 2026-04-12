@@ -225,7 +225,6 @@ class VotingApp {
 
         const submitBtn = document.getElementById('submitEntryBtn');
         if (submitBtn.disabled) return;
-        submitBtn.disabled = true;
 
         const type = document.getElementById('reportType').value;
         const title = document.getElementById('suggestionTitle').value.trim();
@@ -282,6 +281,7 @@ class VotingApp {
             payload.priority = document.getElementById('ticketPriority').value;
         }
 
+        submitBtn.disabled = true;
         try {
             const response = await fetch(`/api/apps/${this.currentApp.id}/suggestions`, {
                 method: 'POST',
