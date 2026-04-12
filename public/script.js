@@ -223,6 +223,10 @@ class VotingApp {
     async submitSuggestion(e) {
         e.preventDefault();
 
+        const submitBtn = document.getElementById('submitEntryBtn');
+        if (submitBtn.disabled) return;
+        submitBtn.disabled = true;
+
         const type = document.getElementById('reportType').value;
         const title = document.getElementById('suggestionTitle').value.trim();
         const description = document.getElementById('suggestionDescription').value.trim();
@@ -298,6 +302,8 @@ class VotingApp {
         } catch (error) {
             console.error('Error submitting suggestion:', error);
             this.showToast('Fehler beim Einreichen des Eintrags', 'error');
+        } finally {
+            submitBtn.disabled = false;
         }
     }
 

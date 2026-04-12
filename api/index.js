@@ -1515,31 +1515,39 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
     }
 
     const suggestion = suggestionDoc.data();
-    
+
     // Get app details
     const appDoc = await db.collection('apps').doc(suggestion.appId).get();
     const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
+    const entryType = normalizeSuggestionType(suggestion.type);
 
     // Primary flow: per-entry notification settings.
-    if (suggestion.notificationEnabled && isValidEmail(suggestion.notificationEmail)) {
-      await sendUserNotificationEmail(
-        suggestion.notificationEmail.trim(),
-        suggestionId,
-        suggestion.title,
-        status,
-        comment,
-        appName,
-        normalizeSuggestionType(suggestion.type)
-      );
+    // When notificationEnabled is true, this entry uses per-entry notifications
+    // exclusively – never fall through to the backward-compat path.
+    if (suggestion.notificationEnabled) {
+      if (isValidEmail(suggestion.notificationEmail)) {
+        await sendUserNotificationEmail(
+          suggestion.notificationEmail.trim(),
+          suggestionId,
+          suggestion.title,
+          status,
+          comment,
+          appName,
+          entryType
+        );
+      }
       return;
     }
 
-    // Backward compatibility for old entries created before per-entry notifications.
+    // Backward compatibility: only for old entries created before per-entry
+    // notifications (notificationEnabled is falsy/undefined).
     const userFingerprint = suggestion.userFingerprint;
     if (!userFingerprint) return;
 
     const userSettings = await getUserNotificationSettings(userFingerprint);
-    if (userSettings.email && userSettings.notificationsEnabled) {
+    if (userSettings.notificationsEnabled && isValidEmail(userSettings.email)) {
+      // Guard against sending to the same address that the per-entry path
+      // would have used (should not happen, but prevents duplicates).
       await sendUserNotificationEmail(
         userSettings.email,
         suggestionId,
@@ -1547,7 +1555,7 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
         status,
         comment,
         appName,
-        normalizeSuggestionType(suggestion.type)
+        entryType
       );
     }
   } catch (error) {
