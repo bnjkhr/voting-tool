@@ -105,6 +105,7 @@ const VALID_PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
 const TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'wartend', 'gelöst', 'geschlossen'];
 const FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'ist umgesetzt', 'wird nicht umgesetzt'];
 const RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
+const RELEASE_STATUSES = ['geplant', 'in Arbeit', 'veröffentlicht'];
 
 function getValidStatusesForType(type) {
   if (type === 'feature') return FEATURE_STATUSES;
@@ -747,6 +748,17 @@ function buildSuggestionFromRequest(body, appId, userFingerprint) {
     };
     // Map bug severity to unified priority
     suggestion.priority = mapSeverityToPriority(severity);
+
+    // Bug screenshots (optional)
+    if (body.screenshots && Array.isArray(body.screenshots)) {
+      const validScreenshots = body.screenshots
+        .filter(s => typeof s === 'string' && s.startsWith('data:image/') && s.length < 300000)
+        .slice(0, 3);
+      const totalSize = validScreenshots.reduce((sum, s) => sum + s.length, 0);
+      if (totalSize <= 800000) {
+        suggestion.screenshots = validScreenshots;
+      }
+    }
   }
 
   if (type === 'ticket') {
@@ -1788,6 +1800,379 @@ app.put('/api/admin/apps/:appId/labels', requireAdminAuth, async (req, res) => {
   } catch (error) {
     console.error('Error updating app labels:', error);
     res.status(500).json({ error: 'Failed to update labels' });
+  }
+});
+
+// ─── RELEASE ENDPOINTS ───────────────────────────────────────────────────────
+
+// Public: Get releases for an app (with optional status filter)
+app.get('/api/apps/:appId/releases', async (req, res) => {
+  try {
+    const { appId } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(appId)) {
+      return res.status(400).json({ error: 'Invalid app ID format' });
+    }
+
+    let query = db.collection('releases').where('appId', '==', appId);
+
+    // Filter by status if provided (comma-separated)
+    const statusFilter = req.query.status;
+    let statusList = null;
+    if (statusFilter) {
+      statusList = statusFilter.split(',').map(s => s.trim()).filter(s => RELEASE_STATUSES.includes(s));
+      if (statusList.length === 0) {
+        return res.status(400).json({ error: 'Ungültiger Status-Filter' });
+      }
+      if (statusList.length === 1) {
+        query = query.where('status', '==', statusList[0]);
+      }
+      // For multiple statuses, we filter in-memory (Firestore 'in' requires array)
+    }
+
+    const releasesSnapshot = await query.get();
+
+    let releases = releasesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    // Filter by multiple statuses in-memory if needed
+    if (statusList && statusList.length > 1) {
+      releases = releases.filter(r => statusList.includes(r.status));
+    }
+
+    // Load suggestions for each release
+    const releaseIds = releases.map(r => r.id);
+    let suggestionsByRelease = {};
+
+    if (releaseIds.length > 0) {
+      // Batch in chunks of 10 (Firestore 'in' limit)
+      const chunks = [];
+      for (let i = 0; i < releaseIds.length; i += 10) {
+        chunks.push(releaseIds.slice(i, i + 10));
+      }
+
+      const snapshots = await Promise.all(
+        chunks.map(chunk =>
+          db.collection('suggestions')
+            .where('releaseId', 'in', chunk)
+            .where('approved', '==', true)
+            .get()
+            .catch(() => ({ docs: [] }))
+        )
+      );
+
+      snapshots.forEach(snapshot => {
+        snapshot.docs.forEach(doc => {
+          const data = doc.data();
+          const rid = data.releaseId;
+          if (!suggestionsByRelease[rid]) suggestionsByRelease[rid] = [];
+          const type = normalizeSuggestionType(data.type);
+          suggestionsByRelease[rid].push({
+            id: doc.id,
+            title: data.title,
+            type,
+            status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+            ticketNumber: data.ticketNumber || null,
+          });
+        });
+      });
+    }
+
+    // Attach suggestions and sort
+    releases = releases.map(r => ({
+      ...r,
+      items: suggestionsByRelease[r.id] || [],
+    }));
+
+    // Sort: "in Arbeit" before "geplant", "veröffentlicht" by date desc
+    releases.sort((a, b) => {
+      const statusOrder = { 'in Arbeit': 0, 'geplant': 1, 'veröffentlicht': 2 };
+      const aOrder = statusOrder[a.status] ?? 9;
+      const bOrder = statusOrder[b.status] ?? 9;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+
+      // Within same status: by releaseDate
+      const aDate = a.releaseDate?.toDate?.() ?? (a.releaseDate?._seconds != null ? new Date(a.releaseDate._seconds * 1000) : new Date(0));
+      const bDate = b.releaseDate?.toDate?.() ?? (b.releaseDate?._seconds != null ? new Date(b.releaseDate._seconds * 1000) : new Date(0));
+      // For published: newest first. For planned: earliest first.
+      return a.status === 'veröffentlicht' ? bDate - aDate : aDate - bDate;
+    });
+
+    res.json(releases);
+  } catch (error) {
+    console.error('Error fetching releases:', error);
+    res.status(500).json({ error: 'Failed to fetch releases' });
+  }
+});
+
+// Admin: Get all releases (with optional appId filter)
+app.get('/api/admin/releases', requireAdminAuth, async (req, res) => {
+  try {
+    let query = db.collection('releases');
+
+    if (req.query.appId) {
+      query = query.where('appId', '==', req.query.appId);
+    }
+
+    const [releasesSnapshot, appsSnapshot] = await Promise.all([
+      query.get(),
+      db.collection('apps').get(),
+    ]);
+
+    const appsMap = {};
+    appsSnapshot.docs.forEach(doc => {
+      appsMap[doc.id] = { id: doc.id, ...doc.data() };
+    });
+
+    // Count suggestions per release
+    const releaseIds = releasesSnapshot.docs.map(doc => doc.id);
+    let itemCountMap = {};
+
+    if (releaseIds.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < releaseIds.length; i += 10) {
+        chunks.push(releaseIds.slice(i, i + 10));
+      }
+
+      const snapshots = await Promise.all(
+        chunks.map(chunk =>
+          db.collection('suggestions')
+            .where('releaseId', 'in', chunk)
+            .get()
+            .catch(() => ({ docs: [] }))
+        )
+      );
+
+      snapshots.forEach(snapshot => {
+        snapshot.docs.forEach(doc => {
+          const rid = doc.data().releaseId;
+          itemCountMap[rid] = (itemCountMap[rid] || 0) + 1;
+        });
+      });
+    }
+
+    const releases = releasesSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      app: appsMap[doc.data().appId] || { name: 'Unbekannte App' },
+      itemCount: itemCountMap[doc.id] || 0,
+    }));
+
+    // Sort by status order, then date
+    releases.sort((a, b) => {
+      const statusOrder = { 'geplant': 0, 'in Arbeit': 1, 'veröffentlicht': 2 };
+      const aOrder = statusOrder[a.status] ?? 9;
+      const bOrder = statusOrder[b.status] ?? 9;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+
+      const aDate = a.releaseDate?.toDate?.() ?? (a.releaseDate?._seconds != null ? new Date(a.releaseDate._seconds * 1000) : new Date(0));
+      const bDate = b.releaseDate?.toDate?.() ?? (b.releaseDate?._seconds != null ? new Date(b.releaseDate._seconds * 1000) : new Date(0));
+      return bDate - aDate;
+    });
+
+    res.json(releases);
+  } catch (error) {
+    console.error('Error fetching releases:', error);
+    res.status(500).json({ error: 'Failed to fetch releases' });
+  }
+});
+
+// Admin: Create release
+app.post('/api/admin/releases', requireAdminAuth, async (req, res) => {
+  try {
+    const { appId, version, title, description, status, releaseDate } = req.body;
+
+    if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) {
+      return res.status(400).json({ error: 'Ungültige App-ID' });
+    }
+
+    const appDoc = await db.collection('apps').doc(appId).get();
+    if (!appDoc.exists) {
+      return res.status(404).json({ error: 'App nicht gefunden' });
+    }
+
+    const validVersion = validateInput(version, 50);
+    if (!validVersion) {
+      return res.status(400).json({ error: 'Version ist erforderlich (max. 50 Zeichen)' });
+    }
+
+    const validTitle = validateInput(title, 200) || '';
+    const validDescription = validateInput(description, 5000) || '';
+    const validStatus = RELEASE_STATUSES.includes(status) ? status : 'geplant';
+
+    const release = {
+      appId,
+      version: validVersion,
+      title: validTitle,
+      description: validDescription,
+      status: validStatus,
+      releaseDate: releaseDate ? admin.firestore.Timestamp.fromDate(new Date(releaseDate)) : null,
+      publishedAt: validStatus === 'veröffentlicht' ? admin.firestore.FieldValue.serverTimestamp() : null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const docRef = await db.collection('releases').add(release);
+
+    res.status(201).json({
+      id: docRef.id,
+      ...release,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('Error creating release:', error);
+    res.status(500).json({ error: 'Failed to create release' });
+  }
+});
+
+// Admin: Update release
+app.put('/api/admin/releases/:releaseId', requireAdminAuth, async (req, res) => {
+  try {
+    const { releaseId } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return res.status(400).json({ error: 'Invalid release ID format' });
+    }
+
+    const releaseDoc = await db.collection('releases').doc(releaseId).get();
+    if (!releaseDoc.exists) {
+      return res.status(404).json({ error: 'Release nicht gefunden' });
+    }
+
+    const { version, title, description, status, releaseDate } = req.body;
+
+    const updateData = {
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (version !== undefined) {
+      const validVersion = validateInput(version, 50);
+      if (!validVersion) {
+        return res.status(400).json({ error: 'Ungültige Version' });
+      }
+      updateData.version = validVersion;
+    }
+
+    if (title !== undefined) {
+      updateData.title = validateInput(title, 200) || '';
+    }
+
+    if (description !== undefined) {
+      updateData.description = validateInput(description, 5000) || '';
+    }
+
+    if (status !== undefined) {
+      if (!RELEASE_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${RELEASE_STATUSES.join(', ')}` });
+      }
+      updateData.status = status;
+
+      // Set publishedAt when status changes to "veröffentlicht"
+      const previousStatus = releaseDoc.data().status;
+      if (status === 'veröffentlicht' && previousStatus !== 'veröffentlicht') {
+        updateData.publishedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
+
+    if (releaseDate !== undefined) {
+      updateData.releaseDate = releaseDate ? admin.firestore.Timestamp.fromDate(new Date(releaseDate)) : null;
+    }
+
+    await db.collection('releases').doc(releaseId).update(updateData);
+
+    res.json({
+      success: true,
+      message: 'Release erfolgreich aktualisiert',
+    });
+  } catch (error) {
+    console.error('Error updating release:', error);
+    res.status(500).json({ error: 'Failed to update release' });
+  }
+});
+
+// Admin: Delete release (unsets releaseId on linked suggestions)
+app.delete('/api/admin/releases/:releaseId', requireAdminAuth, async (req, res) => {
+  try {
+    const { releaseId } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return res.status(400).json({ error: 'Invalid release ID format' });
+    }
+
+    const releaseDoc = await db.collection('releases').doc(releaseId).get();
+    if (!releaseDoc.exists) {
+      return res.status(404).json({ error: 'Release nicht gefunden' });
+    }
+
+    // Unset releaseId on all linked suggestions
+    const linkedSuggestions = await db.collection('suggestions')
+      .where('releaseId', '==', releaseId)
+      .get();
+
+    const batch = db.batch();
+    linkedSuggestions.docs.forEach(doc => {
+      batch.update(doc.ref, { releaseId: null });
+    });
+    batch.delete(db.collection('releases').doc(releaseId));
+
+    await batch.commit();
+
+    res.json({
+      success: true,
+      message: 'Release gelöscht',
+      unlinkedSuggestions: linkedSuggestions.size,
+    });
+  } catch (error) {
+    console.error('Error deleting release:', error);
+    res.status(500).json({ error: 'Failed to delete release' });
+  }
+});
+
+// Admin: Assign suggestion to release
+app.put('/api/admin/suggestions/:suggestionId/release', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+    const { releaseId } = req.body;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return res.status(404).json({ error: 'Eintrag nicht gefunden' });
+    }
+
+    // Validate releaseId if provided (null means unassign)
+    if (releaseId) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+        return res.status(400).json({ error: 'Invalid release ID format' });
+      }
+      const releaseDoc = await db.collection('releases').doc(releaseId).get();
+      if (!releaseDoc.exists) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+    }
+
+    const previousReleaseId = suggestionDoc.data()?.releaseId || null;
+
+    await db.collection('suggestions').doc(suggestionId).update({
+      releaseId: releaseId || null,
+    });
+
+    await logActivity(suggestionId, 'release_changed', {
+      oldValue: previousReleaseId,
+      newValue: releaseId || null,
+      detail: releaseId ? 'Einem Release zugeordnet' : 'Release-Zuordnung entfernt',
+    });
+
+    res.json({ success: true, message: releaseId ? 'Release zugeordnet' : 'Release-Zuordnung entfernt' });
+  } catch (error) {
+    console.error('Error assigning release:', error);
+    res.status(500).json({ error: 'Failed to assign release' });
   }
 });
 

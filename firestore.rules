@@ -13,6 +13,12 @@ service cloud.firestore {
       // Admin SDK bypasses these rules automatically
     }
 
+    // Releases - Public read access, server-side writes via Admin SDK
+    match /releases/{releaseId} {
+      allow read: if true;
+      // Admin SDK bypasses these rules automatically
+    }
+
     // Votes - No direct client access, server-side only
     match /votes/{voteId} {
       allow read, write: if false;

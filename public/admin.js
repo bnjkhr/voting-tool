@@ -4,9 +4,12 @@ class AdminApp {
     static PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
     static RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
 
+    static RELEASE_STATUSES = ['geplant', 'in Arbeit', 'veröffentlicht'];
+
     constructor() {
         this.adminToken = null;
         this.apps = [];
+        this.releases = [];
         this.filters = { app: '', type: '', status: '', priority: '' };
         this.init();
     }
@@ -41,19 +44,22 @@ class AdminApp {
     }
 
     bindEvents() {
-        // Modal events
+        // App modal events
         document.getElementById('addAppBtn').addEventListener('click', () => this.showAppModal());
         document.getElementById('closeModal').addEventListener('click', () => this.hideAppModal());
         document.getElementById('cancelBtn').addEventListener('click', () => this.hideAppModal());
-
-        // Form submission
         document.getElementById('appForm').addEventListener('submit', (e) => this.saveApp(e));
-
-        // Close modal on outside click
         document.getElementById('appModal').addEventListener('click', (e) => {
-            if (e.target.id === 'appModal') {
-                this.hideAppModal();
-            }
+            if (e.target.id === 'appModal') this.hideAppModal();
+        });
+
+        // Release modal events
+        document.getElementById('addReleaseBtn').addEventListener('click', () => this.showReleaseModal());
+        document.getElementById('closeReleaseModal').addEventListener('click', () => this.hideReleaseModal());
+        document.getElementById('cancelReleaseBtn').addEventListener('click', () => this.hideReleaseModal());
+        document.getElementById('releaseForm').addEventListener('submit', (e) => this.saveRelease(e));
+        document.getElementById('releaseModal').addEventListener('click', (e) => {
+            if (e.target.id === 'releaseModal') this.hideReleaseModal();
         });
     }
 
@@ -61,7 +67,8 @@ class AdminApp {
         await Promise.all([
             this.loadStats(),
             this.loadApps(),
-            this.loadSuggestions()
+            this.loadSuggestions(),
+            this.loadReleases()
         ]);
     }
 
@@ -237,6 +244,12 @@ class AdminApp {
             const priorityColors = { niedrig: '#3b82f6', mittel: '#f59e0b', hoch: '#f97316', kritisch: '#ef4444' };
             const pColor = priorityColors[suggestion.priority] || '#6b7280';
 
+            // Release options for this suggestion's app (only planned/in-progress)
+            const appReleases = (this.releases || []).filter(r =>
+                r.appId === suggestion.appId && r.status !== 'veröffentlicht'
+            );
+            const currentReleaseId = suggestion.releaseId || '';
+
             return `
                 <div class="suggestion-item" style="border-left: 4px solid ${isApproved ? '#10b981' : '#f59e0b'}; ${itemOpacity}">
                     <div class="suggestion-header">
@@ -265,6 +278,13 @@ class AdminApp {
                                     <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Priorität:</label>
                                     <select onchange="adminApp.updatePriority('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: ${pColor}; font-size: 0.85rem; cursor: pointer; font-weight: 600;">
                                         ${AdminApp.PRIORITIES.map(p => `<option value="${p}" ${suggestion.priority === p ? 'selected' : ''}>${p.charAt(0).toUpperCase() + p.slice(1)}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Release:</label>
+                                    <select onchange="adminApp.updateSuggestionRelease('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 0.85rem; cursor: pointer;">
+                                        <option value="">— Kein Release —</option>
+                                        ${appReleases.map(r => `<option value="${r.id}" ${currentReleaseId === r.id ? 'selected' : ''}>v${this.escapeHtml(r.version)}${r.title ? ' — ' + this.escapeHtml(r.title) : ''}</option>`).join('')}
                                     </select>
                                 </div>
                             </div>
@@ -952,6 +972,219 @@ class AdminApp {
         const modal = document.getElementById('imageModal');
         modal.style.display = 'none';
         document.body.style.overflow = '';
+    }
+
+    // ─── RELEASE MANAGEMENT ─────────────────────────────────────────────
+
+    async loadReleases() {
+        try {
+            const response = await this.adminFetch('/api/admin/releases');
+            const releases = await response.json();
+
+            if (response.ok) {
+                this.releases = releases;
+                this.renderReleases(releases);
+            } else {
+                throw new Error(releases.error);
+            }
+        } catch (error) {
+            console.error('Error loading releases:', error);
+            if (error.message.includes('Unauthorized')) {
+                this.handleAuthError();
+            }
+        }
+    }
+
+    renderReleases(releases) {
+        const releasesList = document.getElementById('releasesList');
+
+        if (releases.length === 0) {
+            releasesList.innerHTML = `<div class="loading">Noch keine Releases vorhanden.</div>`;
+            return;
+        }
+
+        const statusColors = { 'geplant': '#3b82f6', 'in Arbeit': '#f59e0b', 'veröffentlicht': '#10b981' };
+
+        releasesList.innerHTML = releases.map(release => {
+            const sColor = statusColors[release.status] || '#6b7280';
+            const dateStr = this.formatDateShort(release.releaseDate);
+
+            return `
+                <div class="app-item" style="border-left: 4px solid ${sColor};">
+                    <div class="app-details">
+                        <h4 style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <span style="font-family: var(--font-mono, monospace); font-weight: 700;">v${this.escapeHtml(release.version)}</span>
+                            ${release.title ? `<span style="font-weight: 400; color: var(--text-secondary);">— ${this.escapeHtml(release.title)}</span>` : ''}
+                            <span style="background: ${sColor}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">${this.escapeHtml(release.status)}</span>
+                        </h4>
+                        <p style="margin: 4px 0;">
+                            <span style="color: var(--text-muted); font-size: 0.8rem;">App: ${this.escapeHtml(release.app?.name || 'Unbekannt')}</span>
+                            ${dateStr ? ` · <span style="color: var(--text-muted); font-size: 0.8rem;">${dateStr}</span>` : ''}
+                            · <span style="color: var(--text-muted); font-size: 0.8rem;">${release.itemCount} Einträge</span>
+                        </p>
+                        ${release.description ? `<p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">${this.escapeHtml(release.description).substring(0, 200)}${release.description.length > 200 ? '...' : ''}</p>` : ''}
+                    </div>
+                    <div class="app-actions">
+                        <button class="secondary-btn btn-small" onclick="adminApp.editRelease('${release.id}')">
+                            Bearbeiten
+                        </button>
+                        <button class="btn-danger btn-small" onclick="adminApp.deleteRelease('${release.id}', '${this.escapeHtml(release.version)}')">
+                            Löschen
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    showReleaseModal(release = null) {
+        const modal = document.getElementById('releaseModal');
+        const form = document.getElementById('releaseForm');
+        const title = document.getElementById('releaseModalTitle');
+
+        form.reset();
+
+        // Populate app select
+        const appSelect = document.getElementById('releaseAppId');
+        appSelect.innerHTML = this.apps.map(app =>
+            `<option value="${app.id}">${this.escapeHtml(app.name)}</option>`
+        ).join('');
+
+        if (release) {
+            title.textContent = 'Release bearbeiten';
+            document.getElementById('releaseId').value = release.id;
+            appSelect.value = release.appId;
+            document.getElementById('releaseVersion').value = release.version || '';
+            document.getElementById('releaseTitle').value = release.title || '';
+            document.getElementById('releaseDescription').value = release.description || '';
+            document.getElementById('releaseStatus').value = release.status || 'geplant';
+            if (release.releaseDate) {
+                const d = release.releaseDate._seconds
+                    ? new Date(release.releaseDate._seconds * 1000)
+                    : new Date(release.releaseDate);
+                if (!isNaN(d.getTime())) {
+                    document.getElementById('releaseDate').value = d.toISOString().split('T')[0];
+                }
+            }
+        } else {
+            title.textContent = 'Neues Release';
+            document.getElementById('releaseId').value = '';
+        }
+
+        modal.classList.add('show');
+        document.getElementById('releaseVersion').focus();
+    }
+
+    hideReleaseModal() {
+        document.getElementById('releaseModal').classList.remove('show');
+    }
+
+    async saveRelease(e) {
+        e.preventDefault();
+
+        const releaseId = document.getElementById('releaseId').value;
+        const payload = {
+            appId: document.getElementById('releaseAppId').value,
+            version: document.getElementById('releaseVersion').value.trim(),
+            title: document.getElementById('releaseTitle').value.trim(),
+            description: document.getElementById('releaseDescription').value.trim(),
+            status: document.getElementById('releaseStatus').value,
+            releaseDate: document.getElementById('releaseDate').value || null,
+        };
+
+        if (!payload.version) {
+            this.showToast('Version ist erforderlich', 'error');
+            return;
+        }
+
+        try {
+            const isEdit = !!releaseId;
+            const url = isEdit ? `/api/admin/releases/${releaseId}` : '/api/admin/releases';
+            const method = isEdit ? 'PUT' : 'POST';
+
+            const response = await this.adminFetch(url, {
+                method,
+                body: JSON.stringify(payload),
+            });
+            const result = await response.json();
+
+            if (response.ok) {
+                this.showToast(isEdit ? 'Release aktualisiert!' : 'Release erstellt!', 'success');
+                this.hideReleaseModal();
+                this.loadReleases();
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Error saving release:', error);
+            this.showToast(error.message || 'Fehler beim Speichern', 'error');
+        }
+    }
+
+    editRelease(releaseId) {
+        const release = this.releases.find(r => r.id === releaseId);
+        if (release) this.showReleaseModal(release);
+    }
+
+    async deleteRelease(releaseId, version) {
+        if (!confirm(`Release v${version} wirklich löschen?\n\nZugeordnete Einträge werden nicht gelöscht, nur die Zuordnung wird entfernt.`)) {
+            return;
+        }
+
+        try {
+            const response = await this.adminFetch(`/api/admin/releases/${releaseId}`, { method: 'DELETE' });
+            const result = await response.json();
+
+            if (response.ok) {
+                this.showToast('Release gelöscht!', 'success');
+                this.loadReleases();
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Error deleting release:', error);
+            this.showToast(error.message || 'Fehler beim Löschen', 'error');
+        }
+    }
+
+    async updateSuggestionRelease(suggestionId, releaseId) {
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/release`, {
+                method: 'PUT',
+                body: JSON.stringify({ releaseId: releaseId || null }),
+            });
+            const result = await response.json();
+
+            if (response.ok) {
+                this.showToast(releaseId ? 'Release zugeordnet!' : 'Release-Zuordnung entfernt!', 'success');
+                this.loadReleases();
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Error updating suggestion release:', error);
+            this.showToast(error.message || 'Fehler', 'error');
+        }
+    }
+
+    formatDateShort(timestamp) {
+        if (!timestamp) return '';
+        try {
+            let date;
+            if (timestamp._seconds !== undefined) {
+                date = new Date(timestamp._seconds * 1000);
+            } else if (timestamp.seconds !== undefined) {
+                date = new Date(timestamp.seconds * 1000);
+            } else if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+                date = new Date(timestamp);
+            } else {
+                return '';
+            }
+            if (isNaN(date.getTime())) return '';
+            return date.toLocaleDateString('de-DE', { year: 'numeric', month: 'short', day: 'numeric' });
+        } catch {
+            return '';
+        }
     }
 }
 

@@ -34,8 +34,10 @@ class VotingApp {
         this.currentApp = null;
         this.votedSuggestions = new Set(this.getVotedSuggestions());
         this.currentFilter = 'all';
+        this.currentView = 'suggestions';
         this.allSuggestions = [];
         this.currentReportType = 'feature';
+        this.bugScreenshots = [];
         this.init();
     }
 
@@ -58,14 +60,8 @@ class VotingApp {
         const metaTheme = document.querySelector('meta[name="theme-color"]');
         if (metaTheme) metaTheme.setAttribute('content', theme === 'dark' ? '#0F0F0F' : '#FFFFFF');
 
-        const btn = document.getElementById('themeToggleBtn');
-        if (!btn) return;
-
         const isDark = theme === 'dark';
-        btn.setAttribute('title', isDark ? 'Light Mode aktivieren' : 'Dark Mode aktivieren');
-        btn.setAttribute('aria-label', isDark ? 'Light Mode aktivieren' : 'Dark Mode aktivieren');
-        btn.innerHTML = isDark
-            ? `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        const sunSvg = `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                  <circle cx="12" cy="12" r="5"/>
                  <line x1="12" y1="1" x2="12" y2="3"/>
                  <line x1="12" y1="21" x2="12" y2="23"/>
@@ -75,10 +71,18 @@ class VotingApp {
                  <line x1="21" y1="12" x2="23" y2="12"/>
                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-               </svg>`
-            : `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+               </svg>`;
+        const moonSvg = `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
                </svg>`;
+        const icon = isDark ? sunSvg : moonSvg;
+        const label = isDark ? 'Light Mode aktivieren' : 'Dark Mode aktivieren';
+
+        document.querySelectorAll('#themeToggleBtn').forEach(btn => {
+            btn.setAttribute('title', label);
+            btn.setAttribute('aria-label', label);
+            btn.innerHTML = icon;
+        });
     }
 
     toggleTheme() {
@@ -91,6 +95,7 @@ class VotingApp {
         document.getElementById('backBtn').addEventListener('click', () => this.showAppSelection());
         document.getElementById('formBackBtn').addEventListener('click', () => this.showSuggestions());
         document.getElementById('fabBtn').addEventListener('click', () => this.showSuggestionForm());
+        document.getElementById('mobileNewBtn').addEventListener('click', () => this.showSuggestionForm());
         document.getElementById('cancelBtn').addEventListener('click', () => this.showSuggestions());
 
         // Form submission
@@ -104,6 +109,17 @@ class VotingApp {
         if (themeBtn) {
             themeBtn.addEventListener('click', () => this.toggleTheme());
         }
+
+        document.getElementById('bugScreenshotBtn').addEventListener('click', () => {
+            document.getElementById('bugScreenshotInput').click();
+        });
+        document.getElementById('bugScreenshotInput').addEventListener('change', () => this.handleBugScreenshots());
+
+        // View tabs
+        document.getElementById('viewTabs').addEventListener('click', (e) => {
+            const tab = e.target.closest('.view-tab');
+            if (tab) this.switchView(tab.dataset.view);
+        });
     }
 
     // Navigation methods
@@ -112,21 +128,30 @@ class VotingApp {
         for (const id of sections) {
             document.getElementById(id).classList.toggle('hidden', id !== sectionId);
         }
-        document.getElementById('fabBtn').style.display = showFab ? 'flex' : 'none';
+
+        const appHeader = document.getElementById('appHeader');
+        if (appHeader) {
+            appHeader.classList.toggle('hidden', sectionId !== 'appSelection');
+        }
+
+        document.getElementById('fabBtn').style.display = showFab ? 'inline-flex' : 'none';
     }
 
     showAppSelection() {
         this.showSection('appSelection');
         this.currentApp = null;
+        this.currentView = 'suggestions';
     }
 
     showSuggestions() {
-        this.showSection('suggestionsView', true);
+        this.showSection('suggestionsView', this.currentView === 'suggestions');
     }
 
     showSuggestionForm() {
         this.showSection('suggestionForm');
         document.getElementById('newSuggestionForm').reset();
+        this.bugScreenshots = [];
+        document.getElementById('bugScreenshotPreview').innerHTML = '';
         this.updateReportTypeUI('feature');
         this.updateEntryNotificationUI(false);
     }
@@ -277,6 +302,10 @@ class VotingApp {
             };
         }
 
+        if (type === 'bug' && this.bugScreenshots.length > 0) {
+            payload.screenshots = this.bugScreenshots;
+        }
+
         if (type === 'ticket') {
             payload.priority = document.getElementById('ticketPriority').value;
         }
@@ -355,9 +384,11 @@ class VotingApp {
 
     // Filtering methods
     renderFilterBar() {
-        const suggestionsList = document.getElementById('suggestionsList');
+        const filterHost = document.getElementById('suggestionsFilters');
+        if (!filterHost) return;
 
         if (this.allSuggestions.length === 0) {
+            filterHost.innerHTML = '';
             return;
         }
 
@@ -416,16 +447,7 @@ class VotingApp {
             </div>
         `;
 
-        // Prepend filter bar to suggestions list
-        const existingFilterBar = suggestionsList.querySelector('.filter-bar-container');
-        if (existingFilterBar) {
-            existingFilterBar.remove();
-        }
-
-        const filterContainer = document.createElement('div');
-        filterContainer.className = 'filter-bar-container';
-        filterContainer.innerHTML = filterBar;
-        suggestionsList.insertBefore(filterContainer, suggestionsList.firstChild);
+        filterHost.innerHTML = filterBar;
     }
 
     setFilter(filterId) {
@@ -546,6 +568,15 @@ class VotingApp {
                     </div>`;
             }
 
+            // Bug screenshots
+            const screenshotGallery = (suggestion.screenshots && suggestion.screenshots.length > 0)
+                ? `<div class="bug-screenshots">
+                    ${suggestion.screenshots.map((src, idx) =>
+                        `<img src="${src}" alt="Screenshot ${idx + 1}" onclick="app.showImageModal(this.src)">`
+                    ).join('')}
+                  </div>`
+                : '';
+
             // Labels
             const labelBadges = (suggestion.labels || []).length > 0
                 ? `<div class="badge-row">${suggestion.labels.map(l =>
@@ -596,6 +627,7 @@ class VotingApp {
                                 ${priorityBadge}
                             </div>
                             <p class="suggestion-description">${this.escapeHtml(suggestion.description)}</p>
+                            ${screenshotGallery}
                             ${typeBadge}
                             ${statusBadge}
                             ${labelBadges}
@@ -619,8 +651,192 @@ class VotingApp {
     selectApp(appId, appName) {
         this.currentApp = { id: appId, name: appName };
         document.getElementById('currentAppName').textContent = appName;
+        this.currentView = 'suggestions';
+        this.updateViewTabs();
         this.showSuggestions();
         this.loadSuggestions(appId);
+    }
+
+    switchView(view) {
+        this.currentView = view;
+        this.updateViewTabs();
+
+        const suggestionsList = document.getElementById('suggestionsList');
+        const suggestionsFilters = document.getElementById('suggestionsFilters');
+        const roadmapView = document.getElementById('roadmapView');
+        const changelogView = document.getElementById('changelogView');
+        const fabBtn = document.getElementById('fabBtn');
+        const mobileNewBtn = document.getElementById('mobileNewBtn');
+
+        suggestionsList.classList.toggle('hidden', view !== 'suggestions');
+        suggestionsFilters.classList.toggle('hidden', view !== 'suggestions');
+        roadmapView.classList.toggle('hidden', view !== 'roadmap');
+        changelogView.classList.toggle('hidden', view !== 'changelog');
+
+        // Hide FAB on changelog
+        const showFab = view !== 'changelog';
+        fabBtn.style.display = showFab ? 'inline-flex' : 'none';
+        mobileNewBtn.style.display = (showFab && view === 'suggestions') ? '' : 'none';
+
+        if (view === 'roadmap' && this.currentApp) {
+            this.loadRoadmap(this.currentApp.id);
+        } else if (view === 'changelog' && this.currentApp) {
+            this.loadChangelog(this.currentApp.id);
+        }
+    }
+
+    updateViewTabs() {
+        document.querySelectorAll('#viewTabs .view-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.view === this.currentView);
+        });
+    }
+
+    async loadRoadmap(appId) {
+        const roadmapView = document.getElementById('roadmapView');
+        roadmapView.innerHTML = '<div class="loading">Roadmap wird geladen...</div>';
+
+        try {
+            const response = await fetch(`/api/apps/${appId}/releases?status=geplant,in Arbeit`);
+            const releases = await response.json();
+
+            if (!response.ok) throw new Error(releases.error);
+            this.renderRoadmap(releases);
+        } catch (error) {
+            console.error('Error loading roadmap:', error);
+            roadmapView.innerHTML = '<div class="loading">Fehler beim Laden der Roadmap.</div>';
+        }
+    }
+
+    async loadChangelog(appId) {
+        const changelogView = document.getElementById('changelogView');
+        changelogView.innerHTML = '<div class="loading">Changelog wird geladen...</div>';
+
+        try {
+            const response = await fetch(`/api/apps/${appId}/releases?status=veröffentlicht`);
+            const releases = await response.json();
+
+            if (!response.ok) throw new Error(releases.error);
+            this.renderChangelog(releases);
+        } catch (error) {
+            console.error('Error loading changelog:', error);
+            changelogView.innerHTML = '<div class="loading">Fehler beim Laden des Changelogs.</div>';
+        }
+    }
+
+    renderRoadmap(releases) {
+        const roadmapView = document.getElementById('roadmapView');
+
+        if (releases.length === 0) {
+            roadmapView.innerHTML = '<div class="release-empty">Noch keine Releases geplant.</div>';
+            return;
+        }
+
+        roadmapView.innerHTML = releases.map(release => {
+            const statusLabel = release.status === 'in Arbeit' ? 'In Arbeit' : 'Geplant';
+            const statusColor = release.status === 'in Arbeit' ? '#f59e0b' : '#3b82f6';
+            const dateStr = this.formatDateShort(release.releaseDate);
+
+            const items = (release.items || []).map(item => {
+                const typeIcon = item.type === 'bug' ? '\uD83D\uDC1E' : item.type === 'ticket' ? '\uD83C\uDFAB' : '\u2728';
+                const statusStyle = VotingApp.TAG_STYLES[item.status] || VotingApp.DEFAULT_TAG_STYLE;
+                return `
+                    <div class="release-item">
+                        <span class="release-item-icon">${typeIcon}</span>
+                        ${item.ticketNumber ? `<span class="ticket-number">${this.escapeHtml(item.ticketNumber)}</span>` : ''}
+                        <span class="release-item-title">${this.escapeHtml(item.title)}</span>
+                        <span class="label" style="--label-color: ${statusStyle.color}; font-size: 0.75rem;">
+                            <span class="label-dot" aria-hidden="true"></span>
+                            <span>${this.escapeHtml(item.status)}</span>
+                        </span>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="release-card">
+                    <div class="release-header">
+                        <div class="release-header-left">
+                            <span class="release-status-badge" style="background: ${statusColor};">${statusLabel}</span>
+                            <span class="release-version">v${this.escapeHtml(release.version)}</span>
+                            ${release.title ? `<span class="release-title-text">— ${this.escapeHtml(release.title)}</span>` : ''}
+                        </div>
+                        ${dateStr ? `<span class="release-date">voraussichtlich ${dateStr}</span>` : ''}
+                    </div>
+                    ${release.description ? `<p class="release-description">${this.escapeHtml(release.description)}</p>` : ''}
+                    ${items ? `<div class="release-items">${items}</div>` : '<p class="release-no-items">Noch keine Einträge zugeordnet.</p>'}
+                </div>
+            `;
+        }).join('');
+    }
+
+    renderChangelog(releases) {
+        const changelogView = document.getElementById('changelogView');
+
+        if (releases.length === 0) {
+            changelogView.innerHTML = '<div class="release-empty">Noch kein Changelog vorhanden.</div>';
+            return;
+        }
+
+        changelogView.innerHTML = releases.map(release => {
+            const dateStr = this.formatDateShort(release.releaseDate || release.publishedAt);
+
+            // Group items by type
+            const features = (release.items || []).filter(i => i.type === 'feature');
+            const bugs = (release.items || []).filter(i => i.type === 'bug');
+            const tickets = (release.items || []).filter(i => i.type === 'ticket');
+
+            const renderGroup = (title, icon, items) => {
+                if (items.length === 0) return '';
+                return `
+                    <div class="release-type-group">
+                        <h4 class="release-group-title">${icon} ${title}</h4>
+                        ${items.map(item => `
+                            <div class="release-item">
+                                ${item.ticketNumber ? `<span class="ticket-number">${this.escapeHtml(item.ticketNumber)}</span>` : ''}
+                                <span class="release-item-title">${this.escapeHtml(item.title)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            };
+
+            const hasItems = features.length + bugs.length + tickets.length > 0;
+
+            return `
+                <div class="release-card">
+                    <div class="release-header">
+                        <div class="release-header-left">
+                            <span class="release-version">v${this.escapeHtml(release.version)}</span>
+                            ${release.title ? `<span class="release-title-text">— ${this.escapeHtml(release.title)}</span>` : ''}
+                        </div>
+                        ${dateStr ? `<span class="release-date">${dateStr}</span>` : ''}
+                    </div>
+                    ${release.description ? `<p class="release-description">${this.escapeHtml(release.description)}</p>` : ''}
+                    ${hasItems ? `
+                        <div class="release-items-grouped">
+                            ${renderGroup('Neue Features', '\u2728', features)}
+                            ${renderGroup('Fehlerbehebungen', '\uD83D\uDC1E', bugs)}
+                            ${renderGroup('Tickets', '\uD83C\uDFAB', tickets)}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+    }
+
+    formatDateShort(timestamp) {
+        if (!timestamp) return '';
+        try {
+            let date;
+            if (timestamp._seconds !== undefined) date = new Date(timestamp._seconds * 1000);
+            else if (timestamp.seconds !== undefined) date = new Date(timestamp.seconds * 1000);
+            else if (typeof timestamp === 'string' || typeof timestamp === 'number') date = new Date(timestamp);
+            else return '';
+            if (isNaN(date.getTime())) return '';
+            return date.toLocaleDateString('de-DE', { year: 'numeric', month: 'long', day: 'numeric' });
+        } catch {
+            return '';
+        }
     }
 
     // Utility methods
@@ -779,6 +995,73 @@ class VotingApp {
         `).join('');
 
         commentsDiv.innerHTML = `<div class="comments-list">${commentsHTML}</div>`;
+    }
+
+    handleBugScreenshots() {
+        const fileInput = document.getElementById('bugScreenshotInput');
+        const files = Array.from(fileInput.files);
+
+        if (this.bugScreenshots.length + files.length > 3) {
+            this.showToast('Maximal 3 Screenshots erlaubt', 'error');
+            fileInput.value = '';
+            return;
+        }
+
+        files.forEach(file => {
+            this.compressImage(file, 600, 0.5).then(dataUrl => {
+                if (dataUrl.length > 200000) {
+                    this.showToast('Bild zu groß, wird übersprungen', 'error');
+                    return;
+                }
+                this.bugScreenshots.push(dataUrl);
+                this.renderBugScreenshotPreview();
+            }).catch(() => {
+                this.showToast('Fehler beim Verarbeiten des Bildes', 'error');
+            });
+        });
+
+        fileInput.value = '';
+    }
+
+    compressImage(file, maxWidth, quality) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    let width = img.width;
+                    let height = img.height;
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.onerror = reject;
+                img.src = e.target.result;
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+
+    removeBugScreenshot(index) {
+        this.bugScreenshots.splice(index, 1);
+        this.renderBugScreenshotPreview();
+    }
+
+    renderBugScreenshotPreview() {
+        const preview = document.getElementById('bugScreenshotPreview');
+        preview.innerHTML = this.bugScreenshots.map((src, idx) => `
+            <div class="screenshot-thumb">
+                <img src="${src}" alt="Screenshot ${idx + 1}">
+                <button type="button" class="remove-btn" onclick="app.removeBugScreenshot(${idx})">×</button>
+            </div>
+        `).join('');
     }
 
     showImageModal(imageSrc) {
