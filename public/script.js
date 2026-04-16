@@ -31,6 +31,7 @@ class VotingApp {
     static DEFAULT_TAG_STYLE = { color: '#64748b', icon: '\u2022' };
 
     constructor() {
+        this.apps = [];
         this.currentApp = null;
         this.votedSuggestions = new Set(this.getVotedSuggestions());
         this.currentFilter = 'all';
@@ -120,6 +121,8 @@ class VotingApp {
             const tab = e.target.closest('.view-tab');
             if (tab) this.switchView(tab.dataset.view);
         });
+
+        window.addEventListener('popstate', () => this.applyUrlStateFromLocation());
     }
 
     // Navigation methods
@@ -137,14 +140,25 @@ class VotingApp {
         document.getElementById('fabBtn').style.display = showFab ? 'inline-flex' : 'none';
     }
 
-    showAppSelection() {
+    showAppSelection({ skipHistory = false, replaceHistory = false } = {}) {
         this.showSection('appSelection');
         this.currentApp = null;
         this.currentView = 'suggestions';
+        this.allSuggestions = [];
+        this.currentFilter = 'all';
+        document.getElementById('currentAppName').textContent = 'App Name';
+        document.getElementById('suggestionsFilters').innerHTML = '';
+        document.getElementById('suggestionsList').innerHTML = '<div class="loading">Einträge werden geladen...</div>';
+
+        if (!skipHistory) {
+            this.navigateToUrlState({ appId: null, view: 'suggestions' }, { replace: replaceHistory });
+        }
     }
 
     showSuggestions() {
-        this.showSection('suggestionsView', this.currentView === 'suggestions');
+        const showFab = this.currentView !== 'changelog';
+        this.showSection('suggestionsView', showFab);
+        document.getElementById('mobileNewBtn').style.display = this.currentView === 'suggestions' ? '' : 'none';
     }
 
     showSuggestionForm() {
@@ -203,6 +217,101 @@ class VotingApp {
         return emailRegex.test(email);
     }
 
+    getCurrentUrlState() {
+        return {
+            appId: this.currentApp?.id || null,
+            view: this.currentView,
+        };
+    }
+
+    findAppById(appId) {
+        return this.apps.find(app => app.id === appId) || null;
+    }
+
+    navigateToUrlState(state, { replace = false } = {}) {
+        const query = UrlState.buildUrlState(state);
+        if (query === window.location.search) return;
+
+        const nextUrl = `${window.location.pathname}${query}${window.location.hash || ''}`;
+        if (replace) {
+            history.replaceState(null, '', nextUrl);
+            return;
+        }
+
+        history.pushState(null, '', nextUrl);
+    }
+
+    applyUrlStateFromLocation({ replace = false } = {}) {
+        if (!this.apps.length) return;
+
+        const state = UrlState.parseUrlState(window.location.search);
+        this.applyUrlState(state, { replaceHistory: replace });
+    }
+
+    applyUrlState(state, { replaceHistory = false } = {}) {
+        const normalizedState = {
+            appId: state?.appId || null,
+            view: UrlState.normalizeView(state?.view),
+        };
+
+        if (!normalizedState.appId) {
+            this.showAppSelection({ skipHistory: true });
+            if (replaceHistory) {
+                this.navigateToUrlState(normalizedState, { replace: true });
+            }
+            return;
+        }
+
+        const app = this.findAppById(normalizedState.appId);
+        if (!app) {
+            this.showAppSelection({ skipHistory: true });
+            this.navigateToUrlState({ appId: null, view: 'suggestions' }, { replace: true });
+            this.showToast('App aus der URL wurde nicht gefunden', 'error');
+            return;
+        }
+
+        this.selectApp(app.id, app.name, {
+            view: normalizedState.view,
+            skipHistory: true,
+        });
+
+        if (replaceHistory) {
+            this.navigateToUrlState(normalizedState, { replace: true });
+        }
+    }
+
+    syncCurrentView() {
+        const suggestionsList = document.getElementById('suggestionsList');
+        const suggestionsFilters = document.getElementById('suggestionsFilters');
+        const roadmapView = document.getElementById('roadmapView');
+        const changelogView = document.getElementById('changelogView');
+        const fabBtn = document.getElementById('fabBtn');
+        const mobileNewBtn = document.getElementById('mobileNewBtn');
+
+        suggestionsList.classList.toggle('hidden', this.currentView !== 'suggestions');
+        suggestionsFilters.classList.toggle('hidden', this.currentView !== 'suggestions');
+        roadmapView.classList.toggle('hidden', this.currentView !== 'roadmap');
+        changelogView.classList.toggle('hidden', this.currentView !== 'changelog');
+
+        const showFab = this.currentView !== 'changelog';
+        fabBtn.style.display = showFab ? 'inline-flex' : 'none';
+        mobileNewBtn.style.display = (showFab && this.currentView === 'suggestions') ? '' : 'none';
+
+        if (!this.currentApp) return;
+
+        if (this.currentView === 'roadmap') {
+            this.loadRoadmap(this.currentApp.id);
+            return;
+        }
+
+        if (this.currentView === 'changelog') {
+            this.loadChangelog(this.currentApp.id);
+            return;
+        }
+
+        this.loadSuggestions(this.currentApp.id);
+    }
+
     // API methods
     async loadApps() {
         try {
@@ -214,7 +323,9 @@ class VotingApp {
             }
 
             const apps = await response.json();
+            this.apps = apps;
             this.renderApps(apps);
+            this.applyUrlStateFromLocation({ replace: true });
         } catch (error) {
             console.error('Error loading apps:', error);
             this.showToast('Fehler beim Laden der Apps', 'error');
@@ -648,41 +759,35 @@ class VotingApp {
         });
     }
 
-    selectApp(appId, appName) {
+    selectApp(appId, appName, { view = 'suggestions', skipHistory = false, replaceHistory = false } = {}) {
+        const appChanged = this.currentApp?.id !== appId;
         this.currentApp = { id: appId, name: appName };
         document.getElementById('currentAppName').textContent = appName;
-        this.currentView = 'suggestions';
+        this.currentView = UrlState.normalizeView(view);
+
+        if (appChanged) {
+            this.currentFilter = 'all';
+        }
+
         this.updateViewTabs();
         this.showSuggestions();
-        this.loadSuggestions(appId);
+
+        if (!skipHistory) {
+            this.navigateToUrlState(this.getCurrentUrlState(), { replace: replaceHistory });
+        }
+
+        this.syncCurrentView();
     }
 
-    switchView(view) {
-        this.currentView = view;
+    switchView(view, { skipHistory = false, replaceHistory = false } = {}) {
+        this.currentView = UrlState.normalizeView(view);
         this.updateViewTabs();
 
-        const suggestionsList = document.getElementById('suggestionsList');
-        const suggestionsFilters = document.getElementById('suggestionsFilters');
-        const roadmapView = document.getElementById('roadmapView');
-        const changelogView = document.getElementById('changelogView');
-        const fabBtn = document.getElementById('fabBtn');
-        const mobileNewBtn = document.getElementById('mobileNewBtn');
-
-        suggestionsList.classList.toggle('hidden', view !== 'suggestions');
-        suggestionsFilters.classList.toggle('hidden', view !== 'suggestions');
-        roadmapView.classList.toggle('hidden', view !== 'roadmap');
-        changelogView.classList.toggle('hidden', view !== 'changelog');
-
-        // Hide FAB on changelog
-        const showFab = view !== 'changelog';
-        fabBtn.style.display = showFab ? 'inline-flex' : 'none';
-        mobileNewBtn.style.display = (showFab && view === 'suggestions') ? '' : 'none';
-
-        if (view === 'roadmap' && this.currentApp) {
-            this.loadRoadmap(this.currentApp.id);
-        } else if (view === 'changelog' && this.currentApp) {
-            this.loadChangelog(this.currentApp.id);
+        if (!skipHistory && this.currentApp) {
+            this.navigateToUrlState(this.getCurrentUrlState(), { replace: replaceHistory });
         }
+
+        this.syncCurrentView();
     }
 
     updateViewTabs() {
