@@ -1280,6 +1280,10 @@ body {
     animation: fadeInUp 0.3s ease both;
 }
 
+.comments-section.is-visible {
+    display: block;
+}
+
 .comments-list {
     display: flex;
     flex-direction: column;

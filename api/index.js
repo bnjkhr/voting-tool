@@ -4,6 +4,7 @@ const admin = require('firebase-admin');
 const path = require('path');
 const { Resend } = require('resend');
 const fs = require('fs');
+const { queryCollectionInChunks } = require('./firestore-chunks');
 
 const app = express();
 
@@ -365,47 +366,30 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
 
     const suggestionIds = suggestionsSnapshot.docs.map(doc => doc.id);
 
-    // Batch load comments and votes for these suggestions
-    const [commentsSnapshot, votesSnapshot] = await Promise.all([
-      db.collection('comments')
-        .where('suggestionId', 'in', suggestionIds.slice(0, 10)) // Firestore 'in' limit is 10
-        .get()
-        .catch(() => ({ docs: [] })), // Fallback if query fails
-      db.collection('votes')
-        .where('suggestionId', 'in', suggestionIds.slice(0, 10))
-        .where('userFingerprint', '==', userFingerprint)
-        .get()
-        .catch(() => ({ docs: [] }))
+    // Batch load comments and votes for these suggestions in Firestore-safe chunks.
+    const [commentDocs, userVoteDocs] = await Promise.all([
+      queryCollectionInChunks(db, {
+        collectionName: 'comments',
+        fieldName: 'suggestionId',
+        values: suggestionIds,
+      }),
+      queryCollectionInChunks(db, {
+        collectionName: 'votes',
+        fieldName: 'suggestionId',
+        values: suggestionIds,
+        applyChunkQuery: query => query.where('userFingerprint', '==', userFingerprint),
+      })
     ]);
-
-    // If more than 10 suggestions, load remaining in second batch
-    let additionalComments = [];
-    let additionalVotes = [];
-    if (suggestionIds.length > 10) {
-      const [commentsSnapshot2, votesSnapshot2] = await Promise.all([
-        db.collection('comments')
-          .where('suggestionId', 'in', suggestionIds.slice(10))
-          .get()
-          .catch(() => ({ docs: [] })),
-        db.collection('votes')
-          .where('suggestionId', 'in', suggestionIds.slice(10))
-          .where('userFingerprint', '==', userFingerprint)
-          .get()
-          .catch(() => ({ docs: [] }))
-      ]);
-      additionalComments = commentsSnapshot2.docs;
-      additionalVotes = votesSnapshot2.docs;
-    }
 
     // Create maps
     const commentCountMap = {};
-    [...commentsSnapshot.docs, ...additionalComments].forEach(doc => {
+    commentDocs.forEach(doc => {
       const suggestionId = doc.data().suggestionId;
       commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
     });
 
     const userVotesSet = new Set(
-      [...votesSnapshot.docs, ...additionalVotes].map(doc => doc.data().suggestionId)
+      userVoteDocs.map(doc => doc.data().suggestionId)
     );
 
     const suggestions = suggestionsSnapshot.docs.map(doc => {
@@ -985,28 +969,16 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
     // Load comments only for existing suggestions in batches
     let commentCountMap = {};
     if (suggestionIds.length > 0) {
-      // Split into chunks of 10 for Firestore 'in' query limit
-      const chunks = [];
-      for (let i = 0; i < suggestionIds.length; i += 10) {
-        chunks.push(suggestionIds.slice(i, i + 10));
-      }
-
-      // Load all chunks in parallel
-      const commentSnapshots = await Promise.all(
-        chunks.map(chunk =>
-          db.collection('comments')
-            .where('suggestionId', 'in', chunk)
-            .get()
-            .catch(() => ({ docs: [] }))
-        )
-      );
+      const commentDocs = await queryCollectionInChunks(db, {
+        collectionName: 'comments',
+        fieldName: 'suggestionId',
+        values: suggestionIds,
+      });
 
       // Aggregate comment counts
-      commentSnapshots.forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          const suggestionId = doc.data().suggestionId;
-          commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
-        });
+      commentDocs.forEach(doc => {
+        const suggestionId = doc.data().suggestionId;
+        commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
       });
     }
 

@@ -783,15 +783,20 @@ class VotingApp {
                   ).join('')}</div>`
                 : '';
 
-            const commentBadge = suggestion.commentCount > 0
+            const hasComments = suggestion.commentCount > 0;
+            const commentButtonLabel = hasComments ? 'Kommentare ausblenden' : 'Kommentare';
+
+            const commentBadge = hasComments
                 ? `<div class="badge-row">
                         <button
                             onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
+                            id="comments-toggle-${suggestion.id}"
                             class="label label-button"
                             style="--label-color: #3b82f6;"
+                            aria-expanded="true"
                         >
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>Kommentare</span>
+                            <span>${commentButtonLabel}</span>
                             <span>(${suggestion.commentCount})</span>
                         </button>
                     </div>`
@@ -831,7 +836,7 @@ class VotingApp {
                             ${statusBadge}
                             ${labelBadges}
                             ${commentBadge}
-                            <div id="comments-${suggestion.id}" class="comments-section">
+                            <div id="comments-${suggestion.id}" class="comments-section ${hasComments ? 'is-visible' : ''}">
                                 <div class="loading">Kommentare werden geladen...</div>
                             </div>
                         </div>
@@ -845,6 +850,12 @@ class VotingApp {
         Array.from(tempContainer.children).forEach(child => {
             suggestionsList.appendChild(child);
         });
+
+        suggestions
+            .filter(suggestion => suggestion.commentCount > 0)
+            .forEach(suggestion => {
+                this.loadComments(suggestion.id);
+            });
     }
 
     selectApp(appId, appName, { view = 'suggestions', skipHistory = false, replaceHistory = false } = {}) {
@@ -1130,10 +1141,20 @@ class VotingApp {
 
     async toggleComments(suggestionId) {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
-        const isHidden = commentsDiv.style.display === 'none' || !commentsDiv.style.display;
+        const toggleButton = document.getElementById(`comments-toggle-${suggestionId}`);
+        const isVisible = commentsDiv.classList.contains('is-visible');
 
-        commentsDiv.style.display = isHidden ? 'block' : 'none';
-        if (isHidden) {
+        commentsDiv.classList.toggle('is-visible', !isVisible);
+
+        if (toggleButton) {
+            toggleButton.setAttribute('aria-expanded', String(!isVisible));
+            const labelSpan = toggleButton.querySelectorAll('span')[1];
+            if (labelSpan) {
+                labelSpan.textContent = !isVisible ? 'Kommentare ausblenden' : 'Kommentare anzeigen';
+            }
+        }
+
+        if (!isVisible) {
             await this.loadComments(suggestionId);
         }
     }
