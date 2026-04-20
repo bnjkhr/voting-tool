@@ -26,6 +26,13 @@ class VotingApp {
         'kritisch': { color: '#ef4444', label: 'Kritisch' },
     };
 
+    static TYPE_STYLES = {
+        all: { label: 'Alle Typen', color: '#6366F1' },
+        feature: { label: 'Feature', color: '#4f46e5' },
+        bug: { label: 'Bug', color: '#ef4444' },
+        ticket: { label: 'Ticket', color: '#a855f7' },
+    };
+
     static RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
 
     static DEFAULT_TAG_STYLE = { color: '#64748b', icon: '\u2022' };
@@ -34,7 +41,7 @@ class VotingApp {
         this.apps = [];
         this.currentApp = null;
         this.votedSuggestions = new Set(this.getVotedSuggestions());
-        this.currentFilter = 'all';
+        this.currentFilters = { status: 'all', type: 'all' };
         this.currentView = 'suggestions';
         this.allSuggestions = [];
         this.currentReportType = 'feature';
@@ -145,7 +152,7 @@ class VotingApp {
         this.currentApp = null;
         this.currentView = 'suggestions';
         this.allSuggestions = [];
-        this.currentFilter = 'all';
+        this.currentFilters = { status: 'all', type: 'all' };
         document.getElementById('currentAppName').textContent = 'App Name';
         document.getElementById('suggestionsFilters').innerHTML = '';
         document.getElementById('suggestionsList').innerHTML = '<div class="loading">Einträge werden geladen...</div>';
@@ -494,6 +501,125 @@ class VotingApp {
     }
 
     // Filtering methods
+    normalizeSuggestionType(type) {
+        const normalized = (type || 'feature').toString().trim().toLowerCase();
+        return normalized || 'feature';
+    }
+
+    formatTypeLabel(type) {
+        const known = VotingApp.TYPE_STYLES[type];
+        if (known) return known.label;
+        return type
+            .split(/[\s_-]+/)
+            .filter(Boolean)
+            .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ');
+    }
+
+    getTypeFilterMeta(type) {
+        const known = VotingApp.TYPE_STYLES[type];
+        if (known) return known;
+        return {
+            label: this.formatTypeLabel(type),
+            color: '#64748b',
+        };
+    }
+
+    matchesStatusFilter(suggestion, statusFilter) {
+        if (statusFilter === 'all') return true;
+        if (statusFilter === 'keine') return !suggestion.status;
+        return suggestion.status === statusFilter;
+    }
+
+    matchesTypeFilter(suggestion, typeFilter) {
+        if (typeFilter === 'all') return true;
+        return this.normalizeSuggestionType(suggestion.type) === typeFilter;
+    }
+
+    buildStatusFilters(suggestions) {
+        const statusMeta = {
+            all: { label: 'Alle', color: '#6366F1' },
+            'neu': { label: 'Neu', color: '#ef4444' },
+            'wird geprüft': { label: 'Wird geprüft', color: '#f59e0b' },
+            'wird umgesetzt': { label: 'Wird umgesetzt', color: '#3b82f6' },
+            'ist umgesetzt': { label: 'Umgesetzt', color: '#059669' },
+            'wird nicht umgesetzt': { label: 'Abgelehnt', color: '#ef4444' },
+            'offen': { label: 'Offen', color: '#3b82f6' },
+            'in Bearbeitung': { label: 'In Bearbeitung', color: '#f59e0b' },
+            'wartend': { label: 'Wartend', color: '#a855f7' },
+            'gelöst': { label: 'Gelöst', color: '#10b981' },
+            'geschlossen': { label: 'Geschlossen', color: '#64748b' },
+            'keine': { label: 'Ohne Status', color: '#64748b' },
+        };
+
+        const counts = { all: suggestions.length };
+        suggestions.forEach(suggestion => {
+            const status = suggestion.status || 'keine';
+            counts[status] = (counts[status] || 0) + 1;
+        });
+
+        return Object.entries(statusMeta)
+            .filter(([id]) => id === 'all' || (counts[id] && counts[id] > 0))
+            .map(([id, meta]) => ({
+                id,
+                label: meta.label,
+                count: counts[id] || 0,
+                color: meta.color,
+            }));
+    }
+
+    buildTypeFilters(suggestions) {
+        const counts = { all: suggestions.length };
+
+        suggestions.forEach(suggestion => {
+            const type = this.normalizeSuggestionType(suggestion.type);
+            counts[type] = (counts[type] || 0) + 1;
+        });
+
+        const knownTypeOrder = ['feature', 'bug', 'ticket'];
+        const dynamicTypes = Object.keys(counts)
+            .filter(type => type !== 'all' && !knownTypeOrder.includes(type))
+            .sort((a, b) => a.localeCompare(b, 'de'));
+        const orderedTypes = [...knownTypeOrder.filter(type => counts[type] > 0), ...dynamicTypes];
+
+        return ['all', ...orderedTypes].map(type => {
+            const meta = this.getTypeFilterMeta(type);
+            return {
+                id: type,
+                label: meta.label,
+                count: counts[type] || 0,
+                color: meta.color,
+            };
+        });
+    }
+
+    renderFilterGroup(groupKey, title, filters, activeFilterId) {
+        const visibleFilters = filters.filter(filter => filter.id === 'all' || filter.count > 0);
+
+        return `
+            <div class="filter-group">
+                <div class="filter-group-label">${this.escapeHtml(title)}</div>
+                <div class="filter-bar" role="group" aria-label="${this.escapeHtml(title)}">
+                    ${visibleFilters.map(filter => {
+                        const encodedId = encodeURIComponent(filter.id);
+                        return `
+                            <button
+                                onclick="app.setFilter('${groupKey}', decodeURIComponent('${encodedId}'))"
+                                class="filter-pill ${activeFilterId === filter.id ? 'active' : ''}"
+                                style="--filter-color: ${filter.color};"
+                                type="button"
+                            >
+                                <span class="filter-dot" aria-hidden="true"></span>
+                                <span>${this.escapeHtml(filter.label)}</span>
+                                <span class="filter-count">${filter.count}</span>
+                            </button>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+
     renderFilterBar() {
         const filterHost = document.getElementById('suggestionsFilters');
         if (!filterHost) return;
@@ -503,74 +629,36 @@ class VotingApp {
             return;
         }
 
-        // Count suggestions by status
-        const counts = {};
-        counts['all'] = this.allSuggestions.length;
+        const suggestionsForStatusCounts = this.allSuggestions.filter(suggestion =>
+            this.matchesTypeFilter(suggestion, this.currentFilters.type)
+        );
+        const suggestionsForTypeCounts = this.allSuggestions.filter(suggestion =>
+            this.matchesStatusFilter(suggestion, this.currentFilters.status)
+        );
 
-        this.allSuggestions.forEach(s => {
-            const status = s.status || 'keine';
-            counts[status] = (counts[status] || 0) + 1;
-        });
+        const statusFilters = this.buildStatusFilters(suggestionsForStatusCounts);
+        const typeFilters = this.buildTypeFilters(suggestionsForTypeCounts);
 
-        // Build filter list from actual statuses present
-        const statusMeta = {
-            'all':                  { label: 'Alle', color: '#6366F1' },
-            // Feature statuses
-            'neu':                  { label: 'Neu', color: '#ef4444' },
-            'wird geprüft':        { label: 'Wird geprüft', color: '#f59e0b' },
-            'wird umgesetzt':       { label: 'Wird umgesetzt', color: '#3b82f6' },
-            'ist umgesetzt':        { label: 'Umgesetzt', color: '#059669' },
-            'wird nicht umgesetzt': { label: 'Abgelehnt', color: '#ef4444' },
-            // Ticket/Bug statuses
-            'offen':                { label: 'Offen', color: '#3b82f6' },
-            'in Bearbeitung':       { label: 'In Bearbeitung', color: '#f59e0b' },
-            'wartend':              { label: 'Wartend', color: '#a855f7' },
-            'gelöst':               { label: 'Gelöst', color: '#10b981' },
-            'geschlossen':          { label: 'Geschlossen', color: '#64748b' },
-            'keine':                { label: 'Ohne Status', color: '#64748b' },
-        };
-
-        const filters = Object.entries(statusMeta)
-            .filter(([id]) => id === 'all' || (counts[id] && counts[id] > 0))
-            .map(([id, meta]) => ({
-                id,
-                label: meta.label,
-                count: counts[id] || 0,
-                color: meta.color,
-            }));
-
-        // Only show filters with count > 0 (except 'all')
-        const visibleFilters = filters.filter(f => f.id === 'all' || f.count > 0);
-
-        const filterBar = `
-            <div class="filter-bar">
-                ${visibleFilters.map(filter => `
-                    <button
-                        onclick="app.setFilter('${filter.id}')"
-                        class="filter-pill ${this.currentFilter === filter.id ? 'active' : ''}"
-                        style="--filter-color: ${filter.color};"
-                    >
-                        <span class="filter-dot" aria-hidden="true"></span>
-                        <span>${filter.label}</span>
-                        <span class="filter-count">${filter.count}</span>
-                    </button>
-                `).join('')}
+        filterHost.innerHTML = `
+            <div class="filter-groups">
+                ${this.renderFilterGroup('status', 'Status', statusFilters, this.currentFilters.status)}
+                ${this.renderFilterGroup('type', 'Typ', typeFilters, this.currentFilters.type)}
             </div>
         `;
-
-        filterHost.innerHTML = filterBar;
     }
 
-    setFilter(filterId) {
-        this.currentFilter = filterId;
+    setFilter(groupKey, filterId) {
+        if (!['status', 'type'].includes(groupKey)) return;
+        this.currentFilters[groupKey] = filterId;
         this.renderFilterBar();
         this.renderSuggestions(this.filterSuggestions(this.allSuggestions));
     }
 
     filterSuggestions(suggestions) {
-        if (this.currentFilter === 'all') return suggestions;
-        if (this.currentFilter === 'keine') return suggestions.filter(s => !s.status);
-        return suggestions.filter(s => s.status === this.currentFilter);
+        return suggestions.filter(suggestion =>
+            this.matchesStatusFilter(suggestion, this.currentFilters.status) &&
+            this.matchesTypeFilter(suggestion, this.currentFilters.type)
+        );
     }
 
     // Rendering methods
@@ -604,9 +692,9 @@ class VotingApp {
             const noResultsMsg = document.createElement('div');
             noResultsMsg.className = 'loading';
             noResultsMsg.innerHTML = `
-                ${this.currentFilter === 'all' ?
+                ${this.currentFilters.status === 'all' && this.currentFilters.type === 'all' ?
                     'Noch keine Einträge vorhanden.<br>Seien Sie der Erste und reichen Sie einen Eintrag ein!' :
-                    'Keine Einträge mit diesem Status gefunden.'
+                    'Keine Einträge mit diesen Filtern gefunden.'
                 }
             `;
             suggestionsList.appendChild(noResultsMsg);
@@ -766,7 +854,7 @@ class VotingApp {
         this.currentView = UrlState.normalizeView(view);
 
         if (appChanged) {
-            this.currentFilter = 'all';
+            this.currentFilters = { status: 'all', type: 'all' };
         }
 
         this.updateViewTabs();

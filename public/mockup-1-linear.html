@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design 1: Linear-Style</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0A0A0B;
+    --surface: #141415;
+    --surface-hover: #1C1C1E;
+    --border: rgba(255,255,255,0.06);
+    --border-hover: rgba(255,255,255,0.1);
+    --text: #EDEDEF;
+    --text-secondary: #8B8B8E;
+    --text-muted: #56565A;
+    --accent: #7C5CFC;
+    --accent-soft: rgba(124,92,252,0.12);
+    --green: #2DA44E;
+    --green-soft: rgba(45,164,78,0.12);
+    --orange: #E5853D;
+    --orange-soft: rgba(229,133,61,0.12);
+    --red: #E5534B;
+    --red-soft: rgba(229,83,75,0.12);
+    --blue: #4A9EFF;
+    --blue-soft: rgba(74,158,255,0.12);
+    --yellow: #D4A72C;
+    --yellow-soft: rgba(212,167,44,0.12);
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+
+  .layout {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 240px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 16px 12px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar-logo {
+    font-weight: 700;
+    font-size: 14px;
+    padding: 4px 8px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+  }
+
+  .sidebar-logo .icon {
+    width: 20px;
+    height: 20px;
+    background: var(--accent);
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: white;
+  }
+
+  .nav-section {
+    margin-bottom: 24px;
+  }
+
+  .nav-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0 8px;
+    margin-bottom: 4px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+
+  .nav-item:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .nav-item.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .nav-item .count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Main content */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .topbar {
+    height: 52px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .topbar h1 {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .topbar .filters {
+    display: flex;
+    gap: 4px;
+    margin-left: 16px;
+  }
+
+  .filter-btn {
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+
+  .filter-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+  }
+
+  .filter-btn.active {
+    background: var(--accent-soft);
+    border-color: transparent;
+    color: var(--accent);
+  }
+
+  .topbar-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: none;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+  }
+
+  .search-input {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    width: 200px;
+  }
+
+  .search-input::placeholder { color: var(--text-muted); }
+
+  /* Ticket list */
+  .ticket-list {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .ticket-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.08s;
+  }
+
+  .ticket-row:hover {
+    background: var(--surface-hover);
+  }
+
+  .ticket-priority {
+    width: 3px;
+    height: 20px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .ticket-priority.kritisch { background: var(--red); }
+  .ticket-priority.hoch { background: var(--orange); }
+  .ticket-priority.mittel { background: var(--yellow); }
+  .ticket-priority.niedrig { background: var(--blue); }
+
+  .ticket-status {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1.5px solid;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+  }
+
+  .ticket-status.offen { border-color: var(--blue); }
+  .ticket-status.in-bearbeitung { border-color: var(--yellow); background: var(--yellow-soft); }
+  .ticket-status.geloest { border-color: var(--green); background: var(--green); color: white; }
+  .ticket-status.wartend { border-color: var(--orange); }
+
+  .ticket-id {
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--text-muted);
+    width: 72px;
+    flex-shrink: 0;
+  }
+
+  .ticket-title {
+    font-size: 13px;
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ticket-labels {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .label {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+
+  .label.type-feature { border-color: rgba(124,92,252,0.3); color: var(--accent); background: var(--accent-soft); }
+  .label.type-bug { border-color: rgba(229,83,75,0.3); color: var(--red); background: var(--red-soft); }
+  .label.type-ticket { border-color: rgba(74,158,255,0.3); color: var(--blue); background: var(--blue-soft); }
+
+  .ticket-votes {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    width: 48px;
+    justify-content: flex-end;
+  }
+
+  .ticket-votes .arrow {
+    font-size: 10px;
+    color: var(--accent);
+  }
+
+  .ticket-date {
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 60px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .ticket-assignee {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  /* Bottom bar */
+  .bottombar {
+    height: 32px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    font-size: 11px;
+    color: var(--text-muted);
+    gap: 16px;
+  }
+
+  .design-tag {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background: var(--accent);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    z-index: 100;
+    box-shadow: 0 4px 20px rgba(124,92,252,0.4);
+  }
+
+  /* Mobile */
+  @media (max-width: 600px) {
+    .sidebar { display: none; }
+
+    .topbar {
+      padding: 0 16px;
+      flex-wrap: wrap;
+      height: auto;
+      padding-top: 12px;
+      padding-bottom: 12px;
+      gap: 8px;
+    }
+
+    .topbar h1 { font-size: 16px; }
+
+    .topbar .filters {
+      margin-left: 0;
+      order: 3;
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .topbar-actions {
+      margin-left: auto;
+      order: 2;
+    }
+
+    .search-input { display: none; }
+
+    .ticket-row {
+      padding: 12px 16px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ticket-id { width: auto; font-size: 11px; }
+    .ticket-title { min-width: 100%; order: 5; font-size: 14px; }
+    .ticket-labels { order: 6; width: 100%; }
+    .ticket-date { order: 4; width: auto; }
+    .ticket-votes { width: auto; }
+    .ticket-assignee { display: none; }
+
+    .bottombar {
+      padding: 0 16px;
+      font-size: 10px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="design-tag">Design 1: Linear-Style</div>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="icon">B</div>
+      BenKohler Tickets
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-item active">
+        <span>&#9711;</span> Alle Einträge <span class="count">24</span>
+      </div>
+      <div class="nav-item">
+        <span>&#9888;</span> Meine Tickets <span class="count">3</span>
+      </div>
+      <div class="nav-item">
+        <span>&#128065;</span> Beobachtet <span class="count">7</span>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Apps</div>
+      <div class="nav-item">
+        <span style="color: var(--accent);">&#9679;</span> GymBo <span class="count">14</span>
+      </div>
+      <div class="nav-item">
+        <span style="color: var(--green);">&#9679;</span> FamilyManager <span class="count">10</span>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Filter</div>
+      <div class="nav-item">&#9675; Offen <span class="count">8</span></div>
+      <div class="nav-item">&#9684; In Bearbeitung <span class="count">5</span></div>
+      <div class="nav-item">&#10003; Gelöst <span class="count">6</span></div>
+      <div class="nav-item">&#8943; Geschlossen <span class="count">5</span></div>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="topbar">
+      <h1>GymBo</h1>
+      <div class="filters">
+        <button class="filter-btn active">Alle</button>
+        <button class="filter-btn">Features</button>
+        <button class="filter-btn">Bugs</button>
+        <button class="filter-btn">Tickets</button>
+      </div>
+      <div class="topbar-actions">
+        <input class="search-input" placeholder="Suchen... (⌘K)" />
+        <button class="btn-primary">+ Neuer Eintrag</button>
+      </div>
+    </div>
+
+    <div class="ticket-list">
+      <div class="ticket-row">
+        <div class="ticket-priority kritisch"></div>
+        <div class="ticket-status offen"></div>
+        <div class="ticket-id">GYM-042</div>
+        <div class="ticket-title">Login-Seite lädt nicht auf iOS 17 Safari</div>
+        <div class="ticket-labels">
+          <span class="label type-bug">Bug</span>
+          <span class="label">iOS</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 12</div>
+        <div class="ticket-assignee">BK</div>
+        <div class="ticket-date">2 Std.</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority hoch"></div>
+        <div class="ticket-status in-bearbeitung"></div>
+        <div class="ticket-id">GYM-041</div>
+        <div class="ticket-title">Dark Mode für Trainingsansicht</div>
+        <div class="ticket-labels">
+          <span class="label type-feature">Feature</span>
+          <span class="label">UI</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 28</div>
+        <div class="ticket-assignee">MK</div>
+        <div class="ticket-date">5 Std.</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority mittel"></div>
+        <div class="ticket-status offen"></div>
+        <div class="ticket-id">GYM-040</div>
+        <div class="ticket-title">Export-Funktion für Trainingsdaten als CSV</div>
+        <div class="ticket-labels">
+          <span class="label type-feature">Feature</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 19</div>
+        <div class="ticket-assignee" style="opacity: 0.3;">?</div>
+        <div class="ticket-date">1 Tag</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority hoch"></div>
+        <div class="ticket-status wartend"></div>
+        <div class="ticket-id">GYM-039</div>
+        <div class="ticket-title">Push-Benachrichtigungen kommen nicht an</div>
+        <div class="ticket-labels">
+          <span class="label type-ticket">Ticket</span>
+          <span class="label">Notifications</span>
+        </div>
+        <div class="ticket-votes"></div>
+        <div class="ticket-assignee">BK</div>
+        <div class="ticket-date">1 Tag</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority niedrig"></div>
+        <div class="ticket-status offen"></div>
+        <div class="ticket-id">GYM-038</div>
+        <div class="ticket-title">Apple Health Integration für Herzfrequenz-Daten</div>
+        <div class="ticket-labels">
+          <span class="label type-feature">Feature</span>
+          <span class="label">Integration</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 45</div>
+        <div class="ticket-assignee" style="opacity: 0.3;">?</div>
+        <div class="ticket-date">2 Tage</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority mittel"></div>
+        <div class="ticket-status in-bearbeitung"></div>
+        <div class="ticket-id">GYM-037</div>
+        <div class="ticket-title">Kalender-Sync mit Google Calendar</div>
+        <div class="ticket-labels">
+          <span class="label type-feature">Feature</span>
+          <span class="label">Sync</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 33</div>
+        <div class="ticket-assignee">MK</div>
+        <div class="ticket-date">3 Tage</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority kritisch"></div>
+        <div class="ticket-status offen"></div>
+        <div class="ticket-id">GYM-036</div>
+        <div class="ticket-title">Daten gehen verloren nach App-Update auf Android</div>
+        <div class="ticket-labels">
+          <span class="label type-bug">Bug</span>
+          <span class="label">Android</span>
+          <span class="label">Datenverlust</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 8</div>
+        <div class="ticket-assignee">BK</div>
+        <div class="ticket-date">3 Tage</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority niedrig"></div>
+        <div class="ticket-status geloest">&#10003;</div>
+        <div class="ticket-id">GYM-035</div>
+        <div class="ticket-title" style="color: var(--text-muted);">Schriftgröße in der Übungsansicht anpassbar machen</div>
+        <div class="ticket-labels">
+          <span class="label type-feature" style="opacity: 0.5;">Feature</span>
+        </div>
+        <div class="ticket-votes" style="opacity: 0.5;"><span class="arrow">&#9650;</span> 14</div>
+        <div class="ticket-assignee" style="opacity: 0.5;">MK</div>
+        <div class="ticket-date" style="opacity: 0.5;">5 Tage</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority mittel"></div>
+        <div class="ticket-status offen"></div>
+        <div class="ticket-id">GYM-034</div>
+        <div class="ticket-title">Statistik-Dashboard mit Wochen-/Monatsvergleich</div>
+        <div class="ticket-labels">
+          <span class="label type-feature">Feature</span>
+          <span class="label">Analytics</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 22</div>
+        <div class="ticket-assignee" style="opacity: 0.3;">?</div>
+        <div class="ticket-date">1 Wo.</div>
+      </div>
+
+      <div class="ticket-row">
+        <div class="ticket-priority hoch"></div>
+        <div class="ticket-status in-bearbeitung"></div>
+        <div class="ticket-id">GYM-033</div>
+        <div class="ticket-title">Offline-Modus für Training ohne Internet</div>
+        <div class="ticket-labels">
+          <span class="label type-feature">Feature</span>
+          <span class="label">Offline</span>
+        </div>
+        <div class="ticket-votes"><span class="arrow">&#9650;</span> 51</div>
+        <div class="ticket-assignee">BK</div>
+        <div class="ticket-date">1 Wo.</div>
+      </div>
+    </div>
+
+    <div class="bottombar">
+      <span>24 Einträge</span>
+      <span>8 offen</span>
+      <span>5 in Bearbeitung</span>
+      <span>6 gelöst</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

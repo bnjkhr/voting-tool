@@ -1,0 +1,108 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]: "Design 2: Soft & Warm"
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: G
+        - generic [ref=e7]:
+          - heading "GymBo" [level=1] [ref=e8]
+          - generic [ref=e9]: Feedback & Tickets
+      - button "+ Neuer Eintrag" [ref=e10] [cursor=pointer]
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - generic [ref=e13]: "8"
+        - generic [ref=e14]: Offen
+      - generic [ref=e15]:
+        - generic [ref=e16]: "5"
+        - generic [ref=e17]: In Bearbeitung
+      - generic [ref=e18]:
+        - generic [ref=e19]: "6"
+        - generic [ref=e20]: Gelöst
+      - generic [ref=e21]:
+        - generic [ref=e22]: "51"
+        - generic [ref=e23]: Top Votes
+    - generic [ref=e24]:
+      - button "Alle (24)" [ref=e25] [cursor=pointer]
+      - button "Features (12)" [ref=e26] [cursor=pointer]
+      - button "Bugs (7)" [ref=e27] [cursor=pointer]
+      - button "Tickets (5)" [ref=e28] [cursor=pointer]
+    - generic [ref=e29]:
+      - generic [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]:
+          - button "▲" [ref=e32]
+          - generic [ref=e33]: "51"
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - generic [ref=e36]: GYM-033
+            - generic [ref=e37]: Offline-Modus für Training ohne Internet
+          - paragraph [ref=e39]: Trainings sollten auch ohne Internetverbindung gestartet und aufgezeichnet werden können. Sync bei nächster Verbindung.
+          - generic [ref=e40]:
+            - generic [ref=e41]: ✨ Feature
+            - generic [ref=e42]: ◔ In Bearbeitung
+            - generic [ref=e43]: Offline
+            - generic [ref=e44]: vor 1 Woche
+      - generic [ref=e45] [cursor=pointer]:
+        - generic [ref=e46]:
+          - button "▲" [ref=e47]
+          - generic [ref=e48]: "45"
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - generic [ref=e51]: GYM-038
+            - generic [ref=e52]: Apple Health Integration für Herzfrequenz-Daten
+          - paragraph [ref=e54]: Herzfrequenz-Daten aus Apple Health automatisch importieren und im Trainingsprotokoll anzeigen.
+          - generic [ref=e55]:
+            - generic [ref=e56]: ✨ Feature
+            - generic [ref=e57]: ○ Offen
+            - generic [ref=e58]: Integration
+            - generic [ref=e59]: vor 2 Tagen
+      - generic [ref=e60] [cursor=pointer]:
+        - generic [ref=e61]: 🐞
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - generic [ref=e64]: GYM-042
+            - generic [ref=e65]: Login-Seite lädt nicht auf iOS 17 Safari
+          - paragraph [ref=e67]: Nach dem Update auf iOS 17.4 bleibt die Login-Seite beim Laden hängen. Weißer Bildschirm.
+          - generic [ref=e68]:
+            - generic [ref=e69]: 🐞 Bug
+            - generic [ref=e70]: ○ Offen
+            - generic [ref=e71]: iOS
+            - generic [ref=e72]: Kritisch
+            - generic [ref=e73]: vor 2 Std.
+      - generic [ref=e74] [cursor=pointer]:
+        - generic [ref=e75]:
+          - button "▲" [ref=e76]
+          - generic [ref=e77]: "28"
+        - generic [ref=e78]:
+          - generic [ref=e79]:
+            - generic [ref=e80]: GYM-041
+            - generic [ref=e81]: Dark Mode für Trainingsansicht
+          - paragraph [ref=e83]: Dunkles Farbschema für die Trainingsansicht, um OLED-Displays zu schonen und das Training bei wenig Licht angenehmer zu machen.
+          - generic [ref=e84]:
+            - generic [ref=e85]: ✨ Feature
+            - generic [ref=e86]: ◔ In Bearbeitung
+            - generic [ref=e87]: UI
+            - generic [ref=e88]: vor 5 Std.
+      - generic [ref=e89] [cursor=pointer]:
+        - generic [ref=e90]: 🎫
+        - generic [ref=e91]:
+          - generic [ref=e92]:
+            - generic [ref=e93]: GYM-039
+            - generic [ref=e94]: Push-Benachrichtigungen kommen nicht an
+          - paragraph [ref=e96]: Seit dem letzten Update erhalte ich keine Push-Benachrichtigungen mehr für geplante Trainings.
+          - generic [ref=e97]:
+            - generic [ref=e98]: 🎫 Ticket
+            - generic [ref=e99]: ⏸ Wartend
+            - generic [ref=e100]: Notifications
+            - generic [ref=e101]: vor 1 Tag
+      - generic [ref=e102] [cursor=pointer]:
+        - generic [ref=e103]:
+          - button "▲" [disabled] [ref=e104]
+          - generic [ref=e105]: "14"
+        - generic [ref=e106]:
+          - generic [ref=e107]:
+            - generic [ref=e108]: GYM-035
+            - generic [ref=e109]: Schriftgröße in der Übungsansicht anpassbar machen
+          - generic [ref=e110]:
+            - generic [ref=e111]: ✨ Feature
+            - generic [ref=e112]: ✓ Gelöst
+            - generic [ref=e113]: vor 5 Tagen

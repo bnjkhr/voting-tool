@@ -780,6 +780,27 @@ body {
 }
 
 /* Filter bar */
+.filter-groups {
+    display: grid;
+    gap: 10px;
+    margin-bottom: var(--spacing-lg);
+    animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.filter-group {
+    display: grid;
+    gap: 6px;
+}
+
+.filter-group-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding-left: 2px;
+}
+
 .filter-bar {
     display: flex;
     gap: 6px;
@@ -787,9 +808,8 @@ body {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: 0;
     padding: 4px 0;
-    animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .filter-bar::-webkit-scrollbar {
