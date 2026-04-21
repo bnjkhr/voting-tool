@@ -20,15 +20,20 @@ test('suggestions with comments render their comment section visible by default'
   );
 });
 
-test('tickets support a public comment composer with moderated submission flow', () => {
+test('approved entries support a public comment composer with moderated submission flow', () => {
   assert.ok(
     publicScript.includes('renderTicketCommentComposer(suggestionId)'),
     'expected the public app to render a dedicated ticket comment composer'
   );
 
   assert.ok(
+    publicScript.includes("['feature', 'bug', 'ticket'].includes(suggestionType)"),
+    'expected the public comment composer to be available for bugs, tickets, and features'
+  );
+
+  assert.ok(
     publicScript.includes("fetch(`/api/suggestions/${suggestionId}/comments`"),
-    'expected ticket comments to be submitted through the public comments endpoint'
+    'expected public comments to be submitted through the public comments endpoint'
   );
 
   assert.ok(
@@ -63,5 +68,10 @@ test('admin UI exposes moderation actions for user comments', () => {
   assert.ok(
     adminScript.includes('pendingCommentCount'),
     'expected admin UI to surface pending comment counts'
+  );
+
+  assert.ok(
+    adminScript.includes(".filter(suggestion => suggestion.pendingCommentCount > 0)"),
+    'expected admin UI to eagerly load pending comments for moderation'
   );
 });

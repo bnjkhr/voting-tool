@@ -1335,7 +1335,7 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
   }
 });
 
-// Public: Submit comment for a ticket (requires admin approval before it becomes visible)
+// Public: Submit comment for an approved entry (requires admin approval before it becomes visible)
 app.post('/api/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (req, res) => {
   try {
     const { suggestionId } = req.params;
@@ -1364,11 +1364,6 @@ app.post('/api/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (
     const suggestion = suggestionDoc.data();
     if (!suggestion.approved) {
       return res.status(404).json({ error: 'Suggestion not found' });
-    }
-
-    const suggestionType = normalizeSuggestionType(suggestion.type);
-    if (suggestionType !== 'ticket') {
-      return res.status(400).json({ error: 'Comments from users are only supported for tickets' });
     }
 
     const comment = {

@@ -125,3 +125,14 @@ test('comment screenshot validation enforces count and total size limits', () =>
     { screenshots: [] }
   );
 });
+
+test('public comment endpoint is no longer restricted to tickets', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const apiIndex = fs.readFileSync(path.join(__dirname, '..', 'api', 'index.js'), 'utf8');
+
+  assert.ok(
+    !apiIndex.includes('Comments from users are only supported for tickets'),
+    'expected public comments to be available for approved bugs and features as well'
+  );
+});

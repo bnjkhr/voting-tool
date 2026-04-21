@@ -228,12 +228,16 @@ class AdminApp {
                 : '';
 
             const hasComments = suggestion.commentCount > 0;
+            const hasPendingComments = suggestion.pendingCommentCount > 0;
             const commentBadge = hasComments
                 ? `<span style="background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">💬 ${suggestion.commentCount}</span>`
                 : '';
-            const pendingCommentBadge = suggestion.pendingCommentCount > 0
+            const pendingCommentBadge = hasPendingComments
                 ? `<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Kommentare ${suggestion.pendingCommentCount}</span>`
                 : '';
+            const commentButtonLabel = hasPendingComments
+                ? `💬 Kommentare prüfen (${suggestion.pendingCommentCount})`
+                : (hasComments ? `💬 Kommentare (${suggestion.commentCount})` : '💬 Kommentar');
 
             // Labels
             const labelPills = (suggestion.labels || []).map(l =>
@@ -298,13 +302,13 @@ class AdminApp {
                             </div>
                             <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); display: flex; gap: 8px; flex-wrap: wrap;">
                                 <button class="secondary-btn btn-small" onclick="adminApp.toggleComments('${suggestion.id}')" style="flex: 1;">
-                                    ${hasComments ? `💬 Kommentare (${suggestion.commentCount})` : '💬 Kommentar'}
+                                    ${commentButtonLabel}
                                 </button>
                                 <button class="secondary-btn btn-small" onclick="adminApp.toggleActivity('${suggestion.id}')" style="flex: 1;">
                                     📋 Aktivität
                                 </button>
                             </div>
-                            <div id="comments-${suggestion.id}" style="display: none; margin-top: 12px;">
+                            <div id="comments-${suggestion.id}" style="display: ${hasPendingComments ? 'block' : 'none'}; margin-top: 12px;">
                                 <div class="loading">Kommentare werden geladen...</div>
                             </div>
                             <div id="activity-${suggestion.id}" style="display: none; margin-top: 12px;">
@@ -325,6 +329,12 @@ class AdminApp {
                 </div>
             `;
         }).join('');
+
+        filtered
+            .filter(suggestion => suggestion.pendingCommentCount > 0)
+            .forEach(suggestion => {
+                this.loadComments(suggestion.id);
+            });
     }
 
     showAppModal(app = null) {

@@ -785,7 +785,7 @@ class VotingApp {
                 : '';
 
             const hasComments = suggestion.commentCount > 0;
-            const supportsUserComments = isTicket;
+            const supportsUserComments = ['feature', 'bug', 'ticket'].includes(suggestionType);
             const hasCommentSection = hasComments || supportsUserComments;
             const commentButtonCollapsedLabel = hasComments
                 ? 'Kommentare anzeigen'
@@ -1197,7 +1197,7 @@ class VotingApp {
     renderComments(suggestionId, comments) {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
         const suggestion = this.getSuggestionById(suggestionId);
-        const supportsUserComments = suggestion?.type === 'ticket';
+        const supportsUserComments = ['feature', 'bug', 'ticket'].includes(suggestion?.type);
 
         let html = '';
 
