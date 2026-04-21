@@ -46,6 +46,7 @@ class VotingApp {
         this.allSuggestions = [];
         this.currentReportType = 'feature';
         this.bugScreenshots = [];
+        this.selectedCommentScreenshots = {};
         this.init();
     }
 
@@ -784,19 +785,26 @@ class VotingApp {
                 : '';
 
             const hasComments = suggestion.commentCount > 0;
-            const commentButtonLabel = hasComments ? 'Kommentare ausblenden' : 'Kommentare';
+            const supportsUserComments = isTicket;
+            const hasCommentSection = hasComments || supportsUserComments;
+            const commentButtonCollapsedLabel = hasComments
+                ? 'Kommentare anzeigen'
+                : (supportsUserComments ? 'Kommentar schreiben' : 'Kommentare');
+            const commentButtonExpandedLabel = supportsUserComments ? 'Kommentar ausblenden' : 'Kommentare ausblenden';
 
-            const commentBadge = hasComments
+            const commentBadge = hasCommentSection
                 ? `<div class="badge-row">
                         <button
                             onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
                             id="comments-toggle-${suggestion.id}"
                             class="label label-button"
                             style="--label-color: #3b82f6;"
-                            aria-expanded="true"
+                            aria-expanded="${hasComments ? 'true' : 'false'}"
+                            data-collapsed-label="${commentButtonCollapsedLabel}"
+                            data-expanded-label="${commentButtonExpandedLabel}"
                         >
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>${commentButtonLabel}</span>
+                            <span>${hasComments ? commentButtonExpandedLabel : commentButtonCollapsedLabel}</span>
                             <span>(${suggestion.commentCount})</span>
                         </button>
                     </div>`
@@ -836,9 +844,11 @@ class VotingApp {
                             ${statusBadge}
                             ${labelBadges}
                             ${commentBadge}
-                            <div id="comments-${suggestion.id}" class="comments-section ${hasComments ? 'is-visible' : ''}">
-                                <div class="loading">Kommentare werden geladen...</div>
-                            </div>
+                            ${hasCommentSection ? `
+                                <div id="comments-${suggestion.id}" class="comments-section ${hasComments ? 'is-visible' : ''}">
+                                    <div class="loading">Kommentare werden geladen...</div>
+                                </div>
+                            ` : ''}
                         </div>
                     </div>
                 </div>
@@ -856,6 +866,10 @@ class VotingApp {
             .forEach(suggestion => {
                 this.loadComments(suggestion.id);
             });
+    }
+
+    getSuggestionById(suggestionId) {
+        return this.allSuggestions.find(suggestion => suggestion.id === suggestionId) || null;
     }
 
     selectApp(appId, appName, { view = 'suggestions', skipHistory = false, replaceHistory = false } = {}) {
@@ -1142,6 +1156,7 @@ class VotingApp {
     async toggleComments(suggestionId) {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
         const toggleButton = document.getElementById(`comments-toggle-${suggestionId}`);
+        if (!commentsDiv) return;
         const isVisible = commentsDiv.classList.contains('is-visible');
 
         commentsDiv.classList.toggle('is-visible', !isVisible);
@@ -1150,7 +1165,9 @@ class VotingApp {
             toggleButton.setAttribute('aria-expanded', String(!isVisible));
             const labelSpan = toggleButton.querySelectorAll('span')[1];
             if (labelSpan) {
-                labelSpan.textContent = !isVisible ? 'Kommentare ausblenden' : 'Kommentare anzeigen';
+                labelSpan.textContent = !isVisible
+                    ? (toggleButton.dataset.expandedLabel || 'Kommentare ausblenden')
+                    : (toggleButton.dataset.collapsedLabel || 'Kommentare anzeigen');
             }
         }
 
@@ -1179,36 +1196,192 @@ class VotingApp {
 
     renderComments(suggestionId, comments) {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
+        const suggestion = this.getSuggestionById(suggestionId);
+        const supportsUserComments = suggestion?.type === 'ticket';
 
-        if (comments.length === 0) {
-            commentsDiv.innerHTML = '<p class="comments-empty">Noch keine Kommentare vorhanden.</p>';
+        let html = '';
+
+        if (comments.length > 0) {
+            const commentsHTML = comments.map((comment, commentIdx) => `
+                <div class="comment-card">
+                    <div class="comment-header">
+                        <span class="comment-author-badge ${comment.authorType === 'user' ? 'is-user' : 'is-admin'}">
+                            ${comment.authorType === 'user' ? 'USER' : 'ADMIN'}
+                        </span>
+                        <span class="comment-date">${this.formatDate(comment.createdAt)}</span>
+                    </div>
+                    <p class="comment-text">${this.escapeHtml(comment.text)}</p>
+                    ${comment.screenshots && comment.screenshots.length > 0 ? `
+                        <div class="comment-screenshots">
+                            ${comment.screenshots.map((screenshot, idx) => `
+                                <img
+                                    src="${screenshot}"
+                                    alt="Screenshot ${idx + 1}"
+                                    class="comment-screenshot"
+                                    data-screenshot-index="${commentIdx}-${idx}"
+                                    onclick="app.showImageModal(this.src)"
+                                >
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+
+            html += `<div class="comments-list">${commentsHTML}</div>`;
+        } else {
+            html += '<p class="comments-empty">Noch keine freigegebenen Kommentare vorhanden.</p>';
+        }
+
+        if (supportsUserComments) {
+            html += this.renderTicketCommentComposer(suggestionId);
+        }
+
+        commentsDiv.innerHTML = html;
+    }
+
+    renderTicketCommentComposer(suggestionId) {
+        return `
+            <div class="comment-composer">
+                <h4>Kommentar hinzufügen</h4>
+                <p class="comment-composer-hint">Dein Kommentar wird nach der Freigabe durch einen Admin öffentlich sichtbar.</p>
+                <textarea
+                    id="ticket-comment-text-${suggestionId}"
+                    class="comment-composer-textarea"
+                    placeholder="Beschreibe dein Update, deine Rückfrage oder weitere Details..."
+                    maxlength="2000"
+                ></textarea>
+                <div class="comment-composer-actions">
+                    <input
+                        type="file"
+                        id="ticket-comment-files-${suggestionId}"
+                        accept="image/*"
+                        multiple
+                        style="display: none;"
+                        onchange="app.handleTicketCommentFiles('${suggestionId}')"
+                    >
+                    <button
+                        type="button"
+                        class="secondary-btn"
+                        onclick="document.getElementById('ticket-comment-files-${suggestionId}').click()"
+                    >
+                        Bild anhängen
+                    </button>
+                    <button
+                        type="button"
+                        class="primary-btn"
+                        onclick="app.submitTicketComment('${suggestionId}')"
+                    >
+                        Kommentar absenden
+                    </button>
+                </div>
+                <div id="ticket-comment-preview-${suggestionId}" class="screenshot-preview-grid"></div>
+            </div>
+        `;
+    }
+
+    handleTicketCommentFiles(suggestionId) {
+        const fileInput = document.getElementById(`ticket-comment-files-${suggestionId}`);
+        const files = Array.from(fileInput.files);
+
+        if (files.length > 5) {
+            this.showToast('Maximal 5 Bilder erlaubt', 'error');
+            fileInput.value = '';
             return;
         }
 
-        const commentsHTML = comments.map((comment, commentIdx) => `
-            <div class="comment-card">
-                <div class="comment-header">
-                    <span class="comment-admin-badge">ADMIN</span>
-                    <span class="comment-date">${this.formatDate(comment.createdAt)}</span>
-                </div>
-                <p class="comment-text">${this.escapeHtml(comment.text)}</p>
-                ${comment.screenshots && comment.screenshots.length > 0 ? `
-                    <div class="comment-screenshots">
-                        ${comment.screenshots.map((screenshot, idx) => `
-                            <img
-                                src="${screenshot}"
-                                alt="Screenshot ${idx + 1}"
-                                class="comment-screenshot"
-                                data-screenshot-index="${commentIdx}-${idx}"
-                                onclick="app.showImageModal(this.src)"
-                            >
-                        `).join('')}
-                    </div>
-                ` : ''}
-            </div>
-        `).join('');
+        this.selectedCommentScreenshots[suggestionId] = [];
+        const previewDiv = document.getElementById(`ticket-comment-preview-${suggestionId}`);
+        previewDiv.innerHTML = '';
 
-        commentsDiv.innerHTML = `<div class="comments-list">${commentsHTML}</div>`;
+        files.forEach(file => {
+            this.compressImage(file, 800, 0.6).then(compressedDataUrl => {
+                const sizeInBytes = compressedDataUrl.length * 0.75;
+                if (sizeInBytes > 200000) {
+                    this.showToast('Bild zu groß. Bitte kleineres Bild verwenden.', 'error');
+                    return;
+                }
+
+                this.selectedCommentScreenshots[suggestionId].push(compressedDataUrl);
+                this.renderTicketCommentPreview(suggestionId);
+            }).catch(error => {
+                console.error('Error compressing image:', error);
+                this.showToast('Fehler beim Verarbeiten des Bildes', 'error');
+            });
+        });
+    }
+
+    renderTicketCommentPreview(suggestionId) {
+        const previewDiv = document.getElementById(`ticket-comment-preview-${suggestionId}`);
+        if (!previewDiv) return;
+
+        previewDiv.innerHTML = '';
+        (this.selectedCommentScreenshots[suggestionId] || []).forEach((screenshot, idx) => {
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'comment-preview-item';
+            imgContainer.innerHTML = `
+                <img
+                    src="${screenshot}"
+                    alt="Ausgewähltes Bild ${idx + 1}"
+                    class="comment-preview-thumb"
+                >
+                <button
+                    type="button"
+                    class="comment-preview-remove"
+                    onclick="app.removeTicketCommentScreenshot('${suggestionId}', ${idx})"
+                >×</button>
+            `;
+            previewDiv.appendChild(imgContainer);
+        });
+    }
+
+    removeTicketCommentScreenshot(suggestionId, index) {
+        const screenshots = this.selectedCommentScreenshots[suggestionId] || [];
+        screenshots.splice(index, 1);
+        this.selectedCommentScreenshots[suggestionId] = screenshots;
+
+        const fileInput = document.getElementById(`ticket-comment-files-${suggestionId}`);
+        if (fileInput) fileInput.value = '';
+
+        this.renderTicketCommentPreview(suggestionId);
+    }
+
+    async submitTicketComment(suggestionId) {
+        const textArea = document.getElementById(`ticket-comment-text-${suggestionId}`);
+        const text = textArea?.value.trim() || '';
+
+        if (!text) {
+            this.showToast('Bitte geben Sie einen Kommentar ein', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/suggestions/${suggestionId}/comments`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text,
+                    screenshots: this.selectedCommentScreenshots[suggestionId] || [],
+                })
+            });
+
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || 'Fehler beim Absenden des Kommentars');
+            }
+
+            textArea.value = '';
+            this.selectedCommentScreenshots[suggestionId] = [];
+            const fileInput = document.getElementById(`ticket-comment-files-${suggestionId}`);
+            if (fileInput) fileInput.value = '';
+            this.renderTicketCommentPreview(suggestionId);
+            this.showToast('Kommentar eingereicht. Er wird nach Freigabe sichtbar.', 'success');
+            await this.loadComments(suggestionId);
+        } catch (error) {
+            console.error('Error submitting ticket comment:', error);
+            this.showToast(error.message || 'Fehler beim Absenden des Kommentars', 'error');
+        }
     }
 
     handleBugScreenshots() {

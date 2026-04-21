@@ -4,6 +4,13 @@ const admin = require('firebase-admin');
 const path = require('path');
 const { Resend } = require('resend');
 const fs = require('fs');
+const {
+  buildAdminCommentResponse,
+  buildCommentStats,
+  buildPublicCommentResponse,
+  normalizeCommentData,
+  validateCommentScreenshots,
+} = require('./comment-utils');
 const { queryCollectionInChunks } = require('./firestore-chunks');
 
 const app = express();
@@ -252,6 +259,43 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   }
 }
 
+async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, commentText, appName) {
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Email not configured - RESEND_API_KEY missing');
+    return;
+  }
+
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+  const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
+      to: 'ben.kohler@me.com',
+      subject: `Neuer Kommentar wartet auf Freigabe: ${suggestionTitle}`,
+      html: `
+        <h2>Neuer Kommentar wartet auf Freigabe</h2>
+        <p><strong>App:</strong> ${appName}</p>
+        <p><strong>Eintrag:</strong> ${suggestionTitle}</p>
+        <p><strong>Suggestion ID:</strong> ${suggestionId}</p>
+        <p><strong>Kommentar:</strong> ${commentText}</p>
+        <br>
+        <p><a href="${adminUrl}">Zum Admin-Bereich</a></p>
+      `
+    });
+
+    if (error) {
+      console.error('Failed to send admin comment email:', error);
+      return;
+    }
+    console.log('Admin comment email sent successfully:', data.id);
+  } catch (error) {
+    console.error('Failed to send admin comment email:', error.message);
+    throw error;
+  }
+}
+
 // Helper function to send user notification email
 async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName, entryType = 'feature') {
   if (!process.env.RESEND_API_KEY) {
@@ -382,10 +426,21 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
     ]);
 
     // Create maps
-    const commentCountMap = {};
+    const commentStatsMap = {};
     commentDocs.forEach(doc => {
       const suggestionId = doc.data().suggestionId;
-      commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
+      if (!commentStatsMap[suggestionId]) {
+        commentStatsMap[suggestionId] = {
+          totalCount: 0,
+          pendingCount: 0,
+          publicCount: 0,
+        };
+      }
+
+      const stats = buildCommentStats([doc]);
+      commentStatsMap[suggestionId].totalCount += stats.totalCount;
+      commentStatsMap[suggestionId].pendingCount += stats.pendingCount;
+      commentStatsMap[suggestionId].publicCount += stats.publicCount;
     });
 
     const userVotesSet = new Set(
@@ -404,7 +459,7 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
         priority: data.priority || 'mittel',
         labels: data.labels || [],
         ticketNumber: data.ticketNumber || null,
-        commentCount: commentCountMap[doc.id] || 0,
+        commentCount: commentStatsMap[doc.id]?.publicCount || 0,
         hasVoted: type === 'feature' && userVotesSet.has(doc.id)
       };
     });
@@ -967,7 +1022,7 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
     const suggestionIds = suggestionsSnapshot.docs.map(doc => doc.id);
 
     // Load comments only for existing suggestions in batches
-    let commentCountMap = {};
+    let commentStatsMap = {};
     if (suggestionIds.length > 0) {
       const commentDocs = await queryCollectionInChunks(db, {
         collectionName: 'comments',
@@ -978,7 +1033,18 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       // Aggregate comment counts
       commentDocs.forEach(doc => {
         const suggestionId = doc.data().suggestionId;
-        commentCountMap[suggestionId] = (commentCountMap[suggestionId] || 0) + 1;
+        if (!commentStatsMap[suggestionId]) {
+          commentStatsMap[suggestionId] = {
+            totalCount: 0,
+            pendingCount: 0,
+            publicCount: 0,
+          };
+        }
+
+        const stats = buildCommentStats([doc]);
+        commentStatsMap[suggestionId].totalCount += stats.totalCount;
+        commentStatsMap[suggestionId].pendingCount += stats.pendingCount;
+        commentStatsMap[suggestionId].publicCount += stats.publicCount;
       });
     }
 
@@ -994,7 +1060,8 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
         labels: data.labels || [],
         ticketNumber: data.ticketNumber || null,
         app: appsMap[data.appId] || { name: 'Unknown App' },
-        commentCount: commentCountMap[doc.id] || 0
+        commentCount: commentStatsMap[doc.id]?.totalCount || 0,
+        pendingCommentCount: commentStatsMap[doc.id]?.pendingCount || 0
       };
     });
 
@@ -1220,26 +1287,9 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
       return res.status(400).json({ error: 'Invalid comment text' });
     }
 
-    // Validate screenshots (optional array of base64 strings)
-    let processedScreenshots = [];
-    if (screenshots && Array.isArray(screenshots)) {
-      if (screenshots.length > 5) {
-        return res.status(400).json({ error: 'Maximum 5 screenshots allowed' });
-      }
-
-      // Validate each screenshot
-      processedScreenshots = screenshots.filter(screenshot => {
-        // Basic validation: check if it's a base64 data URL and reasonable size
-        return typeof screenshot === 'string' &&
-               screenshot.startsWith('data:image/') &&
-               screenshot.length < 300000; // ~225KB limit per image
-      });
-
-      // Validate total size
-      const totalSize = processedScreenshots.reduce((sum, s) => sum + s.length, 0);
-      if (totalSize > 800000) { // ~600KB total limit
-        return res.status(400).json({ error: 'Screenshots total size too large. Please use smaller images.' });
-      }
+    const screenshotValidation = validateCommentScreenshots(screenshots);
+    if (screenshotValidation.error) {
+      return res.status(400).json({ error: screenshotValidation.error });
     }
 
     // Check if suggestion exists
@@ -1252,7 +1302,11 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
     const comment = {
       suggestionId,
       text: validText,
-      screenshots: processedScreenshots,
+      screenshots: screenshotValidation.screenshots,
+      authorType: 'admin',
+      approvalStatus: 'approved',
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      approvedBy: 'admin',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
@@ -1271,13 +1325,84 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
 
     res.status(201).json({
       id: commentRef.id,
-      ...comment,
+      ...normalizeCommentData(comment),
       createdAt: new Date(),
       message: 'Kommentar erfolgreich hinzugefügt'
     });
   } catch (error) {
     console.error('Error adding comment:', error);
     res.status(500).json({ error: 'Failed to add comment' });
+  }
+});
+
+// Public: Submit comment for a ticket (requires admin approval before it becomes visible)
+app.post('/api/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (req, res) => {
+  try {
+    const { suggestionId } = req.params;
+    const { text, screenshots } = req.body;
+    const userFingerprint = generateUserFingerprint(req);
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const validText = validateInput(text, 2000);
+    if (!validText) {
+      return res.status(400).json({ error: 'Invalid comment text' });
+    }
+
+    const screenshotValidation = validateCommentScreenshots(screenshots);
+    if (screenshotValidation.error) {
+      return res.status(400).json({ error: screenshotValidation.error });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const suggestion = suggestionDoc.data();
+    if (!suggestion.approved) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const suggestionType = normalizeSuggestionType(suggestion.type);
+    if (suggestionType !== 'ticket') {
+      return res.status(400).json({ error: 'Comments from users are only supported for tickets' });
+    }
+
+    const comment = {
+      suggestionId,
+      text: validText,
+      screenshots: screenshotValidation.screenshots,
+      authorType: 'user',
+      authorFingerprint: userFingerprint,
+      approvalStatus: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const commentRef = await db.collection('comments').add(comment);
+
+    await logActivity(suggestionId, 'comment_submitted', {
+      detail: `Benutzer-Kommentar eingereicht: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
+      actor: `user:${userFingerprint}`,
+    });
+
+    try {
+      const appDoc = await db.collection('apps').doc(suggestion.appId).get();
+      const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
+      await sendAdminCommentNotificationEmail(suggestionId, suggestion.title, validText, appName);
+    } catch (notificationError) {
+      console.error('Error sending admin comment notification:', notificationError);
+    }
+
+    res.status(201).json({
+      id: commentRef.id,
+      message: 'Kommentar erfolgreich eingereicht und zur Freigabe vorgemerkt'
+    });
+  } catch (error) {
+    console.error('Error submitting public comment:', error);
+    res.status(500).json({ error: 'Failed to submit comment' });
   }
 });
 
@@ -1295,13 +1420,16 @@ app.get('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, async
       .where('suggestionId', '==', suggestionId)
       .get();
 
-    const comments = commentsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const comments = commentsSnapshot.docs.map(buildAdminCommentResponse);
 
-    // Sort by createdAt descending (newest first)
+    // Pending first, then newest first within each group.
     comments.sort((a, b) => {
+      const statusOrder = { pending: 0, approved: 1, rejected: 2 };
+      const statusDelta = (statusOrder[a.approvalStatus] ?? 99) - (statusOrder[b.approvalStatus] ?? 99);
+      if (statusDelta !== 0) {
+        return statusDelta;
+      }
+
       const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
       const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
       return bTime - aTime;
@@ -1334,12 +1462,9 @@ app.get('/api/suggestions/:suggestionId/comments', async (req, res) => {
       .where('suggestionId', '==', suggestionId)
       .get();
 
-    const comments = commentsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      text: doc.data().text,
-      screenshots: doc.data().screenshots || [],
-      createdAt: doc.data().createdAt
-    }));
+    const comments = commentsSnapshot.docs
+      .map(buildPublicCommentResponse)
+      .filter(Boolean);
 
     // Sort by createdAt descending (newest first)
     comments.sort((a, b) => {
@@ -1352,6 +1477,96 @@ app.get('/api/suggestions/:suggestionId/comments', async (req, res) => {
   } catch (error) {
     console.error('Error fetching comments:', error);
     res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+// Admin: Approve a user comment
+app.put('/api/admin/suggestions/:suggestionId/comments/:commentId/approve', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId, commentId } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId) || !/^[a-zA-Z0-9_-]+$/.test(commentId)) {
+      return res.status(400).json({ error: 'Invalid ID format' });
+    }
+
+    const commentRef = db.collection('comments').doc(commentId);
+    const commentDoc = await commentRef.get();
+    if (!commentDoc.exists) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    const comment = normalizeCommentData(commentDoc.data());
+    if (comment.suggestionId !== suggestionId) {
+      return res.status(400).json({ error: 'Comment does not belong to this suggestion' });
+    }
+
+    if (comment.authorType !== 'user') {
+      return res.status(400).json({ error: 'Only user comments require moderation' });
+    }
+
+    await commentRef.update({
+      approvalStatus: 'approved',
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      approvedBy: 'admin',
+      rejectedAt: null,
+      rejectedBy: null,
+    });
+
+    await logActivity(suggestionId, 'comment_approved', {
+      detail: `Benutzer-Kommentar freigegeben: "${comment.text.slice(0, 80)}${comment.text.length > 80 ? '...' : ''}"`,
+    });
+
+    try {
+      await notifySuggestionCreator(suggestionId, 'commented', comment.text);
+    } catch (notificationError) {
+      console.error('Error sending approved comment notification:', notificationError);
+    }
+
+    res.json({ success: true, message: 'Kommentar freigegeben' });
+  } catch (error) {
+    console.error('Error approving comment:', error);
+    res.status(500).json({ error: 'Failed to approve comment' });
+  }
+});
+
+// Admin: Reject a user comment
+app.put('/api/admin/suggestions/:suggestionId/comments/:commentId/reject', requireAdminAuth, async (req, res) => {
+  try {
+    const { suggestionId, commentId } = req.params;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId) || !/^[a-zA-Z0-9_-]+$/.test(commentId)) {
+      return res.status(400).json({ error: 'Invalid ID format' });
+    }
+
+    const commentRef = db.collection('comments').doc(commentId);
+    const commentDoc = await commentRef.get();
+    if (!commentDoc.exists) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    const comment = normalizeCommentData(commentDoc.data());
+    if (comment.suggestionId !== suggestionId) {
+      return res.status(400).json({ error: 'Comment does not belong to this suggestion' });
+    }
+
+    if (comment.authorType !== 'user') {
+      return res.status(400).json({ error: 'Only user comments require moderation' });
+    }
+
+    await commentRef.update({
+      approvalStatus: 'rejected',
+      rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      rejectedBy: 'admin',
+    });
+
+    await logActivity(suggestionId, 'comment_rejected', {
+      detail: `Benutzer-Kommentar abgelehnt: "${comment.text.slice(0, 80)}${comment.text.length > 80 ? '...' : ''}"`,
+    });
+
+    res.json({ success: true, message: 'Kommentar abgelehnt' });
+  } catch (error) {
+    console.error('Error rejecting comment:', error);
+    res.status(500).json({ error: 'Failed to reject comment' });
   }
 });
 

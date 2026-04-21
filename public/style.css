@@ -1304,7 +1304,7 @@ body {
     margin-bottom: 4px;
 }
 
-.comment-admin-badge {
+.comment-author-badge {
     background: var(--primary-color);
     color: white;
     padding: 2px 10px;
@@ -1312,6 +1312,10 @@ body {
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.05em;
+}
+
+.comment-author-badge.is-user {
+    background: #0f766e;
 }
 
 .comment-date {
@@ -1360,6 +1364,77 @@ body {
     color: var(--text-muted);
     font-size: 0.9rem;
     font-style: italic;
+}
+
+.comment-composer {
+    margin-top: 14px;
+    padding: 14px;
+    background: var(--surface-hover);
+    border: var(--glass-border);
+    border-radius: var(--radius-md);
+}
+
+.comment-composer h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.comment-composer-hint {
+    margin: 0 0 10px 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.comment-composer-textarea {
+    width: 100%;
+    min-height: 88px;
+    resize: vertical;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--surface-solid);
+    color: var(--text-primary);
+    padding: 12px;
+    font: inherit;
+    line-height: 1.5;
+}
+
+.comment-composer-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.comment-preview-item {
+    position: relative;
+    display: inline-block;
+}
+
+.comment-preview-thumb {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.comment-preview-remove {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 999px;
+    background: var(--danger-color);
+    color: white;
+    cursor: pointer;
+    line-height: 1;
+    font-size: 12px;
+    padding: 0;
 }
 
 /* Badge spacing */

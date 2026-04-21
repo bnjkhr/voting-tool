@@ -231,6 +231,9 @@ class AdminApp {
             const commentBadge = hasComments
                 ? `<span style="background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">💬 ${suggestion.commentCount}</span>`
                 : '';
+            const pendingCommentBadge = suggestion.pendingCommentCount > 0
+                ? `<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Kommentare ${suggestion.pendingCommentCount}</span>`
+                : '';
 
             // Labels
             const labelPills = (suggestion.labels || []).map(l =>
@@ -260,6 +263,7 @@ class AdminApp {
                                 ${typeBadge}
                                 ${approvalBadge}
                                 ${commentBadge}
+                                ${pendingCommentBadge}
                             </div>
                             <p>${this.escapeHtml(suggestion.description)}</p>
                             <div class="suggestion-meta">
@@ -751,22 +755,63 @@ class AdminApp {
             html += '<h5 style="margin: 0 0 8px 0; font-size: 0.9rem; color: var(--text-secondary);">Kommentare:</h5>';
 
             comments.forEach(comment => {
+                const authorBadge = comment.authorType === 'user'
+                    ? '<span style="background: #0f766e; color: white; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;">USER</span>'
+                    : '<span style="background: var(--primary-color); color: white; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;">ADMIN</span>';
+                const statusColors = { pending: '#f59e0b', approved: '#10b981', rejected: '#64748b' };
+                const statusLabels = { pending: 'Wartet auf Freigabe', approved: 'Freigegeben', rejected: 'Abgelehnt' };
+                const statusBadge = comment.authorType === 'user'
+                    ? `<span style="background: ${statusColors[comment.approvalStatus] || '#64748b'}; color: white; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;">${statusLabels[comment.approvalStatus] || comment.approvalStatus}</span>`
+                    : '';
+                const moderationActions = comment.authorType === 'user'
+                    ? `
+                        ${comment.approvalStatus !== 'approved' ? `
+                            <button
+                                class="primary-btn btn-small"
+                                onclick="adminApp.approveComment('${suggestionId}', '${comment.id}')"
+                                style="flex-shrink: 0;"
+                            >
+                                Freigeben
+                            </button>
+                        ` : ''}
+                        ${comment.approvalStatus !== 'rejected' ? `
+                            <button
+                                class="secondary-btn btn-small"
+                                onclick="adminApp.rejectComment('${suggestionId}', '${comment.id}')"
+                                style="flex-shrink: 0;"
+                            >
+                                Ablehnen
+                            </button>
+                        ` : ''}
+                    `
+                    : '';
+                const containerStyle = comment.approvalStatus === 'pending'
+                    ? 'background: color-mix(in srgb, #f59e0b 10%, var(--surface)); border: 1px solid #f59e0b; padding: 12px; border-radius: 8px; margin-bottom: 8px;'
+                    : 'background: var(--surface); border: 1px solid var(--border); padding: 12px; border-radius: 8px; margin-bottom: 8px;';
+
                 html += `
-                    <div style="background: var(--surface); border: 1px solid var(--border); padding: 12px; border-radius: 8px; margin-bottom: 8px;">
-                        <div style="display: flex; justify-content: space-between; align-items: start; gap: 8px;">
+                    <div style="${containerStyle}">
+                        <div style="display: flex; justify-content: space-between; align-items: start; gap: 8px; flex-wrap: wrap;">
                             <div style="flex: 1;">
+                                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;">
+                                    ${authorBadge}
+                                    ${statusBadge}
+                                </div>
                                 <p style="margin: 0 0 4px 0; white-space: pre-wrap;">${this.escapeHtml(comment.text)}</p>
                                 <div style="font-size: 0.8rem; color: var(--text-secondary);">
                                     ${this.formatDate(comment.createdAt)}
                                 </div>
                             </div>
-                            <button
-                                class="btn-danger btn-small"
-                                onclick="adminApp.deleteComment('${suggestionId}', '${comment.id}')"
-                                style="flex-shrink: 0;"
-                            >
-                                Löschen
-                            </button>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                ${moderationActions}
+                                <button
+                                    class="btn-danger btn-small"
+                                    onclick="adminApp.deleteComment('${suggestionId}', '${comment.id}')"
+                                    style="flex-shrink: 0;"
+                                >
+                                    Löschen
+                                </button>
+                            </div>
                         </div>
                         ${comment.screenshots && comment.screenshots.length > 0 ? `
                             <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
@@ -957,6 +1002,46 @@ class AdminApp {
         } catch (error) {
             console.error('Error deleting comment:', error);
             this.showToast(error.message || 'Fehler beim Löschen des Kommentars', 'error');
+        }
+    }
+
+    async approveComment(suggestionId, commentId) {
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/comments/${commentId}/approve`, {
+                method: 'PUT'
+            });
+
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error);
+            }
+
+            this.showToast('Kommentar freigegeben!', 'success');
+            await this.loadComments(suggestionId);
+            await this.loadSuggestions();
+        } catch (error) {
+            console.error('Error approving comment:', error);
+            this.showToast(error.message || 'Fehler beim Freigeben des Kommentars', 'error');
+        }
+    }
+
+    async rejectComment(suggestionId, commentId) {
+        try {
+            const response = await this.adminFetch(`/api/admin/suggestions/${suggestionId}/comments/${commentId}/reject`, {
+                method: 'PUT'
+            });
+
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error);
+            }
+
+            this.showToast('Kommentar abgelehnt!', 'success');
+            await this.loadComments(suggestionId);
+            await this.loadSuggestions();
+        } catch (error) {
+            console.error('Error rejecting comment:', error);
+            this.showToast(error.message || 'Fehler beim Ablehnen des Kommentars', 'error');
         }
     }
 
