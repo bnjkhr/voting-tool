@@ -11,6 +11,7 @@ const {
   normalizeCommentData,
   validateCommentScreenshots,
 } = require('./comment-utils');
+const { compareAdminSuggestions } = require('./admin-suggestion-sort');
 const { queryCollectionInChunks } = require('./firestore-chunks');
 
 const app = express();
@@ -1065,32 +1066,8 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       };
     });
 
-    // Sort: resolved last, then pending before approved, then votes desc, then newest first
-    suggestions.sort((a, b) => {
-      const resolvedStatuses = RESOLVED_STATUSES;
-      const aResolved = resolvedStatuses.includes(a.status) ? 1 : 0;
-      const bResolved = resolvedStatuses.includes(b.status) ? 1 : 0;
-      if (aResolved !== bResolved) {
-        return aResolved - bResolved;
-      }
-
-      // Then: pending suggestions (not approved) come before approved
-      const aApproved = a.approved === true ? 1 : 0;
-      const bApproved = b.approved === true ? 1 : 0;
-      if (aApproved !== bApproved) {
-        return aApproved - bApproved;
-      }
-
-      // Then: sort by votes (desc)
-      if (b.votes !== a.votes) {
-        return (b.votes || 0) - (a.votes || 0);
-      }
-
-      // Finally: sort by createdAt (desc)
-      const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
-      const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
-      return bTime - aTime;
-    });
+    // Sort: open approvals first, then resolved last, then votes desc, then newest first
+    suggestions.sort(compareAdminSuggestions);
 
     res.json(suggestions);
   } catch (error) {
