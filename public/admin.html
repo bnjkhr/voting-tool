@@ -51,11 +51,11 @@
             overflow: hidden;
         }
 
-        .apps-list, .suggestions-list {
+        .apps-list, .suggestions-list, .releases-list {
             background: transparent;
         }
 
-        .apps-list h3, .suggestions-list h3 {
+        .apps-list h3, .suggestions-list h3, .releases-list h3 {
             font-family: var(--font-heading);
             font-weight: 700;
             font-size: 1rem;
@@ -408,6 +408,16 @@
 
             <!-- Management Sections -->
             <div class="app-management">
+                <!-- Releases Management -->
+                <div class="management-section">
+                    <div class="releases-list">
+                        <h3>Releases verwalten</h3>
+                        <div id="releasesList">
+                            <div class="loading">Releases werden geladen...</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Apps Management -->
                 <div class="management-section">
                     <div class="apps-list">
@@ -445,15 +455,6 @@
                         </div>
                         <div id="suggestionsList">
                             <div class="loading">Vorschläge werden geladen...</div>
-                        </div>
-                    </div>
-                </div>
-                <!-- Releases Management -->
-                <div class="management-section">
-                    <div class="releases-list">
-                        <h3>Releases verwalten</h3>
-                        <div id="releasesList">
-                            <div class="loading">Releases werden geladen...</div>
                         </div>
                     </div>
                 </div>
