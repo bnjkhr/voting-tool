@@ -39,9 +39,31 @@
             flex-wrap: wrap;
         }
 
+        body > .container {
+            max-width: 1440px;
+        }
+
         .app-management {
             display: grid;
+            grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
             gap: var(--spacing-lg);
+            align-items: start;
+        }
+
+        .admin-sidebar,
+        .admin-main {
+            display: grid;
+            gap: var(--spacing-lg);
+            min-width: 0;
+        }
+
+        .admin-sidebar {
+            position: sticky;
+            top: var(--spacing-lg);
+            max-height: calc(100vh - (var(--spacing-lg) * 2));
+            overflow-y: auto;
+            padding-right: 2px;
+            overscroll-behavior: contain;
         }
 
         .management-section {
@@ -56,6 +78,16 @@
         }
 
         .apps-list h3, .suggestions-list h3, .releases-list h3 {
+            font-family: var(--font-heading);
+            font-weight: 700;
+            font-size: 1rem;
+            padding: var(--spacing-md) var(--spacing-lg);
+            background: var(--background-alt);
+            margin: 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .management-section > h3 {
             font-family: var(--font-heading);
             font-weight: 700;
             font-size: 1rem;
@@ -148,6 +180,41 @@
             display: flex;
             gap: var(--spacing-xs);
             flex-shrink: 0;
+        }
+
+        .admin-sidebar .app-item {
+            flex-direction: column;
+        }
+
+        .admin-sidebar .app-actions {
+            width: 100%;
+        }
+
+        .admin-sidebar .app-actions button {
+            flex: 1;
+        }
+
+        .filter-panel {
+            padding: var(--spacing-lg);
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .filter-panel .form-group {
+            margin-bottom: 0;
+        }
+
+        .filter-panel label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .filter-panel select,
+        .admin-filter-select {
+            width: 100%;
         }
 
         .btn-small {
@@ -285,6 +352,17 @@
                 gap: var(--spacing-sm);
             }
 
+            .app-management {
+                grid-template-columns: 1fr;
+            }
+
+            .admin-sidebar {
+                position: static;
+                max-height: none;
+                overflow: visible;
+                padding-right: 0;
+            }
+
             .stat-card {
                 padding: var(--spacing-md);
             }
@@ -322,9 +400,8 @@
         }
 
         .admin-filter-select {
-            flex: 1;
-            min-width: 120px;
-            max-width: 200px;
+            min-width: 0;
+            max-width: none;
         }
 
         /* Activity timeline */
@@ -408,6 +485,7 @@
 
             <!-- Management Sections -->
             <div class="app-management">
+                <aside class="admin-sidebar" aria-label="Planung und Filter">
                 <!-- Releases Management -->
                 <div class="management-section">
                     <div class="releases-list">
@@ -418,46 +496,66 @@
                     </div>
                 </div>
 
-                <!-- Apps Management -->
-                <div class="management-section">
-                    <div class="apps-list">
-                        <h3>Apps verwalten</h3>
-                        <div id="appsList">
-                            <div class="loading">Apps werden geladen...</div>
+                    <div class="management-section">
+                        <h3>Filter</h3>
+                        <div class="filter-panel">
+                            <div class="form-group">
+                                <label for="appFilter">App</label>
+                                <select id="appFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                    <option value="">Alle Apps</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="typeFilter">Typ</label>
+                                <select id="typeFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                    <option value="">Alle Typen</option>
+                                    <option value="feature">Features</option>
+                                    <option value="bug">Bugs</option>
+                                    <option value="ticket">Tickets</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="statusFilter">Status</label>
+                                <select id="statusFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                    <option value="">Alle Status</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="priorityFilter">Priorität</label>
+                                <select id="priorityFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
+                                    <option value="">Alle Prioritäten</option>
+                                    <option value="niedrig">Niedrig</option>
+                                    <option value="mittel">Mittel</option>
+                                    <option value="hoch">Hoch</option>
+                                    <option value="kritisch">Kritisch</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
-                </div>
+
+                    <!-- Apps Management -->
+                    <div class="management-section">
+                        <div class="apps-list">
+                            <h3>Apps verwalten</h3>
+                            <div id="appsList">
+                                <div class="loading">Apps werden geladen...</div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+
+                <section class="admin-main" aria-label="Anfragen">
 
                 <!-- Suggestions Management -->
                 <div class="management-section">
                     <div class="suggestions-list">
-                        <h3>Einträge verwalten</h3>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap; padding: 0 var(--spacing-lg); margin-bottom: 16px;">
-                            <select id="appFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
-                                <option value="">Alle Apps</option>
-                            </select>
-                            <select id="typeFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
-                                <option value="">Alle Typen</option>
-                                <option value="feature">Features</option>
-                                <option value="bug">Bugs</option>
-                                <option value="ticket">Tickets</option>
-                            </select>
-                            <select id="statusFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
-                                <option value="">Alle Status</option>
-                            </select>
-                            <select id="priorityFilter" class="admin-filter-select" onchange="adminApp.applyFilters()">
-                                <option value="">Alle Prioritäten</option>
-                                <option value="niedrig">Niedrig</option>
-                                <option value="mittel">Mittel</option>
-                                <option value="hoch">Hoch</option>
-                                <option value="kritisch">Kritisch</option>
-                            </select>
-                        </div>
+                        <h3>Anfragen verwalten</h3>
                         <div id="suggestionsList">
                             <div class="loading">Vorschläge werden geladen...</div>
                         </div>
                     </div>
                 </div>
+                </section>
             </div>
         </main>
     </div>

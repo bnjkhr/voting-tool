@@ -829,7 +829,7 @@ class VotingApp {
             }
 
             return `
-                <div class="suggestion-card" style="${cardOpacity}">
+                <div class="suggestion-card" id="suggestion-${suggestion.id}" style="${cardOpacity}">
                     <div class="suggestion-layout">
                         ${iconColumn}
                         <div class="suggestion-content">
@@ -870,6 +870,36 @@ class VotingApp {
 
     getSuggestionById(suggestionId) {
         return this.allSuggestions.find(suggestion => suggestion.id === suggestionId) || null;
+    }
+
+    async openRoadmapItem(suggestionId) {
+        if (!this.currentApp) return;
+
+        this.currentView = 'suggestions';
+        this.currentFilters = { status: 'all', type: 'all' };
+        this.updateViewTabs();
+        this.showSuggestions();
+        document.getElementById('suggestionsList').classList.remove('hidden');
+        document.getElementById('suggestionsFilters').classList.remove('hidden');
+        document.getElementById('roadmapView').classList.add('hidden');
+        document.getElementById('changelogView').classList.add('hidden');
+        this.navigateToUrlState(this.getCurrentUrlState());
+
+        if (!this.getSuggestionById(suggestionId)) {
+            await this.loadSuggestions(this.currentApp.id);
+        } else {
+            this.renderFilterBar();
+            this.renderSuggestions(this.filterSuggestions(this.allSuggestions));
+        }
+
+        requestAnimationFrame(() => {
+            const card = document.getElementById(`suggestion-${suggestionId}`);
+            if (!card) return;
+
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('is-highlighted');
+            setTimeout(() => card.classList.remove('is-highlighted'), 2200);
+        });
     }
 
     selectApp(appId, appName, { view = 'suggestions', skipHistory = false, replaceHistory = false } = {}) {
@@ -958,7 +988,7 @@ class VotingApp {
                 const typeIcon = item.type === 'bug' ? '\uD83D\uDC1E' : item.type === 'ticket' ? '\uD83C\uDFAB' : '\u2728';
                 const statusStyle = VotingApp.TAG_STYLES[item.status] || VotingApp.DEFAULT_TAG_STYLE;
                 return `
-                    <div class="release-item">
+                    <button type="button" class="release-item release-item-button" onclick="app.openRoadmapItem('${item.id}')">
                         <span class="release-item-icon">${typeIcon}</span>
                         ${item.ticketNumber ? `<span class="ticket-number">${this.escapeHtml(item.ticketNumber)}</span>` : ''}
                         <span class="release-item-title">${this.escapeHtml(item.title)}</span>
@@ -966,7 +996,7 @@ class VotingApp {
                             <span class="label-dot" aria-hidden="true"></span>
                             <span>${this.escapeHtml(item.status)}</span>
                         </span>
-                    </div>
+                    </button>
                 `;
             }).join('');
 

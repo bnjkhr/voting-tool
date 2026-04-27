@@ -1858,6 +1858,30 @@ body {
     color: var(--text-primary);
 }
 
+.release-item-button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: var(--transition);
+}
+
+.release-item-button:hover,
+.release-item-button:focus-visible {
+    background: var(--surface-hover);
+    padding-left: var(--spacing-xs);
+    padding-right: var(--spacing-xs);
+    outline: none;
+}
+
+.suggestion-card.is-highlighted {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px var(--primary-glow), var(--shadow);
+}
+
 .release-item-icon {
     flex-shrink: 0;
     font-size: 0.9rem;
