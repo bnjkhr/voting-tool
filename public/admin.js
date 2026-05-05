@@ -147,19 +147,17 @@ class AdminApp {
             return;
         }
 
+        const trashIcon = '<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
         appsList.innerHTML = apps.map(app => `
             <div class="app-item">
                 <div class="app-details">
-                    <h4>${this.escapeHtml(app.name)} ${app.ticketPrefix ? `<span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">[${this.escapeHtml(app.ticketPrefix)}]</span>` : ''}</h4>
+                    <h4>${this.escapeHtml(app.name)} ${app.ticketPrefix ? `<span class="app-prefix-tag">${this.escapeHtml(app.ticketPrefix)}</span>` : ''}</h4>
                     <p>${this.escapeHtml(app.description)}</p>
                 </div>
                 <div class="app-actions">
-                    <button class="secondary-btn btn-small" onclick="adminApp.editApp('${app.id}')">
-                        Bearbeiten
-                    </button>
-                    <button class="btn-danger btn-small" onclick="adminApp.deleteApp('${app.id}', '${this.escapeHtml(app.name)}')">
-                        Löschen
-                    </button>
+                    <button class="admin-link-btn" onclick="adminApp.editApp('${app.id}')">Bearbeiten</button>
+                    <button class="admin-icon-btn" title="App löschen" aria-label="App löschen" onclick="adminApp.deleteApp('${app.id}', '${this.escapeHtml(app.name)}')">${trashIcon}</button>
                 </div>
             </div>
         `).join('');
@@ -213,35 +211,34 @@ class AdminApp {
             const isApproved = suggestion.approved === true;
             const resolvedStatuses = AdminApp.RESOLVED_STATUSES;
             const isResolved = resolvedStatuses.includes(status);
-            const itemOpacity = isResolved ? 'opacity: 0.5;' : '';
+            const itemClasses = ['suggestion-item'];
+            if (!isApproved) itemClasses.push('is-pending');
+            if (isResolved) itemClasses.push('is-resolved');
 
-            const typeIcons = { bug: '🐞 Bug', ticket: '🎫 Ticket', feature: '✨ Feature' };
+            const typeLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Feature' };
             const typeColors = { bug: '#ef4444', ticket: '#a855f7', feature: '#4f46e5' };
-            const typeBadge = `<span style="background: ${typeColors[suggestionType] || '#4f46e5'}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${typeIcons[suggestionType] || '✨ Feature'}</span>`;
+            const typeBadge = `<span class="admin-pill" style="--admin-pill-color: ${typeColors[suggestionType] || '#4f46e5'};">${typeLabels[suggestionType] || 'Feature'}</span>`;
 
             const approvalBadge = isApproved
-                ? '<span style="background: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">✓ Freigegeben</span>'
-                : '<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Wartet</span>';
+                ? ''
+                : '<span class="admin-pill" style="--admin-pill-color: #f59e0b;">Wartet auf Freigabe</span>';
 
             const ticketNumberBadge = suggestion.ticketNumber
-                ? `<span style="font-family: monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--border); padding: 3px 7px; border-radius: 4px; color: var(--text-muted); font-weight: 600;">${this.escapeHtml(suggestion.ticketNumber)}</span>`
+                ? `<span class="admin-pill admin-pill--ticket">${this.escapeHtml(suggestion.ticketNumber)}</span>`
                 : '';
 
             const hasComments = suggestion.commentCount > 0;
             const hasPendingComments = suggestion.pendingCommentCount > 0;
-            const commentBadge = hasComments
-                ? `<span style="background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">💬 ${suggestion.commentCount}</span>`
-                : '';
             const pendingCommentBadge = hasPendingComments
-                ? `<span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">⏳ Kommentare ${suggestion.pendingCommentCount}</span>`
+                ? `<span class="admin-pill" style="--admin-pill-color: #f59e0b;">${suggestion.pendingCommentCount} neue${suggestion.pendingCommentCount === 1 ? 'r' : ''} Kommentar${suggestion.pendingCommentCount === 1 ? '' : 'e'}</span>`
                 : '';
             const commentButtonLabel = hasPendingComments
-                ? `💬 Kommentare prüfen (${suggestion.pendingCommentCount})`
-                : (hasComments ? `💬 Kommentare (${suggestion.commentCount})` : '💬 Kommentar');
+                ? `Kommentare prüfen (${suggestion.pendingCommentCount})`
+                : (hasComments ? `Kommentare (${suggestion.commentCount})` : 'Kommentar');
 
             // Labels
             const labelPills = (suggestion.labels || []).map(l =>
-                `<span style="font-size: 11px; padding: 2px 8px; border-radius: 9999px; background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary); margin-right: 4px;">${this.escapeHtml(l)} <button onclick="adminApp.removeLabel('${suggestion.id}', '${this.escapeHtml(l)}')" style="border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:11px;padding:0 0 0 2px;">×</button></span>`
+                `<span class="admin-label-pill">${this.escapeHtml(l)}<button onclick="adminApp.removeLabel('${suggestion.id}', '${this.escapeHtml(l)}')" aria-label="Label entfernen">×</button></span>`
             ).join('');
 
             // Status options for this type
@@ -257,73 +254,66 @@ class AdminApp {
             );
             const currentReleaseId = suggestion.releaseId || '';
 
+            const trashIcon = '<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>';
+
             return `
-                <div class="suggestion-item" style="border-left: 4px solid ${isApproved ? '#10b981' : '#f59e0b'}; ${itemOpacity}">
-                    <div class="suggestion-header">
-                        <div class="suggestion-content">
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
-                                ${ticketNumberBadge}
-                                <h4 style="margin: 0;">${this.escapeHtml(suggestion.title)}</h4>
-                                ${typeBadge}
-                                ${approvalBadge}
-                                ${commentBadge}
-                                ${pendingCommentBadge}
-                            </div>
-                            <p>${this.escapeHtml(suggestion.description)}</p>
-                            <div class="suggestion-meta">
-                                <div class="meta-item"><strong>App:</strong> ${this.escapeHtml(suggestion.app.name)}</div>
-                                ${suggestionType === 'feature' ? `<div class="meta-item"><strong>Votes:</strong> ${suggestion.votes || 0}</div>` : ''}
-                                <div class="meta-item"><strong>Erstellt:</strong> ${this.formatDate(suggestion.createdAt)}</div>
-                            </div>
-                            <div style="margin-top: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: end;">
-                                <div>
-                                    <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Status:</label>
-                                    <select onchange="adminApp.updateStatus('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 0.85rem; cursor: pointer;">
-                                        ${statuses.map(s => `<option value="${s}" ${status === s ? 'selected' : ''}>${s}</option>`).join('')}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Priorität:</label>
-                                    <select onchange="adminApp.updatePriority('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: ${pColor}; font-size: 0.85rem; cursor: pointer; font-weight: 600;">
-                                        ${AdminApp.PRIORITIES.map(p => `<option value="${p}" ${suggestion.priority === p ? 'selected' : ''}>${p.charAt(0).toUpperCase() + p.slice(1)}</option>`).join('')}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style="display: block; margin-bottom: 4px; font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">Release:</label>
-                                    <select onchange="adminApp.updateSuggestionRelease('${suggestion.id}', this.value)" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 0.85rem; cursor: pointer;">
-                                        <option value="">— Kein Release —</option>
-                                        ${appReleases.map(r => `<option value="${r.id}" ${currentReleaseId === r.id ? 'selected' : ''}>v${this.escapeHtml(r.version)}${r.title ? ' — ' + this.escapeHtml(r.title) : ''}</option>`).join('')}
-                                    </select>
-                                </div>
-                            </div>
-                            ${labelPills ? `<div style="margin-top: 8px;">${labelPills}</div>` : ''}
-                            <div style="margin-top: 8px;">
-                                <button class="secondary-btn btn-small" onclick="adminApp.promptAddLabel('${suggestion.id}')" style="font-size: 11px; padding: 2px 8px;">+ Label</button>
-                            </div>
-                            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); display: flex; gap: 8px; flex-wrap: wrap;">
-                                <button class="secondary-btn btn-small" onclick="adminApp.toggleComments('${suggestion.id}')" style="flex: 1;">
-                                    ${commentButtonLabel}
-                                </button>
-                                <button class="secondary-btn btn-small" onclick="adminApp.toggleActivity('${suggestion.id}')" style="flex: 1;">
-                                    📋 Aktivität
-                                </button>
-                            </div>
-                            <div id="comments-${suggestion.id}" style="display: ${hasPendingComments ? 'block' : 'none'}; margin-top: 12px;">
-                                <div class="loading">Kommentare werden geladen...</div>
-                            </div>
-                            <div id="activity-${suggestion.id}" style="display: none; margin-top: 12px;">
-                                <div class="loading">Aktivität wird geladen...</div>
-                            </div>
+                <div class="${itemClasses.join(' ')}">
+                    <div class="admin-card-actions">
+                        ${!isApproved ? `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">Freigeben</button>` : ''}
+                        <button class="admin-icon-btn" title="Eintrag löschen" aria-label="Eintrag löschen" onclick="adminApp.deleteSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">${trashIcon}</button>
+                    </div>
+                    <div class="suggestion-content">
+                        <div class="suggestion-title-line">
+                            ${ticketNumberBadge}
+                            <h4>${this.escapeHtml(suggestion.title)}</h4>
+                            ${typeBadge}
+                            ${approvalBadge}
+                            ${pendingCommentBadge}
                         </div>
-                        <div class="suggestion-actions" style="display: flex; gap: 8px; flex-direction: column;">
-                            ${!isApproved ? `
-                                <button class="primary-btn btn-small" onclick="adminApp.approveSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">
-                                    Freigeben
-                                </button>
-                            ` : ''}
-                            <button class="btn-danger btn-small" onclick="adminApp.deleteSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">
-                                Löschen
+                        <p>${this.escapeHtml(suggestion.description)}</p>
+                        <div class="suggestion-meta">
+                            <div class="meta-item"><strong>App:</strong> ${this.escapeHtml(suggestion.app.name)}</div>
+                            ${suggestionType === 'feature' ? `<div class="meta-item"><strong>Votes:</strong> ${suggestion.votes || 0}</div>` : ''}
+                            <div class="meta-item"><strong>Erstellt:</strong> ${this.formatDate(suggestion.createdAt)}</div>
+                        </div>
+                        <div class="admin-toolbar">
+                            <label class="admin-toolbar-field">
+                                <span class="admin-toolbar-field-label">Status</span>
+                                <select class="admin-select" onchange="adminApp.updateStatus('${suggestion.id}', this.value)">
+                                    ${statuses.map(s => `<option value="${s}" ${status === s ? 'selected' : ''}>${s}</option>`).join('')}
+                                </select>
+                            </label>
+                            <label class="admin-toolbar-field">
+                                <span class="admin-toolbar-field-label">Priorität</span>
+                                <select class="admin-select" style="color: ${pColor}; font-weight: 600;" onchange="adminApp.updatePriority('${suggestion.id}', this.value)">
+                                    ${AdminApp.PRIORITIES.map(p => `<option value="${p}" ${suggestion.priority === p ? 'selected' : ''}>${p.charAt(0).toUpperCase() + p.slice(1)}</option>`).join('')}
+                                </select>
+                            </label>
+                            <label class="admin-toolbar-field">
+                                <span class="admin-toolbar-field-label">Release</span>
+                                <select class="admin-select" onchange="adminApp.updateSuggestionRelease('${suggestion.id}', this.value)">
+                                    <option value="">— Kein Release —</option>
+                                    ${appReleases.map(r => `<option value="${r.id}" ${currentReleaseId === r.id ? 'selected' : ''}>v${this.escapeHtml(r.version)}${r.title ? ' — ' + this.escapeHtml(r.title) : ''}</option>`).join('')}
+                                </select>
+                            </label>
+                        </div>
+                        <div class="admin-labels-row">
+                            ${labelPills}
+                            <button class="admin-add-label-btn" onclick="adminApp.promptAddLabel('${suggestion.id}')">+ Label</button>
+                        </div>
+                        <div class="admin-card-footer">
+                            <button class="admin-link-btn" onclick="adminApp.toggleComments('${suggestion.id}')">
+                                ${commentButtonLabel}
                             </button>
+                            <button class="admin-link-btn" onclick="adminApp.toggleActivity('${suggestion.id}')">
+                                Aktivität
+                            </button>
+                        </div>
+                        <div id="comments-${suggestion.id}" style="display: ${hasPendingComments ? 'block' : 'none'}; margin-top: 12px;">
+                            <div class="loading">Kommentare werden geladen...</div>
+                        </div>
+                        <div id="activity-${suggestion.id}" style="display: none; margin-top: 12px;">
+                            <div class="loading">Aktivität wird geladen...</div>
                         </div>
                     </div>
                 </div>
@@ -1100,32 +1090,27 @@ class AdminApp {
 
         const statusColors = { 'geplant': '#3b82f6', 'in Arbeit': '#f59e0b', 'veröffentlicht': '#10b981' };
 
+        const trashIcon = '<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
         releasesList.innerHTML = releases.map(release => {
             const sColor = statusColors[release.status] || '#6b7280';
             const dateStr = this.formatDateShort(release.releaseDate);
 
             return `
-                <div class="app-item" style="border-left: 4px solid ${sColor};">
-                    <div class="app-details">
-                        <h4 style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                            <span style="font-family: var(--font-mono, monospace); font-weight: 700;">v${this.escapeHtml(release.version)}</span>
-                            ${release.title ? `<span style="font-weight: 400; color: var(--text-secondary);">— ${this.escapeHtml(release.title)}</span>` : ''}
-                            <span style="background: ${sColor}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">${this.escapeHtml(release.status)}</span>
-                        </h4>
-                        <p style="margin: 4px 0;">
-                            <span style="color: var(--text-muted); font-size: 0.8rem;">App: ${this.escapeHtml(release.app?.name || 'Unbekannt')}</span>
-                            ${dateStr ? ` · <span style="color: var(--text-muted); font-size: 0.8rem;">${dateStr}</span>` : ''}
-                            · <span style="color: var(--text-muted); font-size: 0.8rem;">${release.itemCount} Einträge</span>
-                        </p>
-                        ${release.description ? `<p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">${this.escapeHtml(release.description).substring(0, 200)}${release.description.length > 200 ? '...' : ''}</p>` : ''}
+                <div class="release-row">
+                    <div class="release-row-info">
+                        <div class="release-row-title">
+                            <span class="release-row-version">v${this.escapeHtml(release.version)}</span>
+                            ${release.title ? `<span class="release-row-subtitle">${this.escapeHtml(release.title)}</span>` : ''}
+                            <span class="admin-pill" style="--admin-pill-color: ${sColor};">${this.escapeHtml(release.status)}</span>
+                        </div>
+                        <div class="release-row-meta">
+                            ${this.escapeHtml(release.app?.name || 'Unbekannt')}${dateStr ? ` · ${dateStr}` : ''} · ${release.itemCount} Einträge
+                        </div>
                     </div>
-                    <div class="app-actions">
-                        <button class="secondary-btn btn-small" onclick="adminApp.editRelease('${release.id}')">
-                            Bearbeiten
-                        </button>
-                        <button class="btn-danger btn-small" onclick="adminApp.deleteRelease('${release.id}', '${this.escapeHtml(release.version)}')">
-                            Löschen
-                        </button>
+                    <div class="release-row-actions">
+                        <button class="admin-link-btn" onclick="adminApp.editRelease('${release.id}')">Bearbeiten</button>
+                        <button class="admin-icon-btn" title="Release löschen" aria-label="Release löschen" onclick="adminApp.deleteRelease('${release.id}', '${this.escapeHtml(release.version)}')">${trashIcon}</button>
                     </div>
                 </div>
             `;

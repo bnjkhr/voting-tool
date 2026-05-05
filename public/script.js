@@ -724,14 +724,13 @@ class VotingApp {
             // Status badge (uses status field)
             let statusBadge = '';
             if (status && status !== 'neu') {
-                const { color: statusColor, icon: statusIcon } =
+                const { color: statusColor } =
                     VotingApp.TAG_STYLES[status] || VotingApp.DEFAULT_TAG_STYLE;
 
                 statusBadge = `
                     <div class="badge-row">
                         <span class="label" style="--label-color: ${statusColor};">
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>${statusIcon}</span>
                             <span>${this.escapeHtml(status)}</span>
                         </span>
                     </div>
@@ -757,15 +756,15 @@ class VotingApp {
                 typeBadge = `<div class="badge-row">
                         <span class="label" style="--label-color: #ef4444;">
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>\uD83D\uDC1E Bug</span>
-                            <span>${this.escapeHtml((suggestion.severity || 'medium').toUpperCase())}</span>
+                            <span>Bug</span>
+                            <span class="label-meta">${this.escapeHtml((suggestion.severity || 'medium').toUpperCase())}</span>
                         </span>
                     </div>`;
             } else if (isTicket) {
                 typeBadge = `<div class="badge-row">
                         <span class="label" style="--label-color: #a855f7;">
                             <span class="label-dot" aria-hidden="true"></span>
-                            <span>\uD83C\uDFAB Ticket</span>
+                            <span>Ticket</span>
                         </span>
                     </div>`;
             }
@@ -797,17 +796,17 @@ class VotingApp {
             const commentBadge = hasCommentSection
                 ? `<div class="badge-row">
                         <button
+                            type="button"
                             onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
                             id="comments-toggle-${suggestion.id}"
-                            class="label label-button"
-                            style="--label-color: #3b82f6;"
+                            class="comment-toggle-btn"
                             aria-expanded="${hasComments ? 'true' : 'false'}"
                             data-collapsed-label="${commentButtonCollapsedLabel}"
                             data-expanded-label="${commentButtonExpandedLabel}"
                         >
-                            <span class="label-dot" aria-hidden="true"></span>
-                            <span>${hasComments ? commentButtonExpandedLabel : commentButtonCollapsedLabel}</span>
-                            <span>(${suggestion.commentCount})</span>
+                            <svg class="comment-toggle-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            <span class="comment-toggle-label">${hasComments ? commentButtonExpandedLabel : commentButtonCollapsedLabel}</span>
+                            <span class="comment-toggle-count">${suggestion.commentCount}</span>
                         </button>
                     </div>`
                 : '';
@@ -1195,7 +1194,8 @@ class VotingApp {
 
         if (toggleButton) {
             toggleButton.setAttribute('aria-expanded', String(!isVisible));
-            const labelSpan = toggleButton.querySelectorAll('span')[1];
+            const labelSpan = toggleButton.querySelector('.comment-toggle-label')
+                || toggleButton.querySelectorAll('span')[1];
             if (labelSpan) {
                 labelSpan.textContent = !isVisible
                     ? (toggleButton.dataset.expandedLabel || 'Kommentare ausblenden')

@@ -771,12 +771,77 @@ body {
     transform: translateY(-1px);
 }
 
+.label .label-meta {
+    font-weight: 700;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+    padding-left: 4px;
+    border-left: 1px solid color-mix(in srgb, var(--label-color) 30%, transparent);
+    margin-left: 2px;
+}
+
 .label-dot {
     width: 6px;
     height: 6px;
     border-radius: 999px;
     background: var(--label-color);
     flex: 0 0 auto;
+}
+
+/* Comment toggle: secondary action, visually distinct from status pills */
+.comment-toggle-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: var(--radius-full);
+    padding: 5px 12px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-family: var(--font-body);
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    line-height: 1.2;
+}
+
+.comment-toggle-btn:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border-color: var(--border);
+}
+
+.comment-toggle-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.comment-toggle-icon {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+}
+
+.comment-toggle-btn:hover .comment-toggle-icon {
+    color: var(--text-secondary);
+}
+
+.comment-toggle-count {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 1px 7px;
+    border-radius: var(--radius-full);
+    background: var(--background-alt);
+    font-weight: 700;
+}
+
+.comment-toggle-btn[aria-expanded="true"] {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    border-color: var(--border);
 }
 
 /* Filter bar */
@@ -809,7 +874,9 @@ body {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     margin-bottom: 0;
-    padding: 4px 0;
+    padding: 4px 16px 4px 0;
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+            mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
 }
 
 .filter-bar::-webkit-scrollbar {
@@ -889,20 +956,22 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     flex-shrink: 0;
-    width: 48px;
+    width: 52px;
     padding-top: 2px;
 }
 
 .upvote-btn {
-    background: none;
-    border: 2px solid transparent;
+    background: var(--background-alt);
+    border: 1px solid var(--border);
     cursor: pointer;
-    color: var(--text-muted);
-    font-size: 1rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
     line-height: 1;
-    padding: 6px 10px;
+    width: 40px;
+    height: 36px;
+    padding: 0;
     border-radius: var(--radius-md);
     transition: var(--transition-spring);
     display: flex;
@@ -913,8 +982,8 @@ body {
 .upvote-btn:hover:not(:disabled) {
     color: var(--primary-color);
     background: var(--primary-light);
-    border-color: var(--primary-light);
-    transform: scale(1.15);
+    border-color: color-mix(in srgb, var(--primary-color) 35%, transparent);
+    transform: translateY(-1px);
 }
 
 .upvote-btn:active:not(:disabled) {
@@ -931,19 +1000,21 @@ body {
 .upvote-btn.voted {
     color: var(--primary-color);
     background: var(--primary-light);
+    border-color: color-mix(in srgb, var(--primary-color) 35%, transparent);
 }
 
 .upvote-btn:disabled {
     cursor: default;
-    opacity: 0.4;
+    opacity: 0.55;
 }
 
 .vote-column .vote-count {
     font-family: var(--font-heading);
-    font-size: 0.85rem;
+    font-size: 1rem;
     font-weight: 800;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     line-height: 1;
+    font-variant-numeric: tabular-nums;
 }
 
 .vote-column .vote-count.voted {
@@ -984,13 +1055,19 @@ body {
 
 .suggestion-title-row {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 8px;
     flex-wrap: wrap;
 }
 
+.suggestion-title-row .ticket-number {
+    align-self: center;
+}
+
 .suggestion-title-row .suggestion-title {
     margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 /* Priority badge */
@@ -1582,11 +1659,12 @@ body {
     }
 
     .vote-column {
-        width: 40px;
+        width: 44px;
     }
 
     .upvote-btn {
-        padding: 5px 8px;
+        width: 36px;
+        height: 34px;
     }
 
     .form-actions {
