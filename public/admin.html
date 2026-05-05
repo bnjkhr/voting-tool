@@ -32,6 +32,37 @@
             font-size: 0.95rem;
         }
 
+        .legacy-admin-notice {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: var(--spacing-md);
+            align-items: center;
+            margin: 0 0 var(--spacing-xl);
+            padding: var(--spacing-lg);
+            border: 1px solid color-mix(in srgb, var(--warning-color, #f59e0b) 38%, var(--border));
+            border-radius: var(--radius-md);
+            background: color-mix(in srgb, var(--warning-color, #f59e0b) 10%, var(--surface));
+        }
+
+        .legacy-admin-notice h2 {
+            margin: 0 0 4px;
+            font-size: 1rem;
+            color: var(--text-primary);
+        }
+
+        .legacy-admin-notice p {
+            margin: 0;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .legacy-admin-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-sm);
+            justify-content: flex-end;
+        }
+
         .admin-actions {
             display: flex;
             gap: var(--spacing-sm);
@@ -687,6 +718,19 @@
                 flex-direction: column;
             }
 
+            .legacy-admin-notice {
+                grid-template-columns: 1fr;
+            }
+
+            .legacy-admin-links {
+                justify-content: stretch;
+            }
+
+            .legacy-admin-links .primary-btn,
+            .legacy-admin-links .secondary-btn {
+                width: 100%;
+            }
+
             .admin-actions .primary-btn,
             .admin-actions .secondary-btn {
                 width: 100%;
@@ -787,11 +831,26 @@
 <body>
     <div class="container">
         <header class="admin-header">
-            <h1>Admin Dashboard</h1>
-            <p>Apps und Vorschläge verwalten</p>
+            <h1>Legacy Admin Dashboard</h1>
+            <p>Legacy-Live-Betrieb für bestehende Apps und Vorschläge verwalten.</p>
         </header>
 
         <main class="main">
+            <section id="legacyAdminNotice" class="legacy-admin-notice">
+                <div>
+                    <h2>Du bist im Legacy-Admin</h2>
+                    <p>
+                        Diese Seite bleibt für den aktuellen Live-Betrieb erhalten.
+                        Für SaaS / Friendly User-Test nutze Platform Admin, Signup oder E-Mail-Login.
+                    </p>
+                </div>
+                <div class="legacy-admin-links">
+                    <a class="primary-btn" href="/super-admin.html">Platform Admin</a>
+                    <a class="secondary-btn" href="/signup.html">Subscriber Signup</a>
+                    <a class="secondary-btn" href="/login.html">E-Mail Login</a>
+                </div>
+            </section>
+
             <!-- Stats Overview -->
             <section class="stats-grid" id="statsGrid">
                 <div class="stat-card">

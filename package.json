@@ -5,13 +5,20 @@
   "main": "api/index.js",
   "scripts": {
     "init-firebase": "node init-firebase.js",
+    "bootstrap-tenancy": "node scripts/bootstrap-tenancy.js",
+    "bootstrap-tenancy:dry-run": "node scripts/bootstrap-tenancy.js --dry-run",
+    "test-tenant:create": "node scripts/manage-test-tenant.js create",
+    "test-tenant:create:dry-run": "node scripts/manage-test-tenant.js create --dry-run",
+    "test-tenant:delete": "node scripts/manage-test-tenant.js delete",
     "migrate-suggestion-types": "node scripts/migrate-suggestion-types.js",
     "migrate-ticketing": "node scripts/migrate-to-ticketing-v1.js",
     "migrate-ticketing:dry-run": "node scripts/migrate-to-ticketing-v1.js --dry-run",
     "start": "node api/index.js",
     "dev": "node api/index.js",
     "build": "echo 'Build complete - Node.js API ready'",
-    "vercel-build": "echo 'Vercel build complete'"
+    "vercel-build": "echo 'Vercel build complete'",
+    "tenant:create": "node scripts/create-tenant.js",
+    "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run"
   },
   "dependencies": {
     "cors": "^2.8.5",

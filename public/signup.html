@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workspace erstellen - Voting Tool</title>
+    <style>
+        :root {
+            --bg: #f7f5f1;
+            --panel: #ffffff;
+            --ink: #1c1c1c;
+            --muted: #6f6a64;
+            --line: #e4ded6;
+            --accent: #111111;
+            --danger: #b0443e;
+            --success: #087f5b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: var(--ink);
+            background: var(--bg);
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+
+        .signup-shell {
+            width: min(100%, 620px);
+        }
+
+        .signup-panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 16px 44px rgba(25, 23, 20, 0.08);
+        }
+
+        .signup-panel-header,
+        .signup-panel-body {
+            padding: 28px;
+        }
+
+        .signup-panel-header {
+            background: #f0ede8;
+            border-bottom: 1px solid var(--line);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 30px;
+            line-height: 1.1;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .signup-form {
+            display: grid;
+            gap: 16px;
+        }
+
+        label {
+            display: grid;
+            gap: 8px;
+            color: var(--muted);
+            font-weight: 700;
+        }
+
+        input {
+            appearance: none;
+            width: 100%;
+            min-height: 48px;
+            border: 1px solid #cfc7bd;
+            border-radius: 8px;
+            background: #ffffff;
+            color: var(--ink);
+            font: inherit;
+            padding: 0 14px;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            outline: 3px solid rgba(17, 17, 17, 0.12);
+        }
+
+        .signup-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .signup-grid label:first-child,
+        .signup-grid label:nth-child(2),
+        .signup-grid label:nth-child(3) {
+            grid-column: 1 / -1;
+        }
+
+        .primary-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 48px;
+            border-radius: 8px;
+            border: 1px solid var(--accent);
+            padding: 0 18px;
+            font: inherit;
+            font-weight: 800;
+            text-decoration: none;
+            cursor: pointer;
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .primary-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .signup-status {
+            margin-top: 18px;
+            color: var(--muted);
+        }
+
+        .signup-status.is-error {
+            color: var(--danger);
+        }
+
+        .signup-status.is-success {
+            color: var(--success);
+        }
+
+        .signup-result {
+            display: grid;
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        @media (max-width: 640px) {
+            .signup-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .signup-grid label {
+                grid-column: 1 / -1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="signup-shell">
+        <section class="signup-panel">
+            <div class="signup-panel-header">
+                <h1>Workspace erstellen</h1>
+                <p>Erstelle deinen Workspace und erhalte den Login-Link per E-Mail.</p>
+            </div>
+            <div class="signup-panel-body">
+                <form id="signupForm" class="signup-form">
+                    <div class="signup-grid">
+                        <label>
+                            E-Mail
+                            <input name="email" type="email" autocomplete="email" required>
+                        </label>
+                        <label>
+                            Workspace Name
+                            <input name="workspaceName" type="text" autocomplete="organization" placeholder="Acme Feedback" required>
+                        </label>
+                        <label>
+                            Public Slug
+                            <input name="workspaceSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="acme-feedback">
+                        </label>
+                        <label>
+                            Board Name
+                            <input name="boardName" type="text" placeholder="Feedback Board">
+                        </label>
+                        <label>
+                            Ticket Prefix
+                            <input name="ticketPrefix" type="text" maxlength="5" placeholder="ACME">
+                        </label>
+                    </div>
+                    <button id="signupBtn" class="primary-btn" type="submit">Workspace erstellen</button>
+                </form>
+                <div id="signupResult" class="signup-result"></div>
+                <div id="signupStatus" class="signup-status"></div>
+                <p style="margin-top: 18px;">Du hast schon einen Workspace? <a href="/login.html">Anmelden</a></p>
+            </div>
+        </section>
+    </main>
+
+    <script src="signup.js"></script>
+</body>
+</html>

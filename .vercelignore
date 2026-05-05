@@ -7,8 +7,10 @@ voting-tool/
 *.log
 .env
 .env.*
+*firebase-adminsdk*.json
 .gitattributes
 .vscode/
+.claude/
 *.swp
 *.swo
 *~

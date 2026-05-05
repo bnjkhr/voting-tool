@@ -241,19 +241,21 @@ class SuperAdminApp {
             if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(value);
             } else {
-                const range = document.createRange();
-                range.selectNode(target);
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-                document.execCommand('copy');
-                sel.removeAllRanges();
+                const textarea = document.createElement('textarea');
+                textarea.value = value;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                if (!ok) throw new Error('execCommand copy failed');
             }
             button.classList.add('is-copied');
             window.setTimeout(() => button.classList.remove('is-copied'), 1200);
         } catch (error) {
-            button.classList.add('is-copied');
-            window.setTimeout(() => button.classList.remove('is-copied'), 1200);
+            console.error('Link kopieren fehlgeschlagen', error);
         }
     }
 

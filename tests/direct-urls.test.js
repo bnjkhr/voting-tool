@@ -30,11 +30,15 @@ test('direct url state parses and builds app/view query parameters', () => {
 
     assert.deepEqual(parseUrlState(''), {
         appId: null,
+        tenantSlug: null,
+        appSlug: null,
         view: 'suggestions',
     });
 
     assert.deepEqual(parseUrlState('?appId=family123&view=roadmap'), {
         appId: 'family123',
+        tenantSlug: null,
+        appSlug: null,
         view: 'roadmap',
     });
 
@@ -51,6 +55,32 @@ test('direct url state parses and builds app/view query parameters', () => {
     assert.equal(
         buildUrlState({ appId: null, view: 'suggestions' }),
         ''
+    );
+});
+
+test('direct url state supports tenant and app slugs', () => {
+    const { parseUrlState, buildUrlState } = loadUrlStateModule();
+
+    assert.deepEqual(parseUrlState('?tenant=staging-saas-smoke&app=board&view=roadmap'), {
+        appId: null,
+        tenantSlug: 'staging-saas-smoke',
+        appSlug: 'board',
+        view: 'roadmap',
+    });
+
+    assert.equal(
+        buildUrlState({ tenantSlug: 'staging-saas-smoke', appSlug: 'board', view: 'changelog' }),
+        '?tenant=staging-saas-smoke&app=board&view=changelog'
+    );
+
+    assert.equal(
+        buildUrlState({ tenantSlug: 'staging-saas-smoke', appSlug: 'board', view: 'suggestions' }),
+        '?tenant=staging-saas-smoke&app=board'
+    );
+
+    assert.equal(
+        buildUrlState({ tenantSlug: 'staging-saas-smoke', appSlug: null, view: 'suggestions' }),
+        '?tenant=staging-saas-smoke'
     );
 });
 
@@ -85,5 +115,32 @@ test('public app syncs direct urls through query params and browser history', ()
     assert.ok(
         publicScript.includes("window.addEventListener('popstate'"),
         'expected script.js to react to browser back/forward navigation'
+    );
+});
+
+test('public app can load tenant read endpoints from url state', () => {
+    assert.ok(
+        publicScript.includes('/api/tenants/${encodeURIComponent(this.tenantSlug)}/apps'),
+        'expected script.js to load tenant apps by tenant slug'
+    );
+
+    assert.ok(
+        publicScript.includes('buildSuggestionsUrl'),
+        'expected script.js to centralize tenant-aware suggestion read urls'
+    );
+
+    assert.ok(
+        publicScript.includes('buildReleasesUrl'),
+        'expected script.js to centralize tenant-aware release read urls'
+    );
+
+    assert.ok(
+        publicScript.includes('buildCommentsUrl'),
+        'expected script.js to centralize tenant-aware comment read urls'
+    );
+
+    assert.ok(
+        publicScript.includes('buildVoteUrl'),
+        'expected script.js to centralize tenant-aware vote urls'
     );
 });

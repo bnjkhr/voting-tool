@@ -32,8 +32,8 @@ test('approved entries support a public comment composer with moderated submissi
   );
 
   assert.ok(
-    publicScript.includes("fetch(`/api/suggestions/${suggestionId}/comments`"),
-    'expected public comments to be submitted through the public comments endpoint'
+    publicScript.includes('this.buildCommentsUrl(suggestionId)'),
+    'expected public comments to be submitted through the tenant-aware comments endpoint helper'
   );
 
   assert.ok(
