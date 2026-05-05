@@ -12,8 +12,12 @@ test('roadmap items open their matching public suggestion card', () => {
     'expected a roadmap item opener'
   );
   assert.ok(
-    publicScript.includes("onclick=\"app.openRoadmapItem('${item.id}')\""),
-    'expected roadmap entries to call the opener'
+    publicScript.includes('data-action="open-roadmap-item"'),
+    'expected roadmap entries to declare the open-roadmap-item action'
+  );
+  assert.ok(
+    publicScript.includes('data-item-id="${this.escapeHtml(item.id)}"'),
+    'expected roadmap entries to carry the item id as a data attribute'
   );
   assert.ok(
     publicScript.includes('id="suggestion-${suggestion.id}"'),
@@ -29,5 +33,16 @@ test('opened roadmap suggestions are visibly highlighted', () => {
   assert.ok(
     publicStyles.includes('.suggestion-card.is-highlighted'),
     'expected highlighted suggestion styling'
+  );
+});
+
+test('public/script.js does not emit inline event-handler attributes', () => {
+  // Inline onclick=/onchange= etc. would re-open the HTML/JS injection
+  // surface that the click/change delegation refactor was meant to close.
+  const inlineHandler = /\son(?:click|change|input|submit|keyup|keydown|mouseover|focus|blur)\s*=/i;
+  assert.equal(
+    inlineHandler.test(publicScript),
+    false,
+    'expected no inline on*= handlers in public/script.js — use data-action / data-change-action delegation instead'
   );
 });
