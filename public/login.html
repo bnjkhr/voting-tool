@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Voting Tool</title>
+    <style>
+        :root {
+            --bg: #f7f5f1;
+            --panel: #ffffff;
+            --ink: #1c1c1c;
+            --muted: #6f6a64;
+            --line: #e4ded6;
+            --accent: #111111;
+            --danger: #b0443e;
+            --success: #087f5b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: var(--ink);
+            background: var(--bg);
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+
+        .login-shell {
+            width: min(100%, 520px);
+        }
+
+        .login-panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 16px 44px rgba(25, 23, 20, 0.08);
+        }
+
+        .login-panel-header,
+        .login-panel-body {
+            padding: 28px;
+        }
+
+        .login-panel-header {
+            background: #f0ede8;
+            border-bottom: 1px solid var(--line);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 30px;
+            line-height: 1.1;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        label {
+            display: grid;
+            gap: 8px;
+            color: var(--muted);
+            font-weight: 700;
+            margin-bottom: 18px;
+        }
+
+        input {
+            appearance: none;
+            width: 100%;
+            min-height: 48px;
+            border: 1px solid #cfc7bd;
+            border-radius: 8px;
+            background: #ffffff;
+            color: var(--ink);
+            font: inherit;
+            padding: 0 14px;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            outline: 3px solid rgba(17, 17, 17, 0.12);
+        }
+
+        .primary-btn,
+        .secondary-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 48px;
+            border-radius: 8px;
+            border: 1px solid var(--accent);
+            padding: 0 18px;
+            font: inherit;
+            font-weight: 800;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .primary-btn {
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        .secondary-btn {
+            background: #ffffff;
+            color: var(--ink);
+            border-color: var(--line);
+        }
+
+        .login-status {
+            margin-top: 18px;
+            color: var(--muted);
+        }
+
+        .login-status.is-error {
+            color: var(--danger);
+        }
+
+        .login-status.is-success {
+            color: var(--success);
+        }
+
+        .login-result {
+            display: grid;
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .login-result a {
+            overflow-wrap: anywhere;
+        }
+    </style>
+</head>
+<body>
+    <main class="login-shell">
+        <section class="login-panel">
+            <div class="login-panel-header">
+                <h1>Anmelden</h1>
+                <p>Gib die E-Mail-Adresse ein, mit der du eingeladen wurdest.</p>
+            </div>
+            <div class="login-panel-body">
+                <form id="loginForm">
+                    <label>
+                        E-Mail
+                        <input name="email" type="email" autocomplete="email" required>
+                    </label>
+                    <button id="loginBtn" class="primary-btn" type="submit">Login-Link erstellen</button>
+                </form>
+                <div id="loginResult" class="login-result"></div>
+                <div id="loginStatus" class="login-status"></div>
+                <p style="margin-top: 18px;">Noch kein Workspace? <a href="/signup.html">Workspace erstellen</a></p>
+            </div>
+        </section>
+    </main>
+
+    <script src="admin-auth.js"></script>
+    <script src="login.js"></script>
+</body>
+</html>

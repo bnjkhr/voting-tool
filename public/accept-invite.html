@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="theme-color" content="#FFFFFF">
+    <title>Einladung annehmen - Voting Tool</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body > .container {
+            max-width: 720px;
+        }
+
+        .invite-shell {
+            min-height: 80vh;
+            display: grid;
+            place-items: center;
+            padding: var(--spacing-xl) 0;
+        }
+
+        .invite-panel {
+            width: 100%;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+
+        .invite-panel-header {
+            padding: var(--spacing-lg);
+            background: var(--background-alt);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .invite-panel-header h1 {
+            margin: 0 0 var(--spacing-xs);
+            font-family: var(--font-heading);
+            font-size: clamp(1.5rem, 4vw, 2rem);
+        }
+
+        .invite-panel-header p {
+            margin: 0;
+            color: var(--text-secondary);
+        }
+
+        .invite-panel-body {
+            padding: var(--spacing-lg);
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .invite-summary {
+            display: grid;
+            gap: var(--spacing-sm);
+            color: var(--text-secondary);
+        }
+
+        .invite-summary strong {
+            color: var(--text-primary);
+        }
+
+        .invite-form {
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .invite-form label {
+            display: grid;
+            gap: 6px;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .invite-form input {
+            min-height: 42px;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+        }
+
+        .invite-form input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .invite-status {
+            min-height: 22px;
+            color: var(--text-secondary);
+        }
+
+        .invite-status.is-error {
+            color: #b91c1c;
+        }
+
+        .invite-status.is-success {
+            color: #047857;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <main class="invite-shell">
+            <section class="invite-panel">
+                <div class="invite-panel-header">
+                    <h1>Einladung annehmen</h1>
+                    <p>Aktiviere deinen Zugang für diesen Workspace.</p>
+                </div>
+                <div class="invite-panel-body">
+                    <div id="inviteSummary" class="invite-summary">Lade Einladung...</div>
+                    <form id="acceptInviteForm" class="invite-form">
+                        <label>
+                            Name
+                            <input name="displayName" type="text" autocomplete="name" placeholder="Dein Name">
+                        </label>
+                        <button id="acceptInviteBtn" class="primary-btn" type="submit">Einladung annehmen</button>
+                    </form>
+                    <div id="inviteStatus" class="invite-status"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="admin-auth.js"></script>
+    <script src="accept-invite.js"></script>
+</body>
+</html>

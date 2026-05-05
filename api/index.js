@@ -14,10 +14,37 @@ const {
 const { compareAdminSuggestions } = require('./admin-suggestion-sort');
 const { queryCollectionInChunks } = require('./firestore-chunks');
 const {
-  LEGACY_TENANT_ID,
   LEGACY_PUBLIC_HIDDEN_APP_IDS,
   isLegacyPublicAppVisible,
 } = require('./legacy-public-filter');
+const {
+  ACTIVE_TENANT_STATUS,
+  LEGACY_TENANT_ID,
+  buildAppSlug,
+  getTenantId,
+  parseSlugParam,
+} = require('./tenant-utils');
+const {
+  buildTenantProvisionConfig,
+  buildTenantProvisionDocuments,
+  buildTicketPrefix,
+} = require('./tenant-provisioning');
+const {
+  MEMBERSHIP_ROLES,
+  MEMBERSHIP_STATUSES,
+  buildLoginLinkData,
+  buildInviteTokenHash,
+  buildInviteToken,
+  buildMembershipData,
+  buildSessionData,
+  buildTenantInviteData,
+  buildUserData,
+  isInviteExpired,
+  isLoginLinkExpired,
+  isSessionExpired,
+  normalizeInviteEmail,
+  normalizeMembershipRole,
+} = require('./team-utils');
 
 const app = express();
 
@@ -121,6 +148,293 @@ const FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'im Test', '
 const RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
 const RELEASE_STATUSES = ['geplant', 'in Arbeit', 'veröffentlicht'];
 
+function isLegacyTenantData(data = {}) {
+  return getTenantId(data) === LEGACY_TENANT_ID;
+}
+
+function isSameTenantScope(left = {}, right = {}) {
+  return getTenantId(left) === getTenantId(right);
+}
+
+function isActiveTenant(data = {}) {
+  return data.status === ACTIVE_TENANT_STATUS;
+}
+
+async function findActiveTenantBySlug(tenantSlug) {
+  const snapshot = await db.collection('tenants')
+    .where('slug', '==', tenantSlug)
+    .limit(2)
+    .get();
+
+  if (snapshot.size > 1) {
+    throw new Error(`Multiple tenants found for slug "${tenantSlug}"`);
+  }
+
+  if (snapshot.empty) {
+    return null;
+  }
+
+  const doc = snapshot.docs[0];
+  const data = doc.data() || {};
+  if (!isActiveTenant(data)) {
+    return null;
+  }
+
+  return { id: doc.id, ...data };
+}
+
+async function findTenantAppBySlug(tenantId, appSlug) {
+  const snapshot = await db.collection('apps')
+    .where('slug', '==', appSlug)
+    .get();
+
+  const matches = snapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .filter(appData => getTenantId(appData) === tenantId);
+
+  if (matches.length > 1) {
+    throw new Error(`Multiple apps found for tenant "${tenantId}" and slug "${appSlug}"`);
+  }
+
+  return matches[0] || null;
+}
+
+async function resolveTenantAndAppBySlug({ tenantSlug, appSlug }) {
+  const tenant = await findActiveTenantBySlug(tenantSlug);
+  if (!tenant) {
+    return { errorStatus: 404, error: 'Tenant not found' };
+  }
+
+  const tenantApp = await findTenantAppBySlug(tenant.id, appSlug);
+  if (!tenantApp) {
+    return { errorStatus: 404, error: 'App not found' };
+  }
+
+  return { tenant, tenantApp };
+}
+
+async function resolveTenantSuggestionById(tenantSlug, suggestionId) {
+  const tenant = await findActiveTenantBySlug(tenantSlug);
+  if (!tenant) {
+    return { errorStatus: 404, error: 'Tenant not found' };
+  }
+
+  const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+  const suggestionData = suggestionDoc.exists ? suggestionDoc.data() : null;
+  if (!suggestionDoc.exists || getTenantId(suggestionData) !== tenant.id) {
+    return { errorStatus: 404, error: 'Suggestion not found' };
+  }
+
+  return { tenant, suggestionDoc, suggestionData };
+}
+
+function buildCommentStatsMap(commentDocs, tenantId) {
+  const commentStatsMap = {};
+
+  commentDocs
+    .filter(doc => getTenantId(doc.data() || {}) === tenantId)
+    .forEach(doc => {
+      const suggestionId = doc.data().suggestionId;
+      if (!commentStatsMap[suggestionId]) {
+        commentStatsMap[suggestionId] = {
+          totalCount: 0,
+          pendingCount: 0,
+          publicCount: 0,
+        };
+      }
+
+      const stats = buildCommentStats([doc]);
+      commentStatsMap[suggestionId].totalCount += stats.totalCount;
+      commentStatsMap[suggestionId].pendingCount += stats.pendingCount;
+      commentStatsMap[suggestionId].publicCount += stats.publicCount;
+    });
+
+  return commentStatsMap;
+}
+
+function buildPublicSuggestionResponse(data, commentStatsMap, userVotesSet) {
+  const type = normalizeSuggestionType(data.type);
+
+  return {
+    id: data.id,
+    ...data,
+    type,
+    status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+    priority: data.priority || 'mittel',
+    labels: data.labels || [],
+    ticketNumber: data.ticketNumber || null,
+    commentCount: commentStatsMap[data.id]?.publicCount || 0,
+    hasVoted: type === 'feature' && userVotesSet.has(data.id)
+  };
+}
+
+function sortPublicSuggestions(suggestions) {
+  suggestions.sort((a, b) => {
+    const aStatus = a.status || '';
+    const bStatus = b.status || '';
+
+    const aImplemented = RESOLVED_STATUSES.includes(aStatus);
+    const bImplemented = RESOLVED_STATUSES.includes(bStatus);
+
+    if (aImplemented !== bImplemented) {
+      return aImplemented ? 1 : -1;
+    }
+
+    const aVotable = !aImplemented && !a.hasVoted;
+    const bVotable = !bImplemented && !b.hasVoted;
+    if (aVotable !== bVotable) {
+      return aVotable ? -1 : 1;
+    }
+
+    const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+    if (bTime - aTime !== 0) {
+      return bTime - aTime;
+    }
+
+    const aVotes = a.votes || 0;
+    const bVotes = b.votes || 0;
+    if (bVotes !== aVotes) {
+      return bVotes - aVotes;
+    }
+
+    return (a.title || a.id || '').localeCompare((b.title || b.id || ''));
+  });
+
+  return suggestions;
+}
+
+async function loadPublicSuggestionsForApp(appId, tenantId, userFingerprint) {
+  const suggestionsSnapshot = await db.collection('suggestions')
+    .where('appId', '==', appId)
+    .where('approved', '==', true)
+    .get();
+
+  const suggestionDocs = suggestionsSnapshot.docs
+    .filter(doc => getTenantId(doc.data() || {}) === tenantId);
+
+  if (suggestionDocs.length === 0) {
+    return [];
+  }
+
+  const suggestionIds = suggestionDocs.map(doc => doc.id);
+
+  const [commentDocs, userVoteDocs] = await Promise.all([
+    queryCollectionInChunks(db, {
+      collectionName: 'comments',
+      fieldName: 'suggestionId',
+      values: suggestionIds,
+    }),
+    queryCollectionInChunks(db, {
+      collectionName: 'votes',
+      fieldName: 'suggestionId',
+      values: suggestionIds,
+      applyChunkQuery: query => query.where('userFingerprint', '==', userFingerprint),
+    })
+  ]);
+
+  const commentStatsMap = buildCommentStatsMap(commentDocs, tenantId);
+  const userVotesSet = new Set(
+    userVoteDocs
+      .filter(doc => getTenantId(doc.data() || {}) === tenantId)
+      .map(doc => doc.data().suggestionId)
+  );
+
+  return sortPublicSuggestions(
+    suggestionDocs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .map(data => buildPublicSuggestionResponse(data, commentStatsMap, userVotesSet))
+  );
+}
+
+function parseStatusFilter(statusFilter) {
+  if (!statusFilter) {
+    return { statusList: null };
+  }
+
+  const statusList = statusFilter.split(',').map(s => s.trim()).filter(s => RELEASE_STATUSES.includes(s));
+  if (statusList.length === 0) {
+    return { error: 'Ungültiger Status-Filter' };
+  }
+
+  return { statusList };
+}
+
+function sortPublicReleases(releases) {
+  releases.sort((a, b) => {
+    const statusOrder = { 'in Arbeit': 0, 'geplant': 1, 'veröffentlicht': 2 };
+    const aOrder = statusOrder[a.status] ?? 9;
+    const bOrder = statusOrder[b.status] ?? 9;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+
+    const aDate = a.releaseDate?.toDate?.() ?? (a.releaseDate?._seconds != null ? new Date(a.releaseDate._seconds * 1000) : new Date(0));
+    const bDate = b.releaseDate?.toDate?.() ?? (b.releaseDate?._seconds != null ? new Date(b.releaseDate._seconds * 1000) : new Date(0));
+    return a.status === 'veröffentlicht' ? bDate - aDate : aDate - bDate;
+  });
+
+  return releases;
+}
+
+async function loadPublicReleasesForApp(appId, tenantId, statusFilter) {
+  const { statusList, error } = parseStatusFilter(statusFilter);
+  if (error) {
+    return { error };
+  }
+
+  let query = db.collection('releases').where('appId', '==', appId);
+  if (statusList && statusList.length === 1) {
+    query = query.where('status', '==', statusList[0]);
+  }
+
+  const releasesSnapshot = await query.get();
+
+  let releases = releasesSnapshot.docs
+    .map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
+    .filter(release => getTenantId(release) === tenantId);
+
+  if (statusList && statusList.length > 1) {
+    releases = releases.filter(r => statusList.includes(r.status));
+  }
+
+  const releaseIds = releases.map(r => r.id);
+  const suggestionsByRelease = {};
+
+  if (releaseIds.length > 0) {
+    const suggestionDocs = await queryCollectionInChunks(db, {
+      collectionName: 'suggestions',
+      fieldName: 'releaseId',
+      values: releaseIds,
+      applyChunkQuery: query => query.where('approved', '==', true),
+    });
+
+    suggestionDocs
+      .filter(doc => getTenantId(doc.data() || {}) === tenantId)
+      .forEach(doc => {
+        const data = doc.data();
+        const rid = data.releaseId;
+        if (!suggestionsByRelease[rid]) suggestionsByRelease[rid] = [];
+        const type = normalizeSuggestionType(data.type);
+        suggestionsByRelease[rid].push({
+          id: doc.id,
+          title: data.title,
+          type,
+          status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+          ticketNumber: data.ticketNumber || null,
+        });
+      });
+  }
+
+  return {
+    releases: sortPublicReleases(releases.map(r => ({
+      ...r,
+      items: suggestionsByRelease[r.id] || [],
+    }))),
+  };
+}
+
 function getValidStatusesForType(type) {
   if (type === 'feature') return FEATURE_STATUSES;
   return TICKET_STATUSES; // tickets and bugs share the same workflow
@@ -178,25 +492,33 @@ function mapSeverityToPriority(severity) {
   }
 }
 
-async function generateTicketNumber(appId) {
+async function generateTicketNumber(appId, tenantId = LEGACY_TENANT_ID) {
   const counterRef = db.collection('counters').doc(appId);
 
   const result = await db.runTransaction(async (transaction) => {
     const counterDoc = await transaction.get(counterRef);
 
     let prefix, nextNumber;
+    let resolvedTenantId = tenantId;
     if (counterDoc.exists) {
       prefix = counterDoc.data().prefix;
       nextNumber = counterDoc.data().nextNumber || 1;
+      resolvedTenantId = getTenantId({ tenantId: counterDoc.data().tenantId || tenantId });
     } else {
       // Fallback: derive prefix from app name
       const appDoc = await transaction.get(db.collection('apps').doc(appId));
-      const appName = appDoc.exists ? appDoc.data().name : 'APP';
+      const appData = appDoc.exists ? appDoc.data() : {};
+      const appName = appData.name || 'APP';
       prefix = appName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'APP';
       nextNumber = 1;
+      resolvedTenantId = getTenantId(appData);
     }
 
-    transaction.set(counterRef, { prefix, nextNumber: nextNumber + 1 }, { merge: true });
+    transaction.set(counterRef, {
+      prefix,
+      nextNumber: nextNumber + 1,
+      tenantId: resolvedTenantId,
+    }, { merge: true });
 
     return `${prefix}-${String(nextNumber).padStart(3, '0')}`;
   });
@@ -204,9 +526,16 @@ async function generateTicketNumber(appId) {
   return result;
 }
 
-async function logActivity(ticketId, action, { oldValue = null, newValue = null, detail = null, actor = 'admin' } = {}) {
+async function logActivity(ticketId, action, {
+  oldValue = null,
+  newValue = null,
+  detail = null,
+  actor = 'admin',
+  tenantId = LEGACY_TENANT_ID,
+} = {}) {
   try {
     await db.collection('activity').add({
+      tenantId: getTenantId({ tenantId }),
       ticketId,
       action,
       oldValue,
@@ -368,12 +697,1121 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
   }
 }
 
+function buildRequestBaseUrl(req) {
+  const protoHeader = req.headers['x-forwarded-proto'];
+  const hostHeader = req.headers['x-forwarded-host'] || req.headers.host;
+  const proto = Array.isArray(protoHeader) ? protoHeader[0] : protoHeader;
+  const host = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader;
+
+  if (host) {
+    return `${proto || req.protocol || 'https'}://${host}`;
+  }
+
+  if (process.env.BASE_URL) {
+    return process.env.BASE_URL.replace(/\/+$/, '');
+  }
+
+  return 'http://localhost:3000';
+}
+
+async function sendLoginLinkEmail({ to, loginUrl }) {
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Login email not configured - RESEND_API_KEY missing');
+    throw new Error('Email delivery not configured');
+  }
+
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+
+  const { data, error } = await resend.emails.send({
+    from: fromEmail,
+    to,
+    subject: 'Dein Login-Link fürs Voting Tool',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto;">
+        <h2>Einloggen</h2>
+        <p>Nutze diesen Link, um dich im Voting Tool anzumelden.</p>
+        <p><a href="${loginUrl}" style="background:#111;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Einloggen</a></p>
+        <p style="color:#666;font-size:13px;">Der Link ist 15 Minuten gültig und kann nur einmal verwendet werden.</p>
+      </div>
+    `,
+  });
+
+  if (error) {
+    console.error('Failed to send login link email:', error);
+    throw new Error('Failed to send login link email');
+  }
+
+  console.log('Login link email sent successfully:', data.id);
+  return data;
+}
+
+async function sendTenantInviteEmail({ to, tenantName, role, acceptUrl }) {
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('Invite email not configured - RESEND_API_KEY missing');
+    throw new Error('Email delivery not configured');
+  }
+
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+  const roleLabel = normalizeMembershipRole(role);
+
+  const { data, error } = await resend.emails.send({
+    from: fromEmail,
+    to,
+    subject: `Einladung zu ${tenantName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto;">
+        <h2>Einladung annehmen</h2>
+        <p>Du wurdest als <strong>${roleLabel}</strong> in den Workspace <strong>${tenantName}</strong> eingeladen.</p>
+        <p><a href="${acceptUrl}" style="background:#111;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Einladung annehmen</a></p>
+        <p style="color:#666;font-size:13px;">Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.</p>
+      </div>
+    `,
+  });
+
+  if (error) {
+    console.error('Failed to send tenant invite email:', error);
+    throw new Error('Failed to send tenant invite email');
+  }
+
+  console.log('Tenant invite email sent successfully:', data.id);
+  return data;
+}
+
 // Helper function to generate user fingerprint
 function generateUserFingerprint(req) {
   const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
   const userAgent = req.headers['user-agent'] || '';
   return `${ip}_${Buffer.from(userAgent).toString('base64').slice(0, 10)}`;
 }
+
+async function createUserSession(userId, now = new Date()) {
+  const sessionToken = buildInviteToken();
+  const sessionRef = db.collection('sessions').doc();
+  const sessionData = buildSessionData({
+    userId,
+    token: sessionToken,
+    now,
+  });
+
+  await sessionRef.create(sessionData);
+  return {
+    sessionToken,
+    session: {
+      id: sessionRef.id,
+      userId,
+      expiresAt: sessionData.expiresAt,
+    },
+  };
+}
+
+async function loadActiveUserTenants(userId) {
+  const membershipsSnapshot = await db.collection('memberships')
+    .where('userId', '==', userId)
+    .where('status', '==', 'active')
+    .get();
+
+  const memberships = membershipsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  const tenantDocs = await Promise.all(
+    [...new Set(memberships.map(membership => membership.tenantId).filter(Boolean))]
+      .map(tenantId => db.collection('tenants').doc(tenantId).get())
+  );
+
+  const tenantsById = {};
+  tenantDocs.forEach(doc => {
+    if (doc.exists && isActiveTenant(doc.data() || {})) {
+      tenantsById[doc.id] = { id: doc.id, ...doc.data() };
+    }
+  });
+
+  return memberships
+    .filter(membership => tenantsById[membership.tenantId])
+    .map(membership => {
+      const tenant = tenantsById[membership.tenantId];
+      return {
+        membershipId: membership.id,
+        role: normalizeMembershipRole(membership.role),
+        tenant: {
+          id: tenant.id,
+          slug: tenant.slug || tenant.id,
+          name: tenant.displayName || tenant.name || tenant.id,
+        },
+      };
+    })
+    .sort((a, b) => (a.tenant.name || '').localeCompare(b.tenant.name || ''));
+}
+
+async function resolvePendingInviteByToken(token) {
+  const tokenHash = buildInviteTokenHash(token || '');
+  const snapshot = await db.collection('invites')
+    .where('tokenHash', '==', tokenHash)
+    .limit(2)
+    .get();
+
+  if (snapshot.size > 1) {
+    throw new Error('Multiple invites found for token');
+  }
+
+  if (snapshot.empty) {
+    return { errorStatus: 404, error: 'Invite not found' };
+  }
+
+  const inviteDoc = snapshot.docs[0];
+  const invite = inviteDoc.data() || {};
+  if (invite.status !== 'pending') {
+    return { errorStatus: 410, error: 'Invite is no longer pending' };
+  }
+
+  if (isInviteExpired(invite)) {
+    return { errorStatus: 410, error: 'Invite has expired' };
+  }
+
+  const tenantDoc = await db.collection('tenants').doc(invite.tenantId).get();
+  if (!tenantDoc.exists || !isActiveTenant(tenantDoc.data() || {})) {
+    return { errorStatus: 404, error: 'Tenant not found' };
+  }
+
+  return {
+    inviteDoc,
+    invite,
+    tenant: { id: tenantDoc.id, ...tenantDoc.data() },
+  };
+}
+
+function buildPublicInviteResponse(invite, tenant) {
+  return {
+    email: invite.email,
+    role: normalizeMembershipRole(invite.role),
+    expiresAt: invite.expiresAt,
+    tenant: {
+      id: tenant.id,
+      slug: tenant.slug || tenant.id,
+      name: tenant.displayName || tenant.name || tenant.id,
+    },
+  };
+}
+
+function buildSignupWorkspaceConfig(body = {}) {
+  let email;
+  try {
+    email = normalizeInviteEmail(body.email);
+  } catch (error) {
+    throw new Error(error.message || 'Invalid email');
+  }
+
+  const tenantName = cleanTenantSettingText(body.workspaceName || body.tenantName, '');
+  if (!tenantName) {
+    throw new Error('Workspace name is required');
+  }
+
+  return buildTenantProvisionConfig({
+    tenantName,
+    tenantSlug: body.workspaceSlug || body.tenantSlug,
+    appName: body.boardName || body.appName || `${tenantName} Board`,
+    ticketPrefix: body.ticketPrefix,
+  });
+}
+
+async function resolvePendingLoginLinkByToken(token) {
+  const tokenHash = buildInviteTokenHash(token || '');
+  const snapshot = await db.collection('loginLinks')
+    .where('tokenHash', '==', tokenHash)
+    .limit(2)
+    .get();
+
+  if (snapshot.size > 1) {
+    throw new Error('Multiple login links found for token');
+  }
+
+  if (snapshot.empty) {
+    return { errorStatus: 404, error: 'Login link not found' };
+  }
+
+  const loginLinkDoc = snapshot.docs[0];
+  const loginLink = loginLinkDoc.data() || {};
+  if (loginLink.status !== 'pending') {
+    return { errorStatus: 410, error: 'Login link is no longer pending' };
+  }
+
+  if (isLoginLinkExpired(loginLink)) {
+    return { errorStatus: 410, error: 'Login link has expired' };
+  }
+
+  const userSnapshot = await db.collection('users')
+    .where('email', '==', loginLink.email)
+    .limit(1)
+    .get();
+
+  if (userSnapshot.empty) {
+    return { errorStatus: 404, error: 'User not found' };
+  }
+
+  const userDoc = userSnapshot.docs[0];
+  const user = { id: userDoc.id, ...userDoc.data() };
+  if (user.status && user.status !== 'active') {
+    return { errorStatus: 403, error: 'User is disabled' };
+  }
+
+  return { loginLinkDoc, loginLink, user };
+}
+
+// Public auth: request a one-time login link for an existing invited user
+app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
+  try {
+    let email;
+    try {
+      email = normalizeInviteEmail(req.body?.email);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'Invalid email' });
+    }
+
+    const userSnapshot = await db.collection('users')
+      .where('email', '==', email)
+      .limit(1)
+      .get();
+
+    if (userSnapshot.empty) {
+      return res.status(404).json({ error: 'No user found for this email' });
+    }
+
+    const user = { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() };
+    if (user.status && user.status !== 'active') {
+      return res.status(403).json({ error: 'User is disabled' });
+    }
+
+    const token = buildInviteToken();
+    const loginLinkData = buildLoginLinkData({
+      email,
+      token,
+      redirectUrl: req.body?.redirectUrl,
+      now: new Date(),
+    });
+
+    const docRef = await db.collection('loginLinks').add(loginLinkData);
+    const loginUrl = `${buildRequestBaseUrl(req)}/login.html?token=${encodeURIComponent(token)}`;
+    await sendLoginLinkEmail({ to: email, loginUrl });
+
+    res.status(201).json({
+      id: docRef.id,
+      email,
+      expiresAt: loginLinkData.expiresAt,
+      delivery: 'email',
+    });
+  } catch (error) {
+    console.error('Error creating login link:', error);
+    res.status(500).json({ error: 'Failed to create login link' });
+  }
+});
+
+// Public signup: create a new workspace and send the owner a magic login link
+app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
+  try {
+    let email;
+    let config;
+    try {
+      email = normalizeInviteEmail(req.body?.email);
+      config = buildSignupWorkspaceConfig(req.body || {});
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'Invalid signup data' });
+    }
+
+    const [tenantDoc, slugSnapshot, existingUserSnapshot] = await Promise.all([
+      db.collection('tenants').doc(config.tenantId).get(),
+      db.collection('tenants').where('slug', '==', config.tenantSlug).limit(1).get(),
+      db.collection('users').where('email', '==', email).limit(1).get(),
+    ]);
+
+    if (tenantDoc.exists || !slugSnapshot.empty) {
+      return res.status(409).json({ error: 'Workspace slug already exists' });
+    }
+
+    if (!existingUserSnapshot.empty) {
+      const existingUserId = existingUserSnapshot.docs[0].id;
+      const existingMemberships = await db.collection('memberships')
+        .where('userId', '==', existingUserId)
+        .where('status', '==', 'active')
+        .limit(1)
+        .get();
+
+      if (!existingMemberships.empty) {
+        return res.status(409).json({ error: 'A workspace already exists for this email' });
+      }
+    }
+
+    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    const now = new Date();
+    const docs = buildTenantProvisionDocuments(config, timestamp);
+    const tenantRef = db.collection('tenants').doc(config.tenantId);
+    const appRef = db.collection('apps').doc();
+    const counterRef = db.collection('counters').doc(appRef.id);
+    const userRef = existingUserSnapshot.empty
+      ? db.collection('users').doc()
+      : existingUserSnapshot.docs[0].ref;
+    const membershipRef = db.collection('memberships').doc();
+
+    const batch = db.batch();
+    batch.create(tenantRef, docs.tenant);
+    batch.create(appRef, docs.app);
+    batch.create(counterRef, docs.counter);
+
+    if (existingUserSnapshot.empty) {
+      batch.create(userRef, buildUserData({
+        email,
+        displayName: email,
+        now,
+      }));
+    } else {
+      batch.set(userRef, {
+        status: 'active',
+        updatedAt: now,
+      }, { merge: true });
+    }
+
+    batch.create(membershipRef, {
+      ...buildMembershipData({
+        tenantId: config.tenantId,
+        userId: userRef.id,
+        role: 'owner',
+        now,
+      }),
+      email,
+    });
+    await batch.commit();
+
+    const token = buildInviteToken();
+    const loginLinkData = buildLoginLinkData({
+      email,
+      token,
+      redirectUrl: `/tenant-admin.html?tenant=${encodeURIComponent(config.tenantSlug)}&onboarding=1`,
+      now,
+    });
+    const loginLinkRef = await db.collection('loginLinks').add(loginLinkData);
+    const signupLoginUrl = `${buildRequestBaseUrl(req)}/login.html?token=${encodeURIComponent(token)}`;
+    await sendLoginLinkEmail({ to: email, loginUrl: signupLoginUrl });
+
+    res.status(201).json({
+      tenant: {
+        id: config.tenantId,
+        slug: config.tenantSlug,
+        name: config.tenantName,
+      },
+      app: {
+        id: appRef.id,
+        slug: config.appSlug,
+        name: config.appName,
+      },
+      user: {
+        id: userRef.id,
+        email,
+      },
+      membership: {
+        id: membershipRef.id,
+        role: 'owner',
+      },
+      loginLink: {
+        id: loginLinkRef.id,
+        expiresAt: loginLinkData.expiresAt,
+        delivery: 'email',
+      },
+      urls: {
+        tenantAdmin: `/tenant-admin.html?tenant=${encodeURIComponent(config.tenantSlug)}`,
+      },
+      delivery: 'email',
+    });
+  } catch (error) {
+    console.error('Error creating signup workspace:', error);
+    res.status(500).json({ error: 'Failed to create workspace' });
+  }
+});
+
+// Public auth: consume a one-time login link and create a user session
+app.post('/api/auth/login-links/:token/consume', rateLimit(60000, 10), async (req, res) => {
+  try {
+    const resolved = await resolvePendingLoginLinkByToken(req.params.token);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    const now = new Date();
+    const { sessionToken, session } = await createUserSession(resolved.user.id, now);
+    await resolved.loginLinkDoc.ref.set({
+      status: 'consumed',
+      consumedAt: now,
+      updatedAt: now,
+      consumedUserId: resolved.user.id,
+    }, { merge: true });
+
+    const tenants = await loadActiveUserTenants(resolved.user.id);
+    const firstTenant = tenants[0]?.tenant || null;
+    const redirectUrl = resolved.loginLink.redirectUrl || (
+      firstTenant
+        ? `/tenant-admin.html?tenant=${encodeURIComponent(firstTenant.slug || firstTenant.id)}`
+        : null
+    );
+
+    res.json({
+      success: true,
+      sessionToken,
+      session,
+      user: {
+        id: resolved.user.id,
+        email: resolved.user.email,
+        displayName: resolved.user.displayName || resolved.user.email,
+      },
+      tenants,
+      urls: {
+        tenantAdmin: redirectUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Error consuming login link:', error);
+    res.status(500).json({ error: 'Failed to consume login link' });
+  }
+});
+
+// Public auth: describe the current admin/session context for role-aware UI
+app.get('/api/auth/session', async (req, res) => {
+  try {
+    const sessionAuth = await resolveSessionAuth(req);
+    if (sessionAuth) {
+      const tenants = await loadActiveUserTenants(sessionAuth.user.id);
+      return res.json({
+        authType: 'user',
+        platformRole: null,
+        user: {
+          id: sessionAuth.user.id,
+          email: sessionAuth.user.email,
+          displayName: sessionAuth.user.displayName || sessionAuth.user.email,
+        },
+        memberships: tenants.map(item => ({
+          membershipId: item.membershipId,
+          role: item.role,
+          tenantId: item.tenant.id,
+          tenantSlug: item.tenant.slug || item.tenant.id,
+          tenantName: item.tenant.name,
+        })),
+      });
+    }
+
+    if (hasValidAdminPassword(req)) {
+      return res.json({
+        authType: 'platform',
+        platformRole: 'super_admin',
+        user: {
+          id: 'platform-admin',
+          email: 'platform-admin',
+          displayName: 'Platform Admin',
+        },
+        memberships: [],
+      });
+    }
+
+    return res.status(401).json({ error: 'Unauthorized - Session required' });
+  } catch (error) {
+    console.error('Error loading auth session:', error);
+    res.status(500).json({ error: 'Failed to load auth session' });
+  }
+});
+
+// Public invite: inspect a pending invite token
+app.get('/api/invites/:token', async (req, res) => {
+  try {
+    const resolved = await resolvePendingInviteByToken(req.params.token);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    res.json(buildPublicInviteResponse(resolved.invite, resolved.tenant));
+  } catch (error) {
+    console.error('Error resolving invite:', error);
+    res.status(500).json({ error: 'Failed to resolve invite' });
+  }
+});
+
+// Public invite: accept a pending invite token
+app.post('/api/invites/:token/accept', rateLimit(60000, 10), async (req, res) => {
+  try {
+    const resolved = await resolvePendingInviteByToken(req.params.token);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    const { inviteDoc, invite, tenant } = resolved;
+    const now = new Date();
+    const displayName = typeof req.body?.displayName === 'string'
+      ? req.body.displayName.trim().replace(/\s+/g, ' ')
+      : '';
+
+    const existingUser = await db.collection('users')
+      .where('email', '==', invite.email)
+      .limit(1)
+      .get();
+
+    const userRef = existingUser.empty
+      ? db.collection('users').doc()
+      : existingUser.docs[0].ref;
+    const userId = userRef.id;
+
+    const existingMembership = await db.collection('memberships')
+      .where('tenantId', '==', tenant.id)
+      .where('userId', '==', userId)
+      .limit(1)
+      .get();
+
+    const membershipRef = existingMembership.empty
+      ? db.collection('memberships').doc()
+      : existingMembership.docs[0].ref;
+
+    const batch = db.batch();
+    if (existingUser.empty) {
+      batch.create(userRef, buildUserData({
+        email: invite.email,
+        displayName,
+        now,
+      }));
+    } else if (displayName && !existingUser.docs[0].data()?.displayName) {
+      batch.set(userRef, {
+        displayName,
+        updatedAt: now,
+      }, { merge: true });
+    }
+
+    const membershipData = buildMembershipData({
+      tenantId: tenant.id,
+      userId,
+      role: invite.role,
+      now,
+    });
+    if (existingMembership.empty) {
+      batch.create(membershipRef, membershipData);
+    } else {
+      batch.set(membershipRef, {
+        role: membershipData.role,
+        status: 'active',
+        updatedAt: now,
+      }, { merge: true });
+    }
+
+    batch.set(inviteDoc.ref, {
+      status: 'accepted',
+      acceptedAt: now,
+      updatedAt: now,
+      acceptedUserId: userId,
+    }, { merge: true });
+
+    await batch.commit();
+    const { sessionToken, session } = await createUserSession(userId, new Date());
+
+    res.json({
+      success: true,
+      sessionToken,
+      session,
+      user: {
+        id: userId,
+        email: invite.email,
+        displayName: displayName || invite.email,
+      },
+      membership: {
+        id: membershipRef.id,
+        tenantId: tenant.id,
+        role: membershipData.role,
+        status: 'active',
+      },
+      tenant: {
+        id: tenant.id,
+        slug: tenant.slug || tenant.id,
+        name: tenant.displayName || tenant.name || tenant.id,
+      },
+      urls: {
+        tenantAdmin: `/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`,
+      },
+    });
+  } catch (error) {
+    console.error('Error accepting invite:', error);
+    res.status(500).json({ error: 'Failed to accept invite' });
+  }
+});
+
+// SaaS public: resolve an active tenant by slug
+app.get('/api/tenants/:tenantSlug', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+
+    const tenant = await findActiveTenantBySlug(tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    res.json(tenant);
+  } catch (error) {
+    console.error('Error fetching tenant:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant' });
+  }
+});
+
+// SaaS public: get apps for an active tenant
+app.get('/api/tenants/:tenantSlug/apps', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+
+    const tenant = await findActiveTenantBySlug(tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    const appsSnapshot = await db.collection('apps')
+      .where('tenantId', '==', tenant.id)
+      .get();
+
+    const apps = appsSnapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .filter(appData => getTenantId(appData) === tenant.id);
+
+    apps.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    res.json(apps);
+  } catch (error) {
+    console.error('Error fetching tenant apps:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant apps' });
+  }
+});
+
+// SaaS public: resolve one tenant app by slug
+app.get('/api/tenants/:tenantSlug/apps/:appSlug', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const appSlug = parseSlugParam(req.params.appSlug);
+    if (!tenantSlug || !appSlug) {
+      return res.status(400).json({ error: 'Invalid tenant or app slug' });
+    }
+
+    const tenant = await findActiveTenantBySlug(tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    const tenantApp = await findTenantAppBySlug(tenant.id, appSlug);
+    if (!tenantApp) {
+      return res.status(404).json({ error: 'App not found' });
+    }
+
+    res.json(tenantApp);
+  } catch (error) {
+    console.error('Error fetching tenant app:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant app' });
+  }
+});
+
+// SaaS public: get suggestions for a tenant app slug
+app.get('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const appSlug = parseSlugParam(req.params.appSlug);
+    if (!tenantSlug || !appSlug) {
+      return res.status(400).json({ error: 'Invalid tenant or app slug' });
+    }
+
+    const { tenant, tenantApp, errorStatus, error } = await resolveTenantAndAppBySlug({ tenantSlug, appSlug });
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const suggestions = await loadPublicSuggestionsForApp(
+      tenantApp.id,
+      tenant.id,
+      generateUserFingerprint(req)
+    );
+
+    res.json(suggestions);
+  } catch (error) {
+    console.error('Error fetching tenant suggestions:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant suggestions' });
+  }
+});
+
+// SaaS public: create a suggestion for a tenant app slug
+app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 3), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const appSlug = parseSlugParam(req.params.appSlug);
+    if (!tenantSlug || !appSlug) {
+      return res.status(400).json({ error: 'Invalid tenant or app slug' });
+    }
+
+    const { tenant, tenantApp, errorStatus, error } = await resolveTenantAndAppBySlug({ tenantSlug, appSlug });
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const userFingerprint = generateUserFingerprint(req);
+    const { suggestion, error: suggestionError } = buildSuggestionFromRequest(
+      req.body,
+      tenantApp.id,
+      userFingerprint,
+      tenant.id
+    );
+    if (suggestionError) {
+      return res.status(400).json({ error: suggestionError });
+    }
+
+    suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, tenant.id);
+
+    const docRef = await db.collection('suggestions').add(suggestion);
+
+    await logActivity(docRef.id, 'created', {
+      detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" erstellt`,
+      actor: `user:${userFingerprint}`,
+      tenantId: tenant.id,
+    });
+
+    try {
+      await sendAdminNotificationEmail(
+        docRef.id,
+        suggestion.title,
+        suggestion.description,
+        tenantApp.name,
+        { type: suggestion.type, severity: suggestion.severity || null }
+      );
+    } catch (emailError) {
+      console.error('Error sending notification email:', emailError);
+    }
+
+    const typeMessages = {
+      bug: 'Bug erfolgreich gemeldet. Er wird geprüft und dann freigegeben.',
+      ticket: 'Ticket erfolgreich erstellt. Es wird geprüft und dann freigegeben.',
+      feature: 'Vorschlag erfolgreich eingereicht. Er wird geprüft und dann freigegeben.',
+    };
+
+    res.status(201).json({
+      id: docRef.id,
+      ...suggestion,
+      createdAt: new Date(),
+      message: typeMessages[suggestion.type] || typeMessages.feature
+    });
+  } catch (error) {
+    console.error('Error creating tenant suggestion:', error);
+    res.status(500).json({ error: 'Failed to create suggestion' });
+  }
+});
+
+// SaaS public: get releases for a tenant app slug
+app.get('/api/tenants/:tenantSlug/apps/:appSlug/releases', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const appSlug = parseSlugParam(req.params.appSlug);
+    if (!tenantSlug || !appSlug) {
+      return res.status(400).json({ error: 'Invalid tenant or app slug' });
+    }
+
+    const tenant = await findActiveTenantBySlug(tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    const tenantApp = await findTenantAppBySlug(tenant.id, appSlug);
+    if (!tenantApp) {
+      return res.status(404).json({ error: 'App not found' });
+    }
+
+    const { releases, error } = await loadPublicReleasesForApp(
+      tenantApp.id,
+      tenant.id,
+      req.query.status
+    );
+
+    if (error) {
+      return res.status(400).json({ error });
+    }
+
+    res.json(releases);
+  } catch (error) {
+    console.error('Error fetching tenant releases:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant releases' });
+  }
+});
+
+// SaaS public: get public comments for a tenant suggestion
+app.get('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const tenant = await findActiveTenantBySlug(tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    const suggestionData = suggestionDoc.exists ? suggestionDoc.data() : null;
+    if (
+      !suggestionDoc.exists ||
+      !suggestionData.approved ||
+      getTenantId(suggestionData) !== tenant.id
+    ) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const commentsSnapshot = await db.collection('comments')
+      .where('suggestionId', '==', suggestionId)
+      .get();
+
+    const comments = commentsSnapshot.docs
+      .filter(doc => getTenantId(doc.data() || {}) === tenant.id)
+      .map(buildPublicCommentResponse)
+      .filter(Boolean);
+
+    comments.sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
+      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
+      return bTime - aTime;
+    });
+
+    res.json(comments);
+  } catch (error) {
+    console.error('Error fetching tenant comments:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant comments' });
+  }
+});
+
+// SaaS public: vote for a tenant suggestion
+app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const userFingerprint = generateUserFingerprint(req);
+
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID' });
+    }
+
+    const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    if (!suggestionData.approved) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
+    if (suggestionType !== 'feature') {
+      return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
+    }
+
+    const existingVote = await db.collection('votes')
+      .where('tenantId', '==', tenant.id)
+      .where('suggestionId', '==', suggestionId)
+      .where('userFingerprint', '==', userFingerprint)
+      .limit(1)
+      .get();
+
+    if (!existingVote.empty) {
+      return res.status(400).json({ error: 'You have already voted for this suggestion' });
+    }
+
+    const batch = db.batch();
+    const voteRef = db.collection('votes').doc();
+    batch.set(voteRef, {
+      tenantId: tenant.id,
+      suggestionId,
+      userFingerprint,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
+    });
+
+    batch.update(db.collection('suggestions').doc(suggestionId), {
+      votes: admin.firestore.FieldValue.increment(1)
+    });
+
+    await batch.commit();
+
+    res.json({ success: true, message: 'Vote recorded successfully' });
+  } catch (error) {
+    console.error('Error recording tenant vote:', error);
+    res.status(500).json({ error: 'Failed to record vote' });
+  }
+});
+
+// SaaS public: remove vote for a tenant suggestion
+app.delete('/api/tenants/:tenantSlug/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const userFingerprint = generateUserFingerprint(req);
+
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID' });
+    }
+
+    const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    if (!suggestionData.approved) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
+    if (suggestionType !== 'feature') {
+      return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
+    }
+
+    const existingVote = await db.collection('votes')
+      .where('tenantId', '==', tenant.id)
+      .where('suggestionId', '==', suggestionId)
+      .where('userFingerprint', '==', userFingerprint)
+      .limit(1)
+      .get();
+
+    if (existingVote.empty) {
+      return res.status(400).json({ error: 'You have not voted for this suggestion' });
+    }
+
+    const batch = db.batch();
+    batch.delete(existingVote.docs[0].ref);
+    batch.update(db.collection('suggestions').doc(suggestionId), {
+      votes: Math.max(0, (suggestionData.votes || 0) - 1)
+    });
+
+    await batch.commit();
+
+    res.json({ success: true, message: 'Vote removed successfully' });
+  } catch (error) {
+    console.error('Error removing tenant vote:', error);
+    res.status(500).json({ error: 'Failed to remove vote' });
+  }
+});
+
+// SaaS public: check whether current user voted for a tenant suggestion
+app.get('/api/tenants/:tenantSlug/suggestions/:suggestionId/voted', async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const userFingerprint = generateUserFingerprint(req);
+
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID' });
+    }
+
+    const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    if (!suggestionData.approved) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const voteSnapshot = await db.collection('votes')
+      .where('tenantId', '==', tenant.id)
+      .where('suggestionId', '==', suggestionId)
+      .where('userFingerprint', '==', userFingerprint)
+      .limit(1)
+      .get();
+
+    res.json({ voted: !voteSnapshot.empty });
+  } catch (error) {
+    console.error('Error checking tenant vote status:', error);
+    res.status(500).json({ error: 'Failed to check vote status' });
+  }
+});
+
+// SaaS public: submit comment for an approved tenant suggestion
+app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const { text, screenshots } = req.body;
+    const userFingerprint = generateUserFingerprint(req);
+
+    if (!tenantSlug) {
+      return res.status(400).json({ error: 'Invalid tenant slug' });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID format' });
+    }
+
+    const validText = validateInput(text, 2000);
+    if (!validText) {
+      return res.status(400).json({ error: 'Invalid comment text' });
+    }
+
+    const screenshotValidation = validateCommentScreenshots(screenshots);
+    if (screenshotValidation.error) {
+      return res.status(400).json({ error: screenshotValidation.error });
+    }
+
+    const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    if (!suggestionData.approved) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    const comment = {
+      tenantId: tenant.id,
+      suggestionId,
+      text: validText,
+      screenshots: screenshotValidation.screenshots,
+      authorType: 'user',
+      authorFingerprint: userFingerprint,
+      approvalStatus: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const commentRef = await db.collection('comments').add(comment);
+
+    await logActivity(suggestionId, 'comment_submitted', {
+      detail: `Benutzer-Kommentar eingereicht: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
+      actor: `user:${userFingerprint}`,
+      tenantId: tenant.id,
+    });
+
+    try {
+      const appDoc = await db.collection('apps').doc(suggestionData.appId).get();
+      const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
+      await sendAdminCommentNotificationEmail(suggestionId, suggestionData.title, validText, appName);
+    } catch (notificationError) {
+      console.error('Error sending admin comment notification:', notificationError);
+    }
+
+    res.status(201).json({
+      id: commentRef.id,
+      message: 'Kommentar erfolgreich eingereicht und zur Freigabe vorgemerkt'
+    });
+  } catch (error) {
+    console.error('Error submitting tenant public comment:', error);
+    res.status(500).json({ error: 'Failed to submit comment' });
+  }
+});
 
 // Get all apps (legacy public board: only legacy-tenant apps, no test/hidden/blacklisted ones)
 app.get('/api/apps', async (req, res) => {
@@ -457,22 +1895,24 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
       userVoteDocs.map(doc => doc.data().suggestionId)
     );
 
-    const suggestions = suggestionsSnapshot.docs.map(doc => {
-      const data = doc.data();
-      const type = normalizeSuggestionType(data.type);
+    const suggestions = suggestionsSnapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(data => isLegacyTenantData(data))
+      .map(data => {
+        const type = normalizeSuggestionType(data.type);
 
-      return {
-        id: doc.id,
-        ...data,
-        type,
-        status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
-        priority: data.priority || 'mittel',
-        labels: data.labels || [],
-        ticketNumber: data.ticketNumber || null,
-        commentCount: commentStatsMap[doc.id]?.publicCount || 0,
-        hasVoted: type === 'feature' && userVotesSet.has(doc.id)
-      };
-    });
+        return {
+          id: data.id,
+          ...data,
+          type,
+          status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+          priority: data.priority || 'mittel',
+          labels: data.labels || [],
+          ticketNumber: data.ticketNumber || null,
+          commentCount: commentStatsMap[data.id]?.publicCount || 0,
+          hasVoted: type === 'feature' && userVotesSet.has(data.id)
+        };
+      });
 
     // Sort: resolved/implemented items sink to the bottom, votable first, then newest
     suggestions.sort((a, b) => {
@@ -529,13 +1969,16 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
       return res.status(404).json({ error: 'App not found' });
     }
 
-    const { suggestion, error } = buildSuggestionFromRequest(req.body, appId, userFingerprint);
+    const appData = appDoc.data() || {};
+    const tenantId = getTenantId(appData);
+
+    const { suggestion, error } = buildSuggestionFromRequest(req.body, appId, userFingerprint, tenantId);
     if (error) {
       return res.status(400).json({ error });
     }
 
     // Generate ticket number
-    const ticketNumber = await generateTicketNumber(appId);
+    const ticketNumber = await generateTicketNumber(appId, tenantId);
     suggestion.ticketNumber = ticketNumber;
 
     const docRef = await db.collection('suggestions').add(suggestion);
@@ -544,6 +1987,7 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
     await logActivity(docRef.id, 'created', {
       detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" erstellt`,
       actor: `user:${userFingerprint}`,
+      tenantId,
     });
 
     // Send email notification to admin
@@ -552,7 +1996,7 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
         docRef.id,
         suggestion.title,
         suggestion.description,
-        appDoc.data().name,
+        appData.name,
         { type: suggestion.type, severity: suggestion.severity || null }
       );
     } catch (emailError) {
@@ -591,10 +2035,14 @@ app.post('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (req,
 
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
-    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const suggestionData = suggestionDoc.data() || {};
+    if (!isLegacyTenantData(suggestionData)) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
     if (suggestionType !== 'feature') {
       return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
     }
@@ -615,6 +2063,7 @@ app.post('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (req,
 
     const voteRef = db.collection('votes').doc();
     batch.set(voteRef, {
+      tenantId: getTenantId(suggestionData),
       suggestionId,
       userFingerprint,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
@@ -648,10 +2097,13 @@ app.delete('/api/suggestions/:suggestionId/vote', rateLimit(60000, 5), async (re
 
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
     const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    if (!isLegacyTenantData(suggestionDoc.data() || {})) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
     if (suggestionType !== 'feature') {
       return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
     }
@@ -698,6 +2150,11 @@ app.get('/api/suggestions/:suggestionId/voted', async (req, res) => {
     const { suggestionId } = req.params;
     const userFingerprint = generateUserFingerprint(req);
 
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
     const voteSnapshot = await db.collection('votes')
       .where('suggestionId', '==', suggestionId)
       .where('userFingerprint', '==', userFingerprint)
@@ -740,7 +2197,7 @@ function isValidEmail(email) {
   return emailRegex.test(email.trim());
 }
 
-function buildSuggestionFromRequest(body, appId, userFingerprint) {
+function buildSuggestionFromRequest(body, appId, userFingerprint, tenantId = LEGACY_TENANT_ID) {
   const type = normalizeSuggestionType(body.type);
   const validTitle = validateInput(body.title, 100);
   const validDescription = validateInput(body.description, 1000);
@@ -750,6 +2207,7 @@ function buildSuggestionFromRequest(body, appId, userFingerprint) {
   }
 
   const suggestion = {
+    tenantId: getTenantId({ tenantId }),
     appId,
     type,
     title: validTitle,
@@ -848,26 +2306,1283 @@ function rateLimit(windowMs = 60000, maxRequests = 10) {
 
 // Enhanced admin authentication middleware
 function requireAdminAuth(req, res, next) {
+  if (hasValidAdminPassword(req)) {
+    return next();
+  }
+
+  return res.status(401).json({ error: 'Unauthorized - Invalid credentials' });
+}
+
+function hasValidAdminPassword(req) {
   const authHeader = req.headers.authorization;
   const adminPassword = process.env.ADMIN_PASSWORD;
 
   // Require admin password to be set
   if (!adminPassword) {
     console.error('ADMIN_PASSWORD environment variable not set');
-    return res.status(500).json({ error: 'Server configuration error' });
+    return false;
   }
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized - Invalid auth format' });
+    return false;
   }
 
   const token = authHeader.substring(7);
-  if (token !== adminPassword) {
-    return res.status(401).json({ error: 'Unauthorized - Invalid credentials' });
+  return token === adminPassword;
+}
+
+async function resolveSessionAuth(req) {
+  const sessionToken = req.headers['x-user-session'];
+  if (!sessionToken || Array.isArray(sessionToken)) return null;
+
+  const sessionSnapshot = await db.collection('sessions')
+    .where('tokenHash', '==', buildInviteTokenHash(sessionToken))
+    .where('status', '==', 'active')
+    .limit(2)
+    .get();
+
+  if (sessionSnapshot.size !== 1) return null;
+
+  const sessionDoc = sessionSnapshot.docs[0];
+  const session = { id: sessionDoc.id, ...sessionDoc.data() };
+  if (isSessionExpired(session)) return null;
+
+  const userDoc = await db.collection('users').doc(session.userId).get();
+  if (!userDoc.exists) return null;
+
+  const user = { id: userDoc.id, ...userDoc.data() };
+  if (user.status && user.status !== 'active') return null;
+
+  await sessionDoc.ref.set({ lastUsedAt: new Date() }, { merge: true });
+  return { type: 'session', session, user };
+}
+
+async function resolveAdminTenantFromParam(req, res) {
+  if (req.adminTenant) return req.adminTenant;
+
+  const tenantSlug = parseSlugParam(req.params.tenantSlug);
+  if (!tenantSlug) {
+    res.status(400).json({ error: 'Invalid tenant slug' });
+    return null;
   }
 
-  next();
+  const tenant = await findActiveTenantBySlug(tenantSlug);
+  if (!tenant) {
+    res.status(404).json({ error: 'Tenant not found' });
+    return null;
+  }
+
+  return tenant;
 }
+
+function requireTenantAccess(allowedRoles = MEMBERSHIP_ROLES) {
+  return async (req, res, next) => {
+    try {
+      const tenant = await resolveAdminTenantFromParam(req, res);
+      if (!tenant) return;
+
+      const sessionAuth = await resolveSessionAuth(req);
+      if (sessionAuth) {
+        const membershipSnapshot = await db.collection('memberships')
+          .where('tenantId', '==', tenant.id)
+          .where('userId', '==', sessionAuth.user.id)
+          .where('status', '==', 'active')
+          .limit(1)
+          .get();
+
+        if (membershipSnapshot.empty) {
+          return res.status(403).json({ error: 'Forbidden - Tenant membership required' });
+        }
+
+        const membership = { id: membershipSnapshot.docs[0].id, ...membershipSnapshot.docs[0].data() };
+        const role = normalizeMembershipRole(membership.role);
+        if (!allowedRoles.includes(role)) {
+          return res.status(403).json({ error: 'Forbidden - Insufficient role' });
+        }
+
+        req.adminTenant = tenant;
+        req.tenantAuth = {
+          ...sessionAuth,
+          role,
+          membership,
+        };
+        return next();
+      }
+
+      if (hasValidAdminPassword(req)) {
+        req.adminTenant = tenant;
+        req.tenantAuth = { type: 'admin', role: 'owner' };
+        return next();
+      }
+
+      return res.status(401).json({ error: 'Unauthorized - Tenant session required' });
+    } catch (error) {
+      console.error('Error checking tenant access:', error);
+      return res.status(500).json({ error: 'Failed to verify tenant access' });
+    }
+  };
+}
+
+async function loadTenantApps(tenantId) {
+  const appsSnapshot = await db.collection('apps')
+    .where('tenantId', '==', tenantId)
+    .get();
+
+  const apps = appsSnapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .filter(appData => getTenantId(appData) === tenantId);
+
+  apps.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  return apps;
+}
+
+async function loadTenantTeam(tenantId) {
+  const [membershipsSnapshot, invitesSnapshot] = await Promise.all([
+    db.collection('memberships').where('tenantId', '==', tenantId).get(),
+    db.collection('invites').where('tenantId', '==', tenantId).where('status', '==', 'pending').get(),
+  ]);
+
+  const memberships = membershipsSnapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .filter(membership => getTenantId(membership) === tenantId || membership.tenantId === tenantId);
+
+  const userDocs = await Promise.all(
+    [...new Set(memberships.map(member => member.userId).filter(Boolean))]
+      .map(userId => db.collection('users').doc(userId).get())
+  );
+  const usersById = {};
+  userDocs.forEach(doc => {
+    if (doc.exists) usersById[doc.id] = { id: doc.id, ...doc.data() };
+  });
+
+  const members = memberships.map(member => {
+    const user = usersById[member.userId] || {};
+    return {
+      id: member.id,
+      userId: member.userId || null,
+      email: member.email || user.email || null,
+      displayName: member.displayName || user.displayName || null,
+      role: normalizeMembershipRole(member.role),
+      status: member.status || 'active',
+      createdAt: member.createdAt || null,
+    };
+  });
+
+  const invites = invitesSnapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .filter(invite => invite.tenantId === tenantId)
+    .map(invite => ({
+      id: invite.id,
+      email: invite.email,
+      role: normalizeMembershipRole(invite.role),
+      status: invite.status || 'pending',
+      expiresAt: invite.expiresAt || null,
+      createdAt: invite.createdAt || null,
+    }));
+
+  members.sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+  invites.sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+
+  return { members, invites };
+}
+
+async function resolveTenantMembershipById(tenantId, membershipId) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(membershipId || '')) {
+    return { errorStatus: 400, error: 'Invalid membership ID' };
+  }
+
+  const membershipDoc = await db.collection('memberships').doc(membershipId).get();
+  if (!membershipDoc.exists) {
+    return { errorStatus: 404, error: 'Member not found' };
+  }
+
+  const membership = membershipDoc.data() || {};
+  if (membership.tenantId !== tenantId) {
+    return { errorStatus: 404, error: 'Member not found' };
+  }
+
+  return { membershipDoc, membership };
+}
+
+async function resolveTenantInviteById(tenantId, inviteId) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(inviteId || '')) {
+    return { errorStatus: 400, error: 'Invalid invite ID' };
+  }
+
+  const inviteDoc = await db.collection('invites').doc(inviteId).get();
+  if (!inviteDoc.exists) {
+    return { errorStatus: 404, error: 'Invite not found' };
+  }
+
+  const invite = inviteDoc.data() || {};
+  if (invite.tenantId !== tenantId) {
+    return { errorStatus: 404, error: 'Invite not found' };
+  }
+
+  return { inviteDoc, invite };
+}
+
+async function countActiveTenantOwners(tenantId) {
+  const ownersSnapshot = await db.collection('memberships')
+    .where('tenantId', '==', tenantId)
+    .where('role', '==', 'owner')
+    .where('status', '==', 'active')
+    .get();
+
+  return ownersSnapshot.size;
+}
+
+function canManageTenantOwners(req) {
+  return req.tenantAuth?.type === 'admin' || req.tenantAuth?.role === 'owner';
+}
+
+async function assertTenantMemberMutationAllowed(req, tenantId, currentMembership, nextRole, nextStatus) {
+  const currentRole = normalizeMembershipRole(currentMembership.role);
+  const currentStatus = currentMembership.status || 'active';
+  const normalizedNextRole = normalizeMembershipRole(nextRole);
+  const normalizedNextStatus = nextStatus || currentStatus;
+
+  if ((currentRole === 'owner' || normalizedNextRole === 'owner') && !canManageTenantOwners(req)) {
+    return { errorStatus: 403, error: 'Only owners can manage owner memberships' };
+  }
+
+  const removesOwner = currentRole === 'owner'
+    && currentStatus === 'active'
+    && (normalizedNextRole !== 'owner' || normalizedNextStatus !== 'active');
+  if (removesOwner) {
+    const activeOwnerCount = await countActiveTenantOwners(tenantId);
+    if (activeOwnerCount <= 1) {
+      return { errorStatus: 400, error: 'Cannot remove the last active owner' };
+    }
+  }
+
+  return {
+    role: normalizedNextRole,
+    status: normalizedNextStatus,
+  };
+}
+
+function cleanTenantSettingText(value, fallback = '') {
+  const cleaned = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+  return cleaned || fallback;
+}
+
+function normalizeOptionalEmail(value) {
+  const cleaned = typeof value === 'string' ? value.trim() : '';
+  return cleaned ? normalizeInviteEmail(cleaned) : '';
+}
+
+function buildTenantSettingsResponse(tenant, apps = []) {
+  const defaultBoard = apps[0] || null;
+  const emailSettings = tenant.emailSettings || {};
+  const tenantName = tenant.displayName || tenant.name || tenant.id;
+
+  return {
+    tenant: {
+      id: tenant.id,
+      name: tenantName,
+      displayName: tenantName,
+      slug: tenant.slug || tenant.id,
+      status: tenant.status || 'unknown',
+      emailSettings: {
+        fromName: emailSettings.fromName || tenantName,
+        replyTo: emailSettings.replyTo || '',
+      },
+    },
+    defaultBoard: defaultBoard ? {
+      id: defaultBoard.id,
+      name: defaultBoard.name || defaultBoard.id,
+      slug: defaultBoard.slug || '',
+      ticketPrefix: defaultBoard.ticketPrefix || '',
+    } : null,
+    boards: apps.map(appData => ({
+      id: appData.id,
+      name: appData.name || appData.id,
+      slug: appData.slug || '',
+      ticketPrefix: appData.ticketPrefix || '',
+    })),
+  };
+}
+
+function buildTenantSettingsUpdate(body = {}, tenant = {}, defaultBoard = null) {
+  const currentTenantName = tenant.displayName || tenant.name || tenant.id;
+  const workspaceName = cleanTenantSettingText(body.workspaceName, currentTenantName);
+  const requestedSlug = typeof body.workspaceSlug === 'string'
+    ? body.workspaceSlug.trim()
+    : tenant.slug || tenant.id;
+  const workspaceSlug = parseSlugParam(requestedSlug);
+
+  if (!workspaceSlug) {
+    throw new Error('Invalid workspace slug');
+  }
+
+  if (tenant.legacy && workspaceSlug !== LEGACY_TENANT_ID) {
+    throw new Error('Legacy workspace slug cannot be changed');
+  }
+
+  const boardName = cleanTenantSettingText(
+    body.boardName,
+    defaultBoard?.name || `${workspaceName} Board`
+  );
+  const ticketPrefix = buildTicketPrefix(body.ticketPrefix, boardName);
+  const emailFromName = cleanTenantSettingText(body.emailFromName, workspaceName);
+  const replyToEmail = normalizeOptionalEmail(body.replyToEmail);
+  const timestamp = admin.firestore.FieldValue.serverTimestamp();
+
+  return {
+    plainTenant: {
+      ...tenant,
+      name: workspaceName,
+      displayName: workspaceName,
+      slug: workspaceSlug,
+      emailSettings: {
+        fromName: emailFromName,
+        replyTo: replyToEmail,
+      },
+    },
+    plainDefaultBoard: defaultBoard ? {
+      ...defaultBoard,
+      name: boardName,
+      ticketPrefix,
+      slug: defaultBoard.slug || buildAppSlug(boardName),
+    } : null,
+    tenantUpdate: {
+      name: workspaceName,
+      displayName: workspaceName,
+      slug: workspaceSlug,
+      emailSettings: {
+        fromName: emailFromName,
+        replyTo: replyToEmail,
+      },
+      updatedAt: timestamp,
+    },
+    appUpdate: defaultBoard ? {
+      tenantId: tenant.id,
+      name: boardName,
+      slug: defaultBoard.slug || buildAppSlug(boardName),
+      ticketPrefix,
+      updatedAt: timestamp,
+    } : null,
+    counterUpdate: defaultBoard ? {
+      tenantId: tenant.id,
+      prefix: ticketPrefix,
+      updatedAt: timestamp,
+    } : null,
+  };
+}
+
+async function loadAdminTenants() {
+  const [tenantsSnapshot, appsSnapshot] = await Promise.all([
+    db.collection('tenants').get(),
+    db.collection('apps').get(),
+  ]);
+
+  const appCounts = {};
+  const firstApps = {};
+  appsSnapshot.docs.forEach(doc => {
+    const app = { id: doc.id, ...doc.data() };
+    const tenantId = getTenantId(app);
+    appCounts[tenantId] = (appCounts[tenantId] || 0) + 1;
+
+    if (!firstApps[tenantId]) {
+      firstApps[tenantId] = app;
+      return;
+    }
+
+    const currentName = firstApps[tenantId].name || '';
+    const nextName = app.name || '';
+    if (nextName.localeCompare(currentName) < 0) {
+      firstApps[tenantId] = app;
+    }
+  });
+
+  const tenants = tenantsSnapshot.docs.map(doc => {
+    const data = doc.data() || {};
+    const firstApp = firstApps[doc.id] || null;
+    return {
+      id: doc.id,
+      name: data.displayName || data.name || doc.id,
+      slug: data.slug || doc.id,
+      status: data.status || 'unknown',
+      legacy: Boolean(data.legacy),
+      appCount: appCounts[doc.id] || 0,
+      firstApp: firstApp ? {
+        id: firstApp.id,
+        name: firstApp.name || firstApp.id,
+        slug: firstApp.slug || '',
+      } : null,
+    };
+  });
+
+  tenants.sort((a, b) => {
+    if (a.legacy !== b.legacy) return a.legacy ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  return tenants;
+}
+
+async function loadTenantAdminSuggestions(tenantId) {
+  const [suggestionsSnapshot, apps] = await Promise.all([
+    db.collection('suggestions').where('tenantId', '==', tenantId).get(),
+    loadTenantApps(tenantId),
+  ]);
+
+  const appsMap = {};
+  apps.forEach(appData => {
+    appsMap[appData.id] = appData;
+  });
+
+  const suggestionDocs = suggestionsSnapshot.docs
+    .filter(doc => getTenantId(doc.data() || {}) === tenantId);
+  const suggestionIds = suggestionDocs.map(doc => doc.id);
+
+  const commentStatsMap = {};
+  if (suggestionIds.length > 0) {
+    const commentDocs = await queryCollectionInChunks(db, {
+      collectionName: 'comments',
+      fieldName: 'suggestionId',
+      values: suggestionIds,
+    });
+
+    commentDocs
+      .filter(doc => getTenantId(doc.data() || {}) === tenantId)
+      .forEach(doc => {
+        const suggestionId = doc.data().suggestionId;
+        if (!commentStatsMap[suggestionId]) {
+          commentStatsMap[suggestionId] = {
+            totalCount: 0,
+            pendingCount: 0,
+            publicCount: 0,
+          };
+        }
+
+        const stats = buildCommentStats([doc]);
+        commentStatsMap[suggestionId].totalCount += stats.totalCount;
+        commentStatsMap[suggestionId].pendingCount += stats.pendingCount;
+        commentStatsMap[suggestionId].publicCount += stats.publicCount;
+      });
+  }
+
+  const suggestions = suggestionDocs.map(doc => {
+    const data = { id: doc.id, ...doc.data() };
+    const type = normalizeSuggestionType(data.type);
+    return {
+      id: data.id,
+      ...data,
+      type,
+      status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+      priority: data.priority || 'mittel',
+      labels: data.labels || [],
+      ticketNumber: data.ticketNumber || null,
+      app: appsMap[data.appId] || { name: 'Unknown App' },
+      commentCount: commentStatsMap[data.id]?.totalCount || 0,
+      pendingCommentCount: commentStatsMap[data.id]?.pendingCount || 0
+    };
+  });
+
+  suggestions.sort(compareAdminSuggestions);
+  return { suggestions, apps };
+}
+
+// Admin: list tenants for SaaS operations
+app.get('/api/admin/tenants', requireAdminAuth, async (req, res) => {
+  try {
+    res.json(await loadAdminTenants());
+  } catch (error) {
+    console.error('Error listing admin tenants:', error);
+    res.status(500).json({ error: 'Failed to list tenants' });
+  }
+});
+
+// Admin: provision a new SaaS tenant with one initial board
+app.post('/api/admin/tenants', requireAdminAuth, rateLimit(60000, 5), async (req, res) => {
+  try {
+    let config;
+    try {
+      config = buildTenantProvisionConfig(req.body || {});
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'Invalid tenant data' });
+    }
+
+    const tenantRef = db.collection('tenants').doc(config.tenantId);
+    const tenantDoc = await tenantRef.get();
+    if (tenantDoc.exists) {
+      return res.status(409).json({ error: 'Tenant already exists' });
+    }
+
+    const slugSnapshot = await db.collection('tenants')
+      .where('slug', '==', config.tenantSlug)
+      .limit(1)
+      .get();
+
+    if (!slugSnapshot.empty) {
+      return res.status(409).json({ error: 'Tenant slug already exists' });
+    }
+
+    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    const docs = buildTenantProvisionDocuments(config, timestamp);
+    const appRef = db.collection('apps').doc();
+    const counterRef = db.collection('counters').doc(appRef.id);
+
+    const batch = db.batch();
+    batch.create(tenantRef, docs.tenant);
+    batch.create(appRef, docs.app);
+    batch.create(counterRef, docs.counter);
+    await batch.commit();
+
+    res.status(201).json({
+      tenant: {
+        id: config.tenantId,
+        slug: config.tenantSlug,
+        name: config.tenantName,
+      },
+      app: {
+        id: appRef.id,
+        slug: config.appSlug,
+        name: config.appName,
+        ticketPrefix: config.ticketPrefix,
+      },
+      urls: {
+        publicBoard: `/?tenant=${encodeURIComponent(config.tenantSlug)}&app=${encodeURIComponent(config.appSlug)}`,
+        tenantAdmin: `/tenant-admin.html?tenant=${encodeURIComponent(config.tenantSlug)}`,
+      },
+    });
+  } catch (error) {
+    console.error('Error provisioning tenant:', error);
+    res.status(500).json({ error: 'Failed to provision tenant' });
+  }
+});
+
+// Tenant Admin: apps in one tenant
+app.get('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    res.json(await loadTenantApps(tenant.id));
+  } catch (error) {
+    console.error('Error fetching tenant admin apps:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant apps' });
+  }
+});
+
+// Tenant Admin: create a board/app in one tenant
+app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const boardName = validateInput(req.body?.boardName || req.body?.name, 120);
+    if (!boardName) {
+      return res.status(400).json({ error: 'Board name is required' });
+    }
+
+    const requestedSlug = req.body?.boardSlug || req.body?.slug;
+    const boardSlug = requestedSlug
+      ? parseSlugParam(String(requestedSlug))
+      : buildAppSlug(boardName);
+    if (!boardSlug) {
+      return res.status(400).json({ error: 'Invalid board slug' });
+    }
+
+    const slugSnapshot = await db.collection('apps')
+      .where('slug', '==', boardSlug)
+      .get();
+    const hasTenantSlugConflict = slugSnapshot.docs
+      .some(doc => getTenantId(doc.data() || {}) === tenant.id);
+    if (hasTenantSlugConflict) {
+      return res.status(409).json({ error: 'Tenant app slug already exists' });
+    }
+
+    const ticketPrefix = buildTicketPrefix(req.body?.boardTicketPrefix || req.body?.ticketPrefix, boardName);
+    const description = validateInput(req.body?.description, 500) || `Feedback Board für ${tenant.displayName || tenant.name || tenant.slug || tenant.id}`;
+    const timestamp = admin.firestore.FieldValue.serverTimestamp();
+    const appRef = db.collection('apps').doc();
+    const appData = {
+      tenantId: tenant.id,
+      name: boardName,
+      description,
+      slug: boardSlug,
+      ticketPrefix,
+      labels: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    const batch = db.batch();
+    batch.set(appRef, appData);
+    batch.set(db.collection('counters').doc(appRef.id), {
+      tenantId: tenant.id,
+      prefix: ticketPrefix,
+      nextNumber: 1,
+      updatedAt: timestamp,
+    });
+    await batch.commit();
+
+    res.status(201).json({
+      id: appRef.id,
+      tenantId: tenant.id,
+      name: boardName,
+      description,
+      slug: boardSlug,
+      ticketPrefix,
+      labels: [],
+    });
+  } catch (error) {
+    console.error('Error creating tenant board:', error);
+    res.status(500).json({ error: 'Failed to create tenant board' });
+  }
+});
+
+// Tenant Admin: stats in one tenant
+app.get('/api/admin/tenants/:tenantSlug/stats', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { suggestions, apps } = await loadTenantAdminSuggestions(tenant.id);
+    const votesSnapshot = await db.collection('votes').where('tenantId', '==', tenant.id).get();
+    const tenantVotes = votesSnapshot.docs.filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+
+    res.json({
+      totalApps: apps.length,
+      totalSuggestions: suggestions.length,
+      totalVotes: tenantVotes.length,
+      totalBugs: suggestions.filter(item => item.type === 'bug').length,
+      totalTickets: suggestions.filter(item => item.type === 'ticket').length,
+      totalFeatures: suggestions.filter(item => item.type === 'feature').length,
+      pendingSuggestions: suggestions.filter(item => !item.approved).length,
+      pendingComments: suggestions.reduce((sum, item) => sum + (item.pendingCommentCount || 0), 0),
+    });
+  } catch (error) {
+    console.error('Error fetching tenant admin stats:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant statistics' });
+  }
+});
+
+// Tenant Admin: workspace settings in one tenant
+app.get('/api/admin/tenants/:tenantSlug/settings', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const apps = await loadTenantApps(tenant.id);
+    res.json(buildTenantSettingsResponse(tenant, apps));
+  } catch (error) {
+    console.error('Error fetching tenant settings:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant settings' });
+  }
+});
+
+// Tenant Admin: update workspace settings in one tenant
+app.put('/api/admin/tenants/:tenantSlug/settings', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const apps = await loadTenantApps(tenant.id);
+    const defaultBoard = apps[0] || null;
+    let settingsUpdate;
+
+    try {
+      settingsUpdate = buildTenantSettingsUpdate(req.body || {}, tenant, defaultBoard);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'Invalid tenant settings' });
+    }
+
+    if (settingsUpdate.plainTenant.slug !== (tenant.slug || tenant.id)) {
+      const slugSnapshot = await db.collection('tenants')
+        .where('slug', '==', settingsUpdate.plainTenant.slug)
+        .limit(2)
+        .get();
+      const hasConflict = slugSnapshot.docs.some(doc => doc.id !== tenant.id);
+      if (hasConflict) {
+        return res.status(409).json({ error: 'Workspace slug already exists' });
+      }
+    }
+
+    const batch = db.batch();
+    batch.set(db.collection('tenants').doc(tenant.id), settingsUpdate.tenantUpdate, { merge: true });
+
+    if (defaultBoard && settingsUpdate.appUpdate && settingsUpdate.counterUpdate) {
+      batch.set(db.collection('apps').doc(defaultBoard.id), settingsUpdate.appUpdate, { merge: true });
+      batch.set(db.collection('counters').doc(defaultBoard.id), settingsUpdate.counterUpdate, { merge: true });
+    }
+
+    await batch.commit();
+
+    const responseApps = defaultBoard
+      ? apps.map(appData => appData.id === defaultBoard.id ? settingsUpdate.plainDefaultBoard : appData)
+      : apps;
+    res.json(buildTenantSettingsResponse(settingsUpdate.plainTenant, responseApps));
+  } catch (error) {
+    console.error('Error updating tenant settings:', error);
+    res.status(500).json({ error: 'Failed to update tenant settings' });
+  }
+});
+
+// Tenant Admin: members and pending invites in one tenant
+app.get('/api/admin/tenants/:tenantSlug/members', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    res.json(await loadTenantTeam(tenant.id));
+  } catch (error) {
+    console.error('Error fetching tenant team:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant team' });
+  }
+});
+
+// Tenant Admin: update one member role/status
+app.put('/api/admin/tenants/:tenantSlug/members/:membershipId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { membershipId } = req.params;
+    const resolved = await resolveTenantMembershipById(tenant.id, membershipId);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    const requestedRole = req.body?.role === undefined
+      ? resolved.membership.role
+      : req.body.role;
+    const requestedStatus = req.body?.status === undefined
+      ? resolved.membership.status || 'active'
+      : String(req.body.status || '').trim().toLowerCase();
+
+    if (!MEMBERSHIP_STATUSES.includes(requestedStatus)) {
+      return res.status(400).json({ error: 'Invalid membership status' });
+    }
+
+    const mutation = await assertTenantMemberMutationAllowed(
+      req,
+      tenant.id,
+      resolved.membership,
+      requestedRole,
+      requestedStatus
+    );
+    if (mutation.error) {
+      return res.status(mutation.errorStatus).json({ error: mutation.error });
+    }
+
+    await resolved.membershipDoc.ref.set({
+      role: mutation.role,
+      status: mutation.status,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    res.json({
+      id: resolved.membershipDoc.id,
+      ...resolved.membership,
+      role: mutation.role,
+      status: mutation.status,
+    });
+  } catch (error) {
+    console.error('Error updating tenant member:', error);
+    res.status(500).json({ error: 'Failed to update member' });
+  }
+});
+
+// Tenant Admin: disable one member
+app.delete('/api/admin/tenants/:tenantSlug/members/:membershipId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { membershipId } = req.params;
+    const resolved = await resolveTenantMembershipById(tenant.id, membershipId);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    const mutation = await assertTenantMemberMutationAllowed(
+      req,
+      tenant.id,
+      resolved.membership,
+      resolved.membership.role,
+      'disabled'
+    );
+    if (mutation.error) {
+      return res.status(mutation.errorStatus).json({ error: mutation.error });
+    }
+
+    await resolved.membershipDoc.ref.set({
+      status: 'disabled',
+      disabledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    res.json({ success: true, id: resolved.membershipDoc.id, status: 'disabled' });
+  } catch (error) {
+    console.error('Error disabling tenant member:', error);
+    res.status(500).json({ error: 'Failed to disable member' });
+  }
+});
+
+// Tenant Admin: create invite for one tenant
+app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    let email;
+    try {
+      email = normalizeInviteEmail(req.body?.email);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'Invalid invite email' });
+    }
+
+    const role = normalizeMembershipRole(req.body?.role);
+    if (!MEMBERSHIP_ROLES.includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const existingInvite = await db.collection('invites')
+      .where('tenantId', '==', tenant.id)
+      .where('email', '==', email)
+      .where('status', '==', 'pending')
+      .limit(1)
+      .get();
+
+    if (!existingInvite.empty) {
+      return res.status(409).json({ error: 'Invite already pending for this email' });
+    }
+
+    const existingUser = await db.collection('users')
+      .where('email', '==', email)
+      .limit(1)
+      .get();
+
+    if (!existingUser.empty) {
+      const userId = existingUser.docs[0].id;
+      const existingMembership = await db.collection('memberships')
+        .where('tenantId', '==', tenant.id)
+        .where('userId', '==', userId)
+        .limit(1)
+        .get();
+
+      if (!existingMembership.empty) {
+        return res.status(409).json({ error: 'User is already a member of this tenant' });
+      }
+    }
+
+    const token = buildInviteToken();
+    const inviteData = buildTenantInviteData({
+      tenantId: tenant.id,
+      email,
+      role,
+      token,
+      now: new Date(),
+    });
+
+    const docRef = await db.collection('invites').add(inviteData);
+    const acceptUrl = `${buildRequestBaseUrl(req)}/accept-invite.html?token=${encodeURIComponent(token)}`;
+    await sendTenantInviteEmail({
+      to: email,
+      tenantName: tenant.displayName || tenant.name || tenant.slug || tenant.id,
+      role,
+      acceptUrl,
+    });
+
+    res.status(201).json({
+      id: docRef.id,
+      email: inviteData.email,
+      role: inviteData.role,
+      status: inviteData.status,
+      expiresAt: inviteData.expiresAt,
+      delivery: 'email',
+    });
+  } catch (error) {
+    console.error('Error creating tenant invite:', error);
+    res.status(500).json({ error: 'Failed to create invite' });
+  }
+});
+
+// Tenant Admin: resend one pending invite
+app.post('/api/admin/tenants/:tenantSlug/invites/:inviteId/resend', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { inviteId } = req.params;
+    const resolved = await resolveTenantInviteById(tenant.id, inviteId);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    if (resolved.invite.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending invites can be resent' });
+    }
+
+    const token = buildInviteToken();
+    const inviteData = buildTenantInviteData({
+      tenantId: tenant.id,
+      email: resolved.invite.email,
+      role: resolved.invite.role,
+      token,
+      now: new Date(),
+    });
+
+    await resolved.inviteDoc.ref.set(inviteData, { merge: true });
+    const acceptUrl = `${buildRequestBaseUrl(req)}/accept-invite.html?token=${encodeURIComponent(token)}`;
+    await sendTenantInviteEmail({
+      to: inviteData.email,
+      tenantName: tenant.displayName || tenant.name || tenant.slug || tenant.id,
+      role: inviteData.role,
+      acceptUrl,
+    });
+
+    res.json({
+      id: resolved.inviteDoc.id,
+      email: inviteData.email,
+      role: inviteData.role,
+      status: inviteData.status,
+      expiresAt: inviteData.expiresAt,
+      delivery: 'email',
+    });
+  } catch (error) {
+    console.error('Error resending tenant invite:', error);
+    res.status(500).json({ error: 'Failed to resend invite' });
+  }
+});
+
+// Tenant Admin: revoke one pending invite
+app.delete('/api/admin/tenants/:tenantSlug/invites/:inviteId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { inviteId } = req.params;
+    const resolved = await resolveTenantInviteById(tenant.id, inviteId);
+    if (resolved.error) {
+      return res.status(resolved.errorStatus).json({ error: resolved.error });
+    }
+
+    if (resolved.invite.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending invites can be revoked' });
+    }
+
+    await resolved.inviteDoc.ref.set({
+      status: 'revoked',
+      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    res.json({ success: true, id: resolved.inviteDoc.id, status: 'revoked' });
+  } catch (error) {
+    console.error('Error revoking tenant invite:', error);
+    res.status(500).json({ error: 'Failed to revoke invite' });
+  }
+});
+
+// Tenant Admin: suggestions in one tenant
+app.get('/api/admin/tenants/:tenantSlug/suggestions', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { suggestions } = await loadTenantAdminSuggestions(tenant.id);
+    res.json(suggestions);
+  } catch (error) {
+    console.error('Error fetching tenant admin suggestions:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant suggestions' });
+  }
+});
+
+// Tenant Admin: approve suggestion
+app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/approve', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
+    const newStatus = suggestionType === 'feature' ? 'wird geprüft' : 'offen';
+    const legacyTag = mapStatusToLegacyTag(suggestionType, newStatus);
+
+    await db.collection('suggestions').doc(suggestionId).update({
+      approved: true,
+      status: newStatus,
+      tag: legacyTag,
+      approvedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    await logActivity(suggestionId, 'approved', {
+      oldValue: 'neu',
+      newValue: newStatus,
+      detail: `${suggestionType === 'bug' ? 'Bug' : suggestionType === 'ticket' ? 'Ticket' : 'Vorschlag'} freigegeben`,
+      tenantId: getTenantId(suggestionData),
+    });
+
+    res.json({ success: true, message: 'Eintrag erfolgreich freigegeben' });
+  } catch (error) {
+    console.error('Error approving tenant suggestion:', error);
+    res.status(500).json({ error: 'Failed to approve suggestion' });
+  }
+});
+
+// Tenant Admin: update suggestion status
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/status', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const { status } = req.body;
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
+    const validStatuses = getValidStatusesForType(suggestionType);
+    const normalizedStatus = status ? status.toString().trim() : null;
+    if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
+      return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${validStatuses.join(', ')}` });
+    }
+
+    const previousStatus = suggestionData.status || null;
+    const updateData = {
+      status: normalizedStatus,
+      tag: mapStatusToLegacyTag(suggestionType, normalizedStatus),
+      tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (normalizedStatus !== 'neu' && !suggestionData.approved) {
+      updateData.approved = true;
+      updateData.approvedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    await db.collection('suggestions').doc(suggestionId).update(updateData);
+
+    if (previousStatus !== normalizedStatus) {
+      await logActivity(suggestionId, 'status_changed', {
+        oldValue: previousStatus,
+        newValue: normalizedStatus,
+        detail: `Status geändert: ${previousStatus || 'keiner'} → ${normalizedStatus}`,
+        tenantId: getTenantId(suggestionData),
+      });
+    }
+
+    res.json({ success: true, message: 'Status erfolgreich aktualisiert' });
+  } catch (error) {
+    console.error('Error updating tenant suggestion status:', error);
+    res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
+// Tenant Admin: update suggestion priority
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const { priority } = req.body;
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const normalizedPriority = (priority || '').toString().trim().toLowerCase();
+    if (!VALID_PRIORITIES.includes(normalizedPriority)) {
+      return res.status(400).json({ error: `Ungültige Priorität. Erlaubt: ${VALID_PRIORITIES.join(', ')}` });
+    }
+
+    await db.collection('suggestions').doc(suggestionId).update({ priority: normalizedPriority });
+
+    await logActivity(suggestionId, 'priority_changed', {
+      oldValue: suggestionData.priority || null,
+      newValue: normalizedPriority,
+      detail: `Priorität geändert: ${suggestionData.priority || 'keine'} → ${normalizedPriority}`,
+      tenantId: getTenantId(suggestionData),
+    });
+
+    res.json({ success: true, message: 'Priorität erfolgreich aktualisiert' });
+  } catch (error) {
+    console.error('Error updating tenant suggestion priority:', error);
+    res.status(500).json({ error: 'Failed to update priority' });
+  }
+});
+
+// Tenant Admin: get comments
+app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const commentsSnapshot = await db.collection('comments')
+      .where('suggestionId', '==', suggestionId)
+      .get();
+
+    const comments = commentsSnapshot.docs
+      .filter(doc => getTenantId(doc.data() || {}) === tenant.id)
+      .map(buildAdminCommentResponse);
+
+    comments.sort((a, b) => {
+      const statusOrder = { pending: 0, approved: 1, rejected: 2 };
+      const statusDelta = (statusOrder[a.approvalStatus] ?? 99) - (statusOrder[b.approvalStatus] ?? 99);
+      if (statusDelta !== 0) return statusDelta;
+
+      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
+      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
+      return bTime - aTime;
+    });
+
+    res.json(comments);
+  } catch (error) {
+    console.error('Error fetching tenant admin comments:', error);
+    res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+// Tenant Admin: add approved admin comment
+app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const { text, screenshots } = req.body;
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const validText = validateInput(text, 2000);
+    if (!validText) {
+      return res.status(400).json({ error: 'Invalid comment text' });
+    }
+
+    const screenshotValidation = validateCommentScreenshots(screenshots);
+    if (screenshotValidation.error) {
+      return res.status(400).json({ error: screenshotValidation.error });
+    }
+
+    const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    const comment = {
+      tenantId: tenant.id,
+      suggestionId,
+      text: validText,
+      screenshots: screenshotValidation.screenshots,
+      authorType: 'admin',
+      approvalStatus: 'approved',
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      approvedBy: 'admin',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const commentRef = await db.collection('comments').add(comment);
+
+    await logActivity(suggestionId, 'commented', {
+      detail: `Kommentar hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
+      tenantId: tenant.id,
+    });
+
+    res.status(201).json({
+      id: commentRef.id,
+      ...normalizeCommentData(comment),
+      createdAt: new Date(),
+      message: 'Kommentar erfolgreich hinzugefügt'
+    });
+  } catch (error) {
+    console.error('Error adding tenant admin comment:', error);
+    res.status(500).json({ error: 'Failed to add comment' });
+  }
+});
+
+async function updateTenantCommentModeration(req, res, approvalStatus) {
+  const tenantSlug = parseSlugParam(req.params.tenantSlug);
+  const { suggestionId, commentId } = req.params;
+  if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId) || !/^[a-zA-Z0-9_-]+$/.test(commentId)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+  if (error) {
+    return res.status(errorStatus).json({ error });
+  }
+
+  const commentRef = db.collection('comments').doc(commentId);
+  const commentDoc = await commentRef.get();
+  if (!commentDoc.exists) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+
+  const comment = normalizeCommentData(commentDoc.data());
+  if (comment.suggestionId !== suggestionId || getTenantId(comment) !== tenant.id) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+
+  if (comment.authorType !== 'user') {
+    return res.status(400).json({ error: 'Only user comments require moderation' });
+  }
+
+  const updateData = approvalStatus === 'approved'
+    ? {
+        approvalStatus: 'approved',
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedBy: 'admin',
+        rejectedAt: null,
+        rejectedBy: null,
+      }
+    : {
+        approvalStatus: 'rejected',
+        rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+        rejectedBy: 'admin',
+      };
+
+  await commentRef.update(updateData);
+
+  await logActivity(suggestionId, approvalStatus === 'approved' ? 'comment_approved' : 'comment_rejected', {
+    detail: `Benutzer-Kommentar ${approvalStatus === 'approved' ? 'freigegeben' : 'abgelehnt'}: "${comment.text.slice(0, 80)}${comment.text.length > 80 ? '...' : ''}"`,
+    tenantId: tenant.id,
+  });
+
+  res.json({ success: true, message: approvalStatus === 'approved' ? 'Kommentar freigegeben' : 'Kommentar abgelehnt' });
+}
+
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments/:commentId/approve', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    await updateTenantCommentModeration(req, res, 'approved');
+  } catch (error) {
+    console.error('Error approving tenant comment:', error);
+    res.status(500).json({ error: 'Failed to approve comment' });
+  }
+});
+
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments/:commentId/reject', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    await updateTenantCommentModeration(req, res, 'rejected');
+  } catch (error) {
+    console.error('Error rejecting tenant comment:', error);
+    res.status(500).json({ error: 'Failed to reject comment' });
+  }
+});
 
 // Admin: Create new app
 app.post('/api/admin/apps', requireAdminAuth, rateLimit(60000, 10), async (req, res) => {
@@ -885,8 +3600,10 @@ app.post('/api/admin/apps', requireAdminAuth, rateLimit(60000, 10), async (req, 
     const ticketPrefix = (req.body.ticketPrefix || '').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 5);
 
     const app = {
+      tenantId: LEGACY_TENANT_ID,
       name: validName,
       description: validDescription,
+      slug: buildAppSlug(validName),
       ticketPrefix: ticketPrefix || validName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'APP',
       labels: [],
       createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -896,6 +3613,7 @@ app.post('/api/admin/apps', requireAdminAuth, rateLimit(60000, 10), async (req, 
 
     // Initialize counter for ticket numbers
     await db.collection('counters').doc(docRef.id).set({
+      tenantId: LEGACY_TENANT_ID,
       prefix: app.ticketPrefix,
       nextNumber: 1,
     });
@@ -916,6 +3634,11 @@ app.put('/api/admin/apps/:appId', requireAdminAuth, async (req, res) => {
   try {
     const { appId } = req.params;
     const { name, description } = req.body;
+    const existingAppDoc = await db.collection('apps').doc(appId).get();
+
+    if (!existingAppDoc.exists || !isLegacyTenantData(existingAppDoc.data() || {})) {
+      return res.status(404).json({ error: 'App not found' });
+    }
 
     if (!name || !description) {
       return res.status(400).json({ error: 'Name and description are required' });
@@ -927,12 +3650,23 @@ app.put('/api/admin/apps/:appId', requireAdminAuth, async (req, res) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
+    if (existingAppDoc.exists && !existingAppDoc.data()?.slug) {
+      updateData.slug = buildAppSlug(name);
+    }
+
+    if (existingAppDoc.exists && !existingAppDoc.data()?.tenantId) {
+      updateData.tenantId = LEGACY_TENANT_ID;
+    }
+
     // Update ticketPrefix if provided
     const ticketPrefix = (req.body.ticketPrefix || '').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 5);
     if (ticketPrefix) {
       updateData.ticketPrefix = ticketPrefix;
       // Sync counter prefix
-      await db.collection('counters').doc(appId).set({ prefix: ticketPrefix }, { merge: true });
+      await db.collection('counters').doc(appId).set({
+        tenantId: getTenantId(existingAppDoc.data() || {}),
+        prefix: ticketPrefix,
+      }, { merge: true });
     }
 
     await db.collection('apps').doc(appId).update(updateData);
@@ -952,6 +3686,11 @@ app.put('/api/admin/apps/:appId', requireAdminAuth, async (req, res) => {
 app.delete('/api/admin/apps/:appId', requireAdminAuth, async (req, res) => {
   try {
     const { appId } = req.params;
+    const appDoc = await db.collection('apps').doc(appId).get();
+
+    if (!appDoc.exists || !isLegacyTenantData(appDoc.data() || {})) {
+      return res.status(404).json({ error: 'App not found' });
+    }
 
     // Delete all suggestions for this app
     const suggestionsSnapshot = await db.collection('suggestions')
@@ -998,13 +3737,17 @@ app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
       db.collection('votes').get()
     ]);
 
+    const legacySuggestions = suggestionsSnapshot.docs.filter(doc => isLegacyTenantData(doc.data() || {}));
+    const legacyVotes = votesSnapshot.docs.filter(doc => isLegacyTenantData(doc.data() || {}));
+    const legacyApps = appsSnapshot.docs.filter(doc => isLegacyTenantData(doc.data() || {}));
+
     const stats = {
-      totalApps: appsSnapshot.size,
-      totalSuggestions: suggestionsSnapshot.size,
-      totalVotes: votesSnapshot.size,
-      totalBugs: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'bug').length,
-      totalTickets: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'ticket').length,
-      totalFeatures: suggestionsSnapshot.docs.filter(doc => normalizeSuggestionType(doc.data().type) === 'feature').length,
+      totalApps: legacyApps.length,
+      totalSuggestions: legacySuggestions.length,
+      totalVotes: legacyVotes.length,
+      totalBugs: legacySuggestions.filter(doc => normalizeSuggestionType(doc.data().type) === 'bug').length,
+      totalTickets: legacySuggestions.filter(doc => normalizeSuggestionType(doc.data().type) === 'ticket').length,
+      totalFeatures: legacySuggestions.filter(doc => normalizeSuggestionType(doc.data().type) === 'feature').length,
     };
 
     res.json(stats);
@@ -1058,22 +3801,24 @@ app.get('/api/admin/suggestions', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const suggestions = suggestionsSnapshot.docs.map(doc => {
-      const data = doc.data();
-      const type = normalizeSuggestionType(data.type);
-      return {
-        id: doc.id,
-        ...data,
-        type,
-        status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
-        priority: data.priority || 'mittel',
-        labels: data.labels || [],
-        ticketNumber: data.ticketNumber || null,
-        app: appsMap[data.appId] || { name: 'Unknown App' },
-        commentCount: commentStatsMap[doc.id]?.totalCount || 0,
-        pendingCommentCount: commentStatsMap[doc.id]?.pendingCount || 0
-      };
-    });
+    const suggestions = suggestionsSnapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(data => isLegacyTenantData(data))
+      .map(data => {
+        const type = normalizeSuggestionType(data.type);
+        return {
+          id: data.id,
+          ...data,
+          type,
+          status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+          priority: data.priority || 'mittel',
+          labels: data.labels || [],
+          ticketNumber: data.ticketNumber || null,
+          app: appsMap[data.appId] || { name: 'Unknown App' },
+          commentCount: commentStatsMap[data.id]?.totalCount || 0,
+          pendingCommentCount: commentStatsMap[data.id]?.pendingCount || 0
+        };
+      });
 
     // Sort: open approvals first, then resolved last, then votes desc, then newest first
     suggestions.sort(compareAdminSuggestions);
@@ -1097,12 +3842,14 @@ app.post('/api/admin/suggestions/:suggestionId/approve', requireAdminAuth, async
 
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
+    const suggestionData = suggestionDoc.data() || {};
+
     // Determine initial status after approval
-    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
     const newStatus = suggestionType === 'feature' ? 'wird geprüft' : 'offen';
     const legacyTag = mapStatusToLegacyTag(suggestionType, newStatus);
 
@@ -1118,6 +3865,7 @@ app.post('/api/admin/suggestions/:suggestionId/approve', requireAdminAuth, async
       oldValue: 'neu',
       newValue: newStatus,
       detail: `${suggestionType === 'bug' ? 'Bug' : suggestionType === 'ticket' ? 'Ticket' : 'Vorschlag'} freigegeben`,
+      tenantId: getTenantId(suggestionData),
     });
 
     // Send notification to suggestion creator
@@ -1150,13 +3898,14 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
 
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
-    const previousTag = suggestionDoc.data()?.tag || null;
-    const previousStatus = suggestionDoc.data()?.status || null;
-    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const suggestionData = suggestionDoc.data() || {};
+    const previousTag = suggestionData.tag || null;
+    const previousStatus = suggestionData.status || null;
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
     const validTags = suggestionType === 'bug' ? BUG_TAGS : FEATURE_TAGS;
     const normalizedTag = tag ? tag.toString().trim() : null;
 
@@ -1167,7 +3916,7 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
     // Sync tag to status
     const newStatus = normalizedTag
       ? mapLegacyTagToStatus(suggestionType, normalizedTag, true)
-      : (suggestionDoc.data()?.approved ? (suggestionType === 'feature' ? 'wird geprüft' : 'offen') : 'neu');
+      : (suggestionData.approved ? (suggestionType === 'feature' ? 'wird geprüft' : 'offen') : 'neu');
 
     // Update suggestion tag + status
     await db.collection('suggestions').doc(suggestionId).update({
@@ -1181,6 +3930,7 @@ app.put('/api/admin/suggestions/:suggestionId/tag', requireAdminAuth, async (req
         oldValue: previousStatus,
         newValue: newStatus,
         detail: `Status geändert: ${previousStatus || 'keiner'} → ${newStatus}`,
+        tenantId: getTenantId(suggestionData),
       });
     }
 
@@ -1217,7 +3967,7 @@ app.delete('/api/admin/suggestions/:suggestionId', requireAdminAuth, async (req,
 
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
@@ -1280,12 +4030,13 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
 
     // Check if suggestion exists
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
     // Create comment
     const comment = {
+      tenantId: getTenantId(suggestionDoc.data() || {}),
       suggestionId,
       text: validText,
       screenshots: screenshotValidation.screenshots,
@@ -1300,6 +4051,7 @@ app.post('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, asyn
 
     await logActivity(suggestionId, 'commented', {
       detail: `Kommentar hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
+      tenantId: getTenantId(suggestionDoc.data() || {}),
     });
 
     // Send notification about new comment
@@ -1343,16 +4095,20 @@ app.post('/api/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (
     }
 
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
     const suggestion = suggestionDoc.data();
+    if (!isLegacyTenantData(suggestion)) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
     if (!suggestion.approved) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
     const comment = {
+      tenantId: getTenantId(suggestion),
       suggestionId,
       text: validText,
       screenshots: screenshotValidation.screenshots,
@@ -1367,6 +4123,7 @@ app.post('/api/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (
     await logActivity(suggestionId, 'comment_submitted', {
       detail: `Benutzer-Kommentar eingereicht: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
       actor: `user:${userFingerprint}`,
+      tenantId: getTenantId(suggestion),
     });
 
     try {
@@ -1397,11 +4154,18 @@ app.get('/api/admin/suggestions/:suggestionId/comments', requireAdminAuth, async
       return res.status(400).json({ error: 'Invalid suggestion ID format' });
     }
 
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
     const commentsSnapshot = await db.collection('comments')
       .where('suggestionId', '==', suggestionId)
       .get();
 
-    const comments = commentsSnapshot.docs.map(buildAdminCommentResponse);
+    const comments = commentsSnapshot.docs
+      .filter(doc => isLegacyTenantData(doc.data() || {}))
+      .map(buildAdminCommentResponse);
 
     // Pending first, then newest first within each group.
     comments.sort((a, b) => {
@@ -1435,7 +4199,7 @@ app.get('/api/suggestions/:suggestionId/comments', async (req, res) => {
 
     // Check if suggestion exists and is approved
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists || !suggestionDoc.data().approved) {
+    if (!suggestionDoc.exists || !suggestionDoc.data().approved || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
@@ -1480,6 +4244,9 @@ app.put('/api/admin/suggestions/:suggestionId/comments/:commentId/approve', requ
     if (comment.suggestionId !== suggestionId) {
       return res.status(400).json({ error: 'Comment does not belong to this suggestion' });
     }
+    if (!isLegacyTenantData(comment)) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
 
     if (comment.authorType !== 'user') {
       return res.status(400).json({ error: 'Only user comments require moderation' });
@@ -1495,6 +4262,7 @@ app.put('/api/admin/suggestions/:suggestionId/comments/:commentId/approve', requ
 
     await logActivity(suggestionId, 'comment_approved', {
       detail: `Benutzer-Kommentar freigegeben: "${comment.text.slice(0, 80)}${comment.text.length > 80 ? '...' : ''}"`,
+      tenantId: getTenantId(comment),
     });
 
     try {
@@ -1529,6 +4297,9 @@ app.put('/api/admin/suggestions/:suggestionId/comments/:commentId/reject', requi
     if (comment.suggestionId !== suggestionId) {
       return res.status(400).json({ error: 'Comment does not belong to this suggestion' });
     }
+    if (!isLegacyTenantData(comment)) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
 
     if (comment.authorType !== 'user') {
       return res.status(400).json({ error: 'Only user comments require moderation' });
@@ -1542,6 +4313,7 @@ app.put('/api/admin/suggestions/:suggestionId/comments/:commentId/reject', requi
 
     await logActivity(suggestionId, 'comment_rejected', {
       detail: `Benutzer-Kommentar abgelehnt: "${comment.text.slice(0, 80)}${comment.text.length > 80 ? '...' : ''}"`,
+      tenantId: getTenantId(comment),
     });
 
     res.json({ success: true, message: 'Kommentar abgelehnt' });
@@ -1569,6 +4341,9 @@ app.delete('/api/admin/suggestions/:suggestionId/comments/:commentId', requireAd
 
     if (commentDoc.data().suggestionId !== suggestionId) {
       return res.status(400).json({ error: 'Comment does not belong to this suggestion' });
+    }
+    if (!isLegacyTenantData(commentDoc.data() || {})) {
+      return res.status(404).json({ error: 'Comment not found' });
     }
 
     // Delete comment
@@ -1647,6 +4422,7 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
     }
 
     const settingsData = {
+      tenantId: LEGACY_TENANT_ID,
       userFingerprint,
       email: email ? email.trim() : null,
       notificationsEnabled: Boolean(notificationsEnabled),
@@ -1754,11 +4530,12 @@ app.put('/api/admin/suggestions/:suggestionId/status', requireAdminAuth, async (
     }
 
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
-    const suggestionType = normalizeSuggestionType(suggestionDoc.data()?.type);
+    const suggestionData = suggestionDoc.data() || {};
+    const suggestionType = normalizeSuggestionType(suggestionData.type);
     const validStatuses = getValidStatusesForType(suggestionType);
     const normalizedStatus = status ? status.toString().trim() : null;
 
@@ -1766,7 +4543,7 @@ app.put('/api/admin/suggestions/:suggestionId/status', requireAdminAuth, async (
       return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${validStatuses.join(', ')}` });
     }
 
-    const previousStatus = suggestionDoc.data()?.status || null;
+    const previousStatus = suggestionData.status || null;
     const legacyTag = mapStatusToLegacyTag(suggestionType, normalizedStatus);
 
     // If status moves beyond 'neu', also set approved
@@ -1778,7 +4555,7 @@ app.put('/api/admin/suggestions/:suggestionId/status', requireAdminAuth, async (
       tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    if (isApproved && !suggestionDoc.data()?.approved) {
+    if (isApproved && !suggestionData.approved) {
       updateData.approved = true;
       updateData.approvedAt = admin.firestore.FieldValue.serverTimestamp();
     }
@@ -1790,6 +4567,7 @@ app.put('/api/admin/suggestions/:suggestionId/status', requireAdminAuth, async (
         oldValue: previousStatus,
         newValue: normalizedStatus,
         detail: `Status geändert: ${previousStatus || 'keiner'} → ${normalizedStatus}`,
+        tenantId: getTenantId(suggestionData),
       });
 
       try {
@@ -1817,16 +4595,17 @@ app.put('/api/admin/suggestions/:suggestionId/priority', requireAdminAuth, async
     }
 
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
 
+    const suggestionData = suggestionDoc.data() || {};
     const normalizedPriority = (priority || '').toString().trim().toLowerCase();
     if (!VALID_PRIORITIES.includes(normalizedPriority)) {
       return res.status(400).json({ error: `Ungültige Priorität. Erlaubt: ${VALID_PRIORITIES.join(', ')}` });
     }
 
-    const previousPriority = suggestionDoc.data()?.priority || null;
+    const previousPriority = suggestionData.priority || null;
 
     await db.collection('suggestions').doc(suggestionId).update({
       priority: normalizedPriority,
@@ -1837,6 +4616,7 @@ app.put('/api/admin/suggestions/:suggestionId/priority', requireAdminAuth, async
         oldValue: previousPriority,
         newValue: normalizedPriority,
         detail: `Priorität geändert: ${previousPriority || 'keine'} → ${normalizedPriority}`,
+        tenantId: getTenantId(suggestionData),
       });
     }
 
@@ -1863,9 +4643,11 @@ app.post('/api/admin/suggestions/:suggestionId/labels', requireAdminAuth, async 
     }
 
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
+
+    const suggestionData = suggestionDoc.data() || {};
 
     await db.collection('suggestions').doc(suggestionId).update({
       labels: admin.firestore.FieldValue.arrayUnion(validLabel),
@@ -1874,6 +4656,7 @@ app.post('/api/admin/suggestions/:suggestionId/labels', requireAdminAuth, async 
     await logActivity(suggestionId, 'label_added', {
       newValue: validLabel,
       detail: `Label "${validLabel}" hinzugefügt`,
+      tenantId: getTenantId(suggestionData),
     });
 
     res.json({ success: true, message: 'Label hinzugefügt' });
@@ -1893,9 +4676,10 @@ app.delete('/api/admin/suggestions/:suggestionId/labels/:label', requireAdminAut
     }
 
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Suggestion not found' });
     }
+    const suggestionData = suggestionDoc.data() || {};
 
     const decodedLabel = decodeURIComponent(label);
 
@@ -1906,6 +4690,7 @@ app.delete('/api/admin/suggestions/:suggestionId/labels/:label', requireAdminAut
     await logActivity(suggestionId, 'label_removed', {
       oldValue: decodedLabel,
       detail: `Label "${decodedLabel}" entfernt`,
+      tenantId: getTenantId(suggestionData),
     });
 
     res.json({ success: true, message: 'Label entfernt' });
@@ -1924,14 +4709,21 @@ app.get('/api/admin/suggestions/:suggestionId/activity', requireAdminAuth, async
       return res.status(400).json({ error: 'Invalid suggestion ID format' });
     }
 
+    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
+      return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
     const activitySnapshot = await db.collection('activity')
       .where('ticketId', '==', suggestionId)
       .get();
 
-    const activities = activitySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const activities = activitySnapshot.docs
+      .filter(doc => isLegacyTenantData(doc.data() || {}))
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
     activities.sort((a, b) => {
       const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
@@ -1951,6 +4743,11 @@ app.put('/api/admin/apps/:appId/labels', requireAdminAuth, async (req, res) => {
   try {
     const { appId } = req.params;
     const { labels } = req.body;
+    const appDoc = await db.collection('apps').doc(appId).get();
+
+    if (!appDoc.exists || !isLegacyTenantData(appDoc.data() || {})) {
+      return res.status(404).json({ error: 'App not found' });
+    }
 
     if (!Array.isArray(labels)) {
       return res.status(400).json({ error: 'Labels muss ein Array sein' });
@@ -2005,10 +4802,12 @@ app.get('/api/apps/:appId/releases', async (req, res) => {
 
     const releasesSnapshot = await query.get();
 
-    let releases = releasesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    let releases = releasesSnapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .filter(release => isLegacyTenantData(release));
 
     // Filter by multiple statuses in-memory if needed
     if (statusList && statusList.length > 1) {
@@ -2126,12 +4925,14 @@ app.get('/api/admin/releases', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const releases = releasesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      app: appsMap[doc.data().appId] || { name: 'Unbekannte App' },
-      itemCount: itemCountMap[doc.id] || 0,
-    }));
+    const releases = releasesSnapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        app: appsMap[doc.data().appId] || { name: 'Unbekannte App' },
+        itemCount: itemCountMap[doc.id] || 0,
+      }))
+      .filter(release => isLegacyTenantData(release));
 
     // Sort by status order, then date
     releases.sort((a, b) => {
@@ -2162,7 +4963,7 @@ app.post('/api/admin/releases', requireAdminAuth, async (req, res) => {
     }
 
     const appDoc = await db.collection('apps').doc(appId).get();
-    if (!appDoc.exists) {
+    if (!appDoc.exists || !isLegacyTenantData(appDoc.data() || {})) {
       return res.status(404).json({ error: 'App nicht gefunden' });
     }
 
@@ -2176,6 +4977,7 @@ app.post('/api/admin/releases', requireAdminAuth, async (req, res) => {
     const validStatus = RELEASE_STATUSES.includes(status) ? status : 'geplant';
 
     const release = {
+      tenantId: getTenantId(appDoc.data() || {}),
       appId,
       version: validVersion,
       title: validTitle,
@@ -2211,13 +5013,14 @@ app.put('/api/admin/releases/:releaseId', requireAdminAuth, async (req, res) => 
     }
 
     const releaseDoc = await db.collection('releases').doc(releaseId).get();
-    if (!releaseDoc.exists) {
+    if (!releaseDoc.exists || !isLegacyTenantData(releaseDoc.data() || {})) {
       return res.status(404).json({ error: 'Release nicht gefunden' });
     }
 
     const { version, title, description, status, releaseDate } = req.body;
 
     const updateData = {
+      tenantId: getTenantId(releaseDoc.data() || {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -2276,7 +5079,7 @@ app.delete('/api/admin/releases/:releaseId', requireAdminAuth, async (req, res) 
     }
 
     const releaseDoc = await db.collection('releases').doc(releaseId).get();
-    if (!releaseDoc.exists) {
+    if (!releaseDoc.exists || !isLegacyTenantData(releaseDoc.data() || {})) {
       return res.status(404).json({ error: 'Release nicht gefunden' });
     }
 
@@ -2285,8 +5088,12 @@ app.delete('/api/admin/releases/:releaseId', requireAdminAuth, async (req, res) 
       .where('releaseId', '==', releaseId)
       .get();
 
+    const releaseData = releaseDoc.data() || {};
+    const linkedLegacySuggestions = linkedSuggestions.docs
+      .filter(doc => isSameTenantScope(releaseData, doc.data() || {}));
+
     const batch = db.batch();
-    linkedSuggestions.docs.forEach(doc => {
+    linkedLegacySuggestions.forEach(doc => {
       batch.update(doc.ref, { releaseId: null });
     });
     batch.delete(db.collection('releases').doc(releaseId));
@@ -2296,7 +5103,7 @@ app.delete('/api/admin/releases/:releaseId', requireAdminAuth, async (req, res) 
     res.json({
       success: true,
       message: 'Release gelöscht',
-      unlinkedSuggestions: linkedSuggestions.size,
+      unlinkedSuggestions: linkedLegacySuggestions.length,
     });
   } catch (error) {
     console.error('Error deleting release:', error);
@@ -2315,7 +5122,7 @@ app.put('/api/admin/suggestions/:suggestionId/release', requireAdminAuth, async 
     }
 
     const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    if (!suggestionDoc.exists) {
+    if (!suggestionDoc.exists || !isLegacyTenantData(suggestionDoc.data() || {})) {
       return res.status(404).json({ error: 'Eintrag nicht gefunden' });
     }
 
@@ -2325,12 +5132,16 @@ app.put('/api/admin/suggestions/:suggestionId/release', requireAdminAuth, async 
         return res.status(400).json({ error: 'Invalid release ID format' });
       }
       const releaseDoc = await db.collection('releases').doc(releaseId).get();
-      if (!releaseDoc.exists) {
+      if (!releaseDoc.exists || !isLegacyTenantData(releaseDoc.data() || {})) {
         return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+      if (!isSameTenantScope(suggestionDoc.data() || {}, releaseDoc.data() || {})) {
+        return res.status(400).json({ error: 'Release und Eintrag gehören nicht zum selben Mandanten' });
       }
     }
 
-    const previousReleaseId = suggestionDoc.data()?.releaseId || null;
+    const suggestionData = suggestionDoc.data() || {};
+    const previousReleaseId = suggestionData.releaseId || null;
 
     await db.collection('suggestions').doc(suggestionId).update({
       releaseId: releaseId || null,
@@ -2340,6 +5151,7 @@ app.put('/api/admin/suggestions/:suggestionId/release', requireAdminAuth, async 
       oldValue: previousReleaseId,
       newValue: releaseId || null,
       detail: releaseId ? 'Einem Release zugeordnet' : 'Release-Zuordnung entfernt',
+      tenantId: getTenantId(suggestionData),
     });
 
     res.json({ success: true, message: releaseId ? 'Release zugeordnet' : 'Release-Zuordnung entfernt' });

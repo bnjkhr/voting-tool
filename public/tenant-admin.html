@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="theme-color" content="#FFFFFF">
+    <title>Tenant Admin - Voting Tool</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body > .container {
+            max-width: 1320px;
+        }
+
+        body.workspace-admin-shell {
+            background: #f6f4ef;
+        }
+
+        .tenant-admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: var(--spacing-md);
+            padding: var(--spacing-xl) 0 var(--spacing-lg);
+            border-bottom: 1px solid var(--border);
+            margin-bottom: var(--spacing-lg);
+        }
+
+        .workspace-topline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-top: var(--spacing-sm);
+        }
+
+        .workspace-pill {
+            display: inline-flex;
+            align-items: center;
+            min-height: 32px;
+            padding: 0 11px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+
+        .workspace-pill.is-role {
+            color: #047857;
+            border-color: #10b981;
+            background: color-mix(in srgb, #10b981 12%, var(--surface));
+        }
+
+        .workspace-context-card {
+            display: grid;
+            gap: var(--spacing-sm);
+            padding: var(--spacing-lg);
+            border-bottom: 1px solid var(--border);
+            background: var(--background-alt);
+        }
+
+        .workspace-context-row {
+            display: flex;
+            justify-content: space-between;
+            gap: var(--spacing-md);
+            color: var(--text-secondary);
+            font-size: 0.86rem;
+        }
+
+        .workspace-context-row strong {
+            color: var(--text-primary);
+            text-align: right;
+        }
+
+        .is-hidden {
+            display: none !important;
+        }
+
+        .tenant-admin-header h1 {
+            margin: 0 0 var(--spacing-xs);
+            font-family: var(--font-heading);
+            font-size: clamp(1.6rem, 4vw, 2.4rem);
+        }
+
+        .tenant-admin-header p {
+            margin: 0;
+            color: var(--text-secondary);
+        }
+
+        .tenant-admin-layout {
+            display: grid;
+            grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+            gap: var(--spacing-lg);
+            align-items: start;
+        }
+
+        .tenant-admin-panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+
+        .tenant-admin-panel > h2,
+        .tenant-admin-panel > h3 {
+            margin: 0;
+            padding: var(--spacing-md) var(--spacing-lg);
+            background: var(--background-alt);
+            border-bottom: 1px solid var(--border);
+            font-size: 1rem;
+        }
+
+        .tenant-admin-panel-body {
+            padding: var(--spacing-lg);
+        }
+
+        .tenant-admin-stats {
+            display: grid;
+            gap: var(--spacing-sm);
+        }
+
+        .tenant-admin-stat {
+            display: flex;
+            justify-content: space-between;
+            gap: var(--spacing-sm);
+            padding: var(--spacing-sm) 0;
+            border-bottom: 1px solid var(--border-light);
+            color: var(--text-secondary);
+        }
+
+        .tenant-admin-stat strong {
+            color: var(--text-primary);
+        }
+
+        .tenant-admin-filters {
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .tenant-admin-filters label {
+            display: grid;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .tenant-team-form,
+        .tenant-settings-form {
+            display: grid;
+            gap: var(--spacing-sm);
+        }
+
+        .tenant-team-form label,
+        .tenant-settings-form label {
+            display: grid;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .tenant-team-form input,
+        .tenant-settings-form input {
+            width: 100%;
+            min-height: 42px;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+        }
+
+        .tenant-team-form input:focus,
+        .tenant-settings-form input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .tenant-settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--spacing-sm);
+        }
+
+        .tenant-settings-grid label:first-child,
+        .tenant-settings-grid label:nth-child(2),
+        .tenant-settings-grid label:nth-child(3),
+        .tenant-settings-grid label:nth-child(6) {
+            grid-column: 1 / -1;
+        }
+
+        .tenant-settings-note {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+
+        .tenant-team-section {
+            display: grid;
+            gap: var(--spacing-sm);
+            margin-top: var(--spacing-md);
+        }
+
+        .tenant-team-section h4 {
+            margin: 0;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .tenant-team-item {
+            display: grid;
+            gap: 4px;
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+        }
+
+        .tenant-team-item strong {
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .tenant-team-actions {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: end;
+            margin-top: 6px;
+        }
+
+        .tenant-team-actions label {
+            display: grid;
+            gap: 5px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-weight: 700;
+        }
+
+        .tenant-team-actions button {
+            min-height: 42px;
+            white-space: nowrap;
+        }
+
+        .tenant-team-invite-link {
+            display: none;
+            margin-top: var(--spacing-sm);
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--background-alt);
+            color: var(--text-secondary);
+            word-break: break-word;
+            font-size: 0.82rem;
+        }
+
+        .tenant-team-invite-link.is-visible {
+            display: block;
+        }
+
+        .tenant-board-list {
+            display: grid;
+            gap: var(--spacing-sm);
+            margin-top: var(--spacing-md);
+        }
+
+        .tenant-board-item {
+            display: grid;
+            gap: 6px;
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+        }
+
+        .tenant-board-item strong {
+            color: var(--text-primary);
+        }
+
+        .tenant-board-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+        }
+
+        .tenant-board-meta span {
+            padding: 4px 7px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--background-alt);
+        }
+
+        .tenant-admin-list {
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .tenant-suggestion-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-lg);
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .tenant-suggestion-top {
+            display: flex;
+            justify-content: space-between;
+            gap: var(--spacing-md);
+            align-items: flex-start;
+        }
+
+        .tenant-suggestion-title {
+            margin: var(--spacing-md) 0 0;
+            font-size: 1.05rem;
+        }
+
+        .tenant-suggestion-description {
+            margin: var(--spacing-xs) 0 0;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .tenant-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .tenant-badge {
+            font-size: 0.75rem;
+            line-height: 1;
+            padding: 5px 8px;
+            border-radius: 999px;
+            background: var(--background-alt);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            font-weight: 600;
+        }
+
+        .tenant-badge.is-warning {
+            background: color-mix(in srgb, #f59e0b 14%, var(--surface));
+            color: #b45309;
+            border-color: #f59e0b;
+        }
+
+        .tenant-badge.is-success {
+            background: color-mix(in srgb, #10b981 14%, var(--surface));
+            color: #047857;
+            border-color: #10b981;
+        }
+
+        .tenant-admin-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: var(--spacing-sm);
+            align-items: end;
+        }
+
+        .tenant-admin-controls label {
+            display: grid;
+            gap: 6px;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .tenant-admin-panel select {
+            width: 100%;
+            min-height: 42px;
+            padding: 9px 38px 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background:
+                linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%) calc(100% - 18px) 50% / 6px 6px no-repeat,
+                linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%) calc(100% - 13px) 50% / 6px 6px no-repeat,
+                var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 0.95rem;
+            line-height: 1.3;
+            appearance: none;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+        }
+
+        .tenant-admin-panel select:hover {
+            border-color: var(--text-secondary);
+            background-color: var(--surface-hover);
+        }
+
+        .tenant-admin-panel select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .workspace-onboarding {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: var(--spacing-md);
+            align-items: start;
+            margin-bottom: var(--spacing-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid color-mix(in srgb, #10b981 45%, var(--border));
+            border-radius: var(--radius-md);
+            background: color-mix(in srgb, #10b981 9%, var(--surface));
+        }
+
+        .workspace-onboarding h2,
+        .workspace-onboarding p {
+            margin: 0;
+        }
+
+        .workspace-onboarding h2 {
+            font-size: 1.25rem;
+        }
+
+        .workspace-onboarding p {
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .workspace-onboarding-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: var(--spacing-sm);
+            margin-top: var(--spacing-md);
+        }
+
+        .workspace-onboarding-step {
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .tenant-comment-box {
+            border-top: 1px solid var(--border-light);
+            padding-top: var(--spacing-md);
+            display: none;
+        }
+
+        .tenant-comment-box.is-visible {
+            display: block;
+        }
+
+        .tenant-comment {
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-bottom: var(--spacing-sm);
+            background: var(--background-alt);
+        }
+
+        .tenant-comment.is-pending {
+            border-color: #f59e0b;
+            background: color-mix(in srgb, #f59e0b 10%, var(--surface));
+        }
+
+        .tenant-comment textarea {
+            min-height: 82px;
+        }
+
+        .tenant-empty {
+            color: var(--text-secondary);
+            padding: var(--spacing-lg);
+            text-align: center;
+        }
+
+        .admin-auth-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: none;
+            place-items: center;
+            padding: var(--spacing-lg);
+            background: rgba(20, 18, 16, 0.52);
+            backdrop-filter: blur(6px);
+        }
+
+        .admin-auth-overlay.is-visible {
+            display: grid;
+        }
+
+        .admin-auth-form {
+            width: min(100%, 420px);
+            display: grid;
+            gap: var(--spacing-md);
+            padding: var(--spacing-xl);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            background: var(--surface);
+            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+        }
+
+        .admin-auth-form h2,
+        .admin-auth-form p {
+            margin: 0;
+        }
+
+        .admin-auth-form p,
+        .admin-auth-form label {
+            color: var(--text-secondary);
+        }
+
+        .admin-auth-form label {
+            display: grid;
+            gap: 6px;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .admin-auth-form input {
+            min-height: 42px;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+        }
+
+        .admin-auth-form input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .admin-auth-error {
+            min-height: 20px;
+            color: #b91c1c;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 900px) {
+            .tenant-admin-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .tenant-admin-header {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body class="workspace-admin-shell">
+    <div class="container">
+        <header class="tenant-admin-header">
+            <div>
+                <h1 id="tenantTitle">Workspace Admin</h1>
+                <p id="tenantSubtitle">Tenant-Konsole für einen klar begrenzten Workspace.</p>
+                <div class="workspace-topline">
+                    <span id="roleContext" class="workspace-pill is-role">Rolle wird geladen</span>
+                    <span id="userIdentity" class="workspace-pill">Session wird geladen</span>
+                    <span id="tenantContext" class="workspace-pill">Tenant wird geladen</span>
+                </div>
+            </div>
+            <div class="admin-actions">
+                <a id="platformAdminLink" class="secondary-btn is-hidden" href="/super-admin.html" title="Zur Betreiber-Konsole">Platform Admin</a>
+                <a id="publicBoardLink" class="secondary-btn" href="/" title="Öffentliches Board dieses Tenants öffnen">Board ansehen</a>
+                <button id="logoutBtn" class="secondary-btn" type="button" title="Admin-Login auf diesem Gerät löschen">Abmelden</button>
+                <button id="refreshBtn" class="primary-btn" type="button" title="Tenant-Daten neu laden">Neu laden</button>
+            </div>
+        </header>
+
+        <section id="workspaceOnboarding" class="workspace-onboarding is-hidden" aria-live="polite">
+            <div>
+                <h2>Workspace erstellt</h2>
+                <p>Dein Workspace ist bereit. Diese nächsten Schritte bringen dich in einen testbaren Zustand.</p>
+                <div class="workspace-onboarding-steps">
+                    <a id="onboardingBoardLink" class="workspace-onboarding-step" href="/">Board ansehen</a>
+                    <span class="workspace-onboarding-step">Ersten Eintrag testen</span>
+                    <span class="workspace-onboarding-step">Teammitglied einladen</span>
+                    <span class="workspace-onboarding-step">Workspace Settings prüfen</span>
+                </div>
+            </div>
+            <button id="dismissOnboardingBtn" class="secondary-btn" type="button">Ausblenden</button>
+        </section>
+
+        <main class="tenant-admin-layout">
+            <aside class="tenant-admin-panel">
+                <div id="workspaceContext" class="workspace-context-card">
+                    <div class="workspace-context-row"><span>Modus</span><strong>Workspace</strong></div>
+                    <div class="workspace-context-row"><span>Tenant</span><strong id="workspaceTenantLabel">-</strong></div>
+                    <div class="workspace-context-row"><span>Rolle</span><strong id="workspaceRoleLabel">-</strong></div>
+                    <div class="workspace-context-row"><span>Platform</span><strong id="workspacePlatformLabel">Nein</strong></div>
+                </div>
+                <h3>Workspace</h3>
+                <div class="tenant-admin-panel-body">
+                    <form id="workspaceSettingsForm" class="tenant-settings-form" data-admin-only>
+                        <div class="tenant-settings-grid">
+                            <label>
+                                Workspace Name
+                                <input name="workspaceName" type="text" autocomplete="organization" placeholder="Mein Workspace" required>
+                            </label>
+                            <label>
+                                Public Slug
+                                <input name="workspaceSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="mein-workspace" required>
+                            </label>
+                            <label>
+                                Default Board
+                                <input name="boardName" type="text" placeholder="Feedback Board" required>
+                            </label>
+                            <label>
+                                Ticket Prefix
+                                <input name="ticketPrefix" type="text" maxlength="5" placeholder="APP">
+                            </label>
+                            <label>
+                                Email From Name
+                                <input name="emailFromName" type="text" placeholder="Voting Tool">
+                            </label>
+                            <label>
+                                Reply-To E-Mail
+                                <input name="replyToEmail" type="email" autocomplete="email" placeholder="support@example.com">
+                            </label>
+                        </div>
+                        <p class="tenant-settings-note">Domain-Versand kommt später als verifizierte Sender-Domain dazu. Hier speichern wir schon Absendername und Antwortadresse.</p>
+                        <button id="saveSettingsBtn" class="primary-btn" type="submit">Settings speichern</button>
+                    </form>
+                    <div id="workspaceSettingsReadonly" class="tenant-empty is-hidden">
+                        Workspace Settings sind für deine Rolle schreibgeschützt.
+                    </div>
+                </div>
+                <h3>Boards</h3>
+                <div class="tenant-admin-panel-body">
+                    <form id="tenantBoardForm" class="tenant-settings-form" data-admin-only>
+                        <div class="tenant-settings-grid">
+                            <label>
+                                Board Name
+                                <input name="boardName" type="text" placeholder="Customer Feedback" required>
+                            </label>
+                            <label>
+                                Public Board Slug
+                                <input name="boardSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="customer-feedback">
+                            </label>
+                            <label>
+                                Ticket Prefix
+                                <input name="boardTicketPrefix" type="text" maxlength="5" placeholder="CF">
+                            </label>
+                        </div>
+                        <button id="createBoardBtn" class="primary-btn" type="submit">Board erstellen</button>
+                    </form>
+                    <div id="tenantBoardsList" class="tenant-board-list">
+                        <div class="tenant-empty">Lade Boards...</div>
+                    </div>
+                </div>
+                <h2>Überblick</h2>
+                <div class="tenant-admin-panel-body">
+                    <div id="tenantStats" class="tenant-admin-stats">
+                        <div class="tenant-empty">Lade Statistiken...</div>
+                    </div>
+                </div>
+                <h3>Filter</h3>
+                <div class="tenant-admin-panel-body tenant-admin-filters">
+                    <label>
+                        App
+                        <select id="appFilter">
+                            <option value="">Alle Apps</option>
+                        </select>
+                    </label>
+                    <label>
+                        Typ
+                        <select id="typeFilter">
+                            <option value="">Alle Typen</option>
+                            <option value="feature">Feature</option>
+                            <option value="bug">Bug</option>
+                            <option value="ticket">Ticket</option>
+                        </select>
+                    </label>
+                    <label>
+                        Status
+                        <select id="statusFilter">
+                            <option value="">Alle Status</option>
+                        </select>
+                    </label>
+                    <label>
+                        Moderation
+                        <select id="approvalFilter">
+                            <option value="">Alle</option>
+                            <option value="pending">Wartet</option>
+                            <option value="approved">Freigegeben</option>
+                        </select>
+                    </label>
+                </div>
+                <h3>Team</h3>
+                <div class="tenant-admin-panel-body">
+                    <form id="teamInviteForm" class="tenant-team-form" data-admin-only>
+                        <label>
+                            E-Mail
+                            <input name="inviteEmail" type="email" autocomplete="email" placeholder="admin@example.com" required>
+                        </label>
+                        <label>
+                            Rolle
+                            <select name="inviteRole">
+                                <option value="admin">Admin</option>
+                                <option value="owner">Owner</option>
+                                <option value="viewer">Viewer</option>
+                            </select>
+                        </label>
+                        <button class="primary-btn" type="submit">Einladen</button>
+                    </form>
+                    <div id="teamInviteLink" class="tenant-team-invite-link"></div>
+                    <div class="tenant-team-section">
+                        <h4>Mitglieder</h4>
+                        <div id="teamMembersList">
+                            <div class="tenant-empty">Lade Mitglieder...</div>
+                        </div>
+                    </div>
+                    <div class="tenant-team-section">
+                        <h4>Offene Einladungen</h4>
+                        <div id="teamInvitesList">
+                            <div class="tenant-empty">Lade Einladungen...</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="tenant-admin-panel">
+                <h2>Einträge</h2>
+                <div id="suggestionsList" class="tenant-admin-panel-body tenant-admin-list">
+                    <div class="tenant-empty">Lade Einträge...</div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="admin-auth.js"></script>
+    <script src="tenant-admin.js"></script>
+</body>
+</html>

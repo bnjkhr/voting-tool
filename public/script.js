@@ -45,6 +45,7 @@ class VotingApp {
         this.currentFilters = { status: 'all', type: 'all' };
         this.currentView = 'suggestions';
         this.allSuggestions = [];
+        this.tenantSlug = null;
         this.currentReportType = 'feature';
         this.bugScreenshots = [];
         this.selectedCommentScreenshots = {};
@@ -160,14 +161,19 @@ class VotingApp {
         document.getElementById('suggestionsList').innerHTML = '<div class="loading">Einträge werden geladen...</div>';
 
         if (!skipHistory) {
-            this.navigateToUrlState({ appId: null, view: 'suggestions' }, { replace: replaceHistory });
+            this.navigateToUrlState(
+                this.isTenantMode()
+                    ? { tenantSlug: this.tenantSlug, appSlug: null, view: 'suggestions' }
+                    : { appId: null, view: 'suggestions' },
+                { replace: replaceHistory }
+            );
         }
     }
 
     showSuggestions() {
         const showFab = this.currentView !== 'changelog';
         this.showSection('suggestionsView', showFab);
-        document.getElementById('mobileNewBtn').style.display = this.currentView === 'suggestions' ? '' : 'none';
+        document.getElementById('mobileNewBtn').style.display = showFab && this.currentView === 'suggestions' ? '' : 'none';
     }
 
     showSuggestionForm() {
@@ -227,6 +233,14 @@ class VotingApp {
     }
 
     getCurrentUrlState() {
+        if (this.isTenantMode()) {
+            return {
+                tenantSlug: this.tenantSlug,
+                appSlug: this.currentApp?.slug || null,
+                view: this.currentView,
+            };
+        }
+
         return {
             appId: this.currentApp?.id || null,
             view: this.currentView,
@@ -235,6 +249,47 @@ class VotingApp {
 
     findAppById(appId) {
         return this.apps.find(app => app.id === appId) || null;
+    }
+
+    findAppBySlug(appSlug) {
+        return this.apps.find(app => app.slug === appSlug) || null;
+    }
+
+    isTenantMode() {
+        return Boolean(this.tenantSlug);
+    }
+
+    buildTenantAppPath(app = this.currentApp) {
+        if (!this.isTenantMode() || !app?.slug) return null;
+        return `/api/tenants/${encodeURIComponent(this.tenantSlug)}/apps/${encodeURIComponent(app.slug)}`;
+    }
+
+    buildSuggestionsUrl(app = this.currentApp) {
+        const tenantPath = this.buildTenantAppPath(app);
+        if (tenantPath) return `${tenantPath}/suggestions`;
+        return `/api/apps/${app.id}/suggestions`;
+    }
+
+    buildReleasesUrl(app = this.currentApp, status = '') {
+        const tenantPath = this.buildTenantAppPath(app);
+        const base = tenantPath ? `${tenantPath}/releases` : `/api/apps/${app.id}/releases`;
+        return status ? `${base}?status=${encodeURIComponent(status)}` : base;
+    }
+
+    buildCommentsUrl(suggestionId) {
+        if (this.isTenantMode()) {
+            return `/api/tenants/${encodeURIComponent(this.tenantSlug)}/suggestions/${encodeURIComponent(suggestionId)}/comments`;
+        }
+
+        return `/api/suggestions/${suggestionId}/comments`;
+    }
+
+    buildVoteUrl(suggestionId) {
+        if (this.isTenantMode()) {
+            return `/api/tenants/${encodeURIComponent(this.tenantSlug)}/suggestions/${encodeURIComponent(suggestionId)}/vote`;
+        }
+
+        return `/api/suggestions/${suggestionId}/vote`;
     }
 
     navigateToUrlState(state, { replace = false } = {}) {
@@ -251,17 +306,63 @@ class VotingApp {
     }
 
     applyUrlStateFromLocation({ replace = false } = {}) {
+        const state = UrlState.parseUrlState(window.location.search);
+        const nextTenantSlug = state.tenantSlug || null;
+
+        if (nextTenantSlug !== this.tenantSlug) {
+            this.tenantSlug = nextTenantSlug;
+            this.loadApps();
+            return;
+        }
+
         if (!this.apps.length) return;
 
-        const state = UrlState.parseUrlState(window.location.search);
         this.applyUrlState(state, { replaceHistory: replace });
     }
 
     applyUrlState(state, { replaceHistory = false } = {}) {
         const normalizedState = {
             appId: state?.appId || null,
+            tenantSlug: state?.tenantSlug || null,
+            appSlug: state?.appSlug || null,
             view: UrlState.normalizeView(state?.view),
         };
+
+        if (normalizedState.tenantSlug) {
+            this.tenantSlug = normalizedState.tenantSlug;
+
+            if (!normalizedState.appSlug) {
+                this.showAppSelection({ skipHistory: true });
+                if (replaceHistory) {
+                    this.navigateToUrlState(normalizedState, { replace: true });
+                }
+                return;
+            }
+
+            const app = this.findAppBySlug(normalizedState.appSlug);
+            if (!app) {
+                this.showAppSelection({ skipHistory: true });
+                this.navigateToUrlState(
+                    { tenantSlug: normalizedState.tenantSlug, appSlug: null, view: 'suggestions' },
+                    { replace: true }
+                );
+                this.showToast('App aus der URL wurde nicht gefunden', 'error');
+                return;
+            }
+
+            this.selectApp(app.id, app.name, {
+                appSlug: app.slug,
+                view: normalizedState.view,
+                skipHistory: true,
+            });
+
+            if (replaceHistory) {
+                this.navigateToUrlState(normalizedState, { replace: true });
+            }
+            return;
+        }
+
+        this.tenantSlug = null;
 
         if (!normalizedState.appId) {
             this.showAppSelection({ skipHistory: true });
@@ -280,6 +381,7 @@ class VotingApp {
         }
 
         this.selectApp(app.id, app.name, {
+            appSlug: app.slug || null,
             view: normalizedState.view,
             skipHistory: true,
         });
@@ -309,22 +411,28 @@ class VotingApp {
         if (!this.currentApp) return;
 
         if (this.currentView === 'roadmap') {
-            this.loadRoadmap(this.currentApp.id);
+            this.loadRoadmap(this.currentApp);
             return;
         }
 
         if (this.currentView === 'changelog') {
-            this.loadChangelog(this.currentApp.id);
+            this.loadChangelog(this.currentApp);
             return;
         }
 
-        this.loadSuggestions(this.currentApp.id);
+        this.loadSuggestions(this.currentApp);
     }
 
     // API methods
     async loadApps() {
         try {
-            const response = await fetch('/api/apps');
+            const state = UrlState.parseUrlState(window.location.search);
+            this.tenantSlug = state.tenantSlug || null;
+            const appsUrl = this.isTenantMode()
+                ? `/api/tenants/${encodeURIComponent(this.tenantSlug)}/apps`
+                : '/api/apps';
+
+            const response = await fetch(appsUrl);
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -341,9 +449,12 @@ class VotingApp {
         }
     }
 
-    async loadSuggestions(appId) {
+    async loadSuggestions(appOrId) {
         try {
-            const response = await fetch(`/api/apps/${appId}/suggestions`);
+            const app = typeof appOrId === 'object' ? appOrId : this.findAppById(appOrId);
+            if (!app) throw new Error('App not found');
+
+            const response = await fetch(this.buildSuggestionsUrl(app));
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -432,7 +543,7 @@ class VotingApp {
 
         submitBtn.disabled = true;
         try {
-            const response = await fetch(`/api/apps/${this.currentApp.id}/suggestions`, {
+            const response = await fetch(this.buildSuggestionsUrl(this.currentApp), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -443,7 +554,7 @@ class VotingApp {
             if (response.ok) {
                 await response.json();
                 this.showSuccessOverlay(type);
-                this.loadSuggestions(this.currentApp.id);
+                this.loadSuggestions(this.currentApp);
             } else {
                 const error = await response.json();
                 this.showToast(error.error || 'Fehler beim Einreichen des Eintrags', 'error');
@@ -463,7 +574,7 @@ class VotingApp {
         button.disabled = true;
 
         try {
-            const response = await fetch(`/api/suggestions/${suggestionId}/vote`, {
+            const response = await fetch(this.buildVoteUrl(suggestionId), {
                 method: isVoted ? 'DELETE' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
             });
@@ -674,7 +785,10 @@ class VotingApp {
         }
 
         appGrid.innerHTML = apps.map(app => `
-            <div class="app-card" onclick="app.selectApp('${app.id}', '${app.name}')">
+            <div
+                class="app-card"
+                onclick="app.selectApp('${this.escapeHtml(app.id)}', '${this.escapeHtml(app.name)}', { appSlug: '${this.escapeHtml(app.slug || '')}' })"
+            >
                 <h3>${this.escapeHtml(app.name)}</h3>
                 <p>${this.escapeHtml(app.description || 'Keine Beschreibung verfügbar')}</p>
             </div>
@@ -887,7 +1001,7 @@ class VotingApp {
         this.navigateToUrlState(this.getCurrentUrlState());
 
         if (!this.getSuggestionById(suggestionId)) {
-            await this.loadSuggestions(this.currentApp.id);
+            await this.loadSuggestions(this.currentApp);
         } else {
             this.renderFilterBar();
             this.renderSuggestions(this.filterSuggestions(this.allSuggestions));
@@ -903,9 +1017,9 @@ class VotingApp {
         });
     }
 
-    selectApp(appId, appName, { view = 'suggestions', skipHistory = false, replaceHistory = false } = {}) {
+    selectApp(appId, appName, { appSlug = null, view = 'suggestions', skipHistory = false, replaceHistory = false } = {}) {
         const appChanged = this.currentApp?.id !== appId;
-        this.currentApp = { id: appId, name: appName };
+        this.currentApp = { id: appId, name: appName, slug: appSlug || this.findAppById(appId)?.slug || null };
         document.getElementById('currentAppName').textContent = appName;
         this.currentView = UrlState.normalizeView(view);
 
@@ -940,12 +1054,15 @@ class VotingApp {
         });
     }
 
-    async loadRoadmap(appId) {
+    async loadRoadmap(appOrId) {
         const roadmapView = document.getElementById('roadmapView');
         roadmapView.innerHTML = '<div class="loading">Roadmap wird geladen...</div>';
 
         try {
-            const response = await fetch(`/api/apps/${appId}/releases?status=geplant,in Arbeit`);
+            const app = typeof appOrId === 'object' ? appOrId : this.findAppById(appOrId);
+            if (!app) throw new Error('App not found');
+
+            const response = await fetch(this.buildReleasesUrl(app, 'geplant,in Arbeit'));
             const releases = await response.json();
 
             if (!response.ok) throw new Error(releases.error);
@@ -956,12 +1073,15 @@ class VotingApp {
         }
     }
 
-    async loadChangelog(appId) {
+    async loadChangelog(appOrId) {
         const changelogView = document.getElementById('changelogView');
         changelogView.innerHTML = '<div class="loading">Changelog wird geladen...</div>';
 
         try {
-            const response = await fetch(`/api/apps/${appId}/releases?status=veröffentlicht`);
+            const app = typeof appOrId === 'object' ? appOrId : this.findAppById(appOrId);
+            if (!app) throw new Error('App not found');
+
+            const response = await fetch(this.buildReleasesUrl(app, 'veröffentlicht'));
             const releases = await response.json();
 
             if (!response.ok) throw new Error(releases.error);
@@ -1212,7 +1332,7 @@ class VotingApp {
         const commentsDiv = document.getElementById(`comments-${suggestionId}`);
 
         try {
-            const response = await fetch(`/api/suggestions/${suggestionId}/comments`);
+            const response = await fetch(this.buildCommentsUrl(suggestionId));
             const comments = await response.json();
 
             if (response.ok) {
@@ -1387,7 +1507,7 @@ class VotingApp {
         }
 
         try {
-            const response = await fetch(`/api/suggestions/${suggestionId}/comments`, {
+            const response = await fetch(this.buildCommentsUrl(suggestionId), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'

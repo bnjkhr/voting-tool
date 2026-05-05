@@ -34,3 +34,13 @@ test('admin page can use a wider container than the public frontend', () => {
   assert.ok(adminHtml.includes('body > .container'));
   assert.ok(adminHtml.includes('max-width: 1440px'));
 });
+
+test('legacy admin page points users to the SaaS admin surfaces', () => {
+  assert.ok(adminHtml.includes('Legacy Admin Dashboard'));
+  assert.ok(adminHtml.includes('id="legacyAdminNotice"'));
+  assert.ok(adminHtml.includes('href="/super-admin.html"'));
+  assert.ok(adminHtml.includes('href="/signup.html"'));
+  assert.ok(adminHtml.includes('href="/login.html"'));
+  assert.ok(adminHtml.includes('Legacy-Live-Betrieb'));
+  assert.ok(adminHtml.includes('SaaS / Friendly User-Test'));
+});

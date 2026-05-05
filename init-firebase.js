@@ -2,6 +2,7 @@
 const admin = require('firebase-admin');
 const fs = require('fs');
 const path = require('path');
+const { LEGACY_TENANT_ID, buildAppSlug } = require('./api/tenant-utils');
 
 function loadDotEnvFileIfPresent() {
   // Minimal .env loader to avoid an extra dependency for this script.
@@ -149,7 +150,11 @@ async function ensureDefaultApps() {
         continue;
       }
 
-      const docRef = await db.collection('apps').add(app);
+      const docRef = await db.collection('apps').add({
+        ...app,
+        tenantId: LEGACY_TENANT_ID,
+        slug: buildAppSlug(app.name),
+      });
       console.log(`✅ Created app: ${app.name} (ID: ${docRef.id})`);
     } catch (error) {
       console.error(`❌ Error creating app ${app.name}:`, error);

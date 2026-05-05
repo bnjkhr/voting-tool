@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin UX Konzepte - Voting Tool</title>
+    <style>
+        :root {
+            --bg: #f6f4ef;
+            --surface: #ffffff;
+            --surface-soft: #f0ede7;
+            --ink: #171717;
+            --muted: #6f6961;
+            --line: #ded8cf;
+            --line-strong: #c8c0b6;
+            --accent: #111111;
+            --green: #087f5b;
+            --blue: #2563eb;
+            --amber: #9a6700;
+            --red: #b42318;
+            --shadow: 0 18px 50px rgba(31, 28, 24, 0.11);
+            --radius: 8px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--ink);
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        .page {
+            min-height: 100vh;
+        }
+
+        .intro {
+            padding: 34px 42px 24px;
+            border-bottom: 1px solid var(--line);
+            background: #fbfaf7;
+        }
+
+        .intro-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 360px;
+            gap: 32px;
+            max-width: 1460px;
+            margin: 0 auto;
+            align-items: end;
+        }
+
+        h1,
+        h2,
+        h3,
+        p {
+            margin: 0;
+        }
+
+        h1 {
+            font-size: 38px;
+            letter-spacing: 0;
+            line-height: 1.08;
+        }
+
+        .intro p {
+            margin-top: 12px;
+            color: var(--muted);
+            line-height: 1.55;
+            max-width: 760px;
+        }
+
+        .decision-box {
+            border: 1px solid var(--line);
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 18px;
+            box-shadow: 0 8px 28px rgba(31, 28, 24, 0.06);
+        }
+
+        .decision-box strong {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .decision-box span {
+            color: var(--muted);
+            line-height: 1.45;
+            display: block;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            padding: 16px 42px 0;
+            max-width: 1460px;
+            margin: 0 auto;
+        }
+
+        .tab {
+            min-height: 44px;
+            border: 1px solid var(--line);
+            background: var(--surface);
+            color: var(--muted);
+            border-radius: var(--radius);
+            padding: 0 16px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .tab.is-active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #ffffff;
+        }
+
+        .concept {
+            display: none;
+            padding: 22px 42px 44px;
+        }
+
+        .concept.is-active {
+            display: block;
+        }
+
+        .concept-wrap {
+            max-width: 1460px;
+            margin: 0 auto;
+            display: grid;
+            gap: 18px;
+        }
+
+        .concept-meta {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            gap: 18px;
+            align-items: stretch;
+        }
+
+        .meta-card {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 18px;
+        }
+
+        .meta-card h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .meta-card p {
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .pros-cons {
+            display: grid;
+            gap: 8px;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        .admin-frame {
+            min-height: 760px;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .role-switcher {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .role-tab {
+            min-height: 38px;
+            border: 1px solid var(--line);
+            background: var(--surface);
+            color: var(--muted);
+            border-radius: var(--radius);
+            padding: 0 13px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .role-tab.is-active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #ffffff;
+        }
+
+        .role-view {
+            display: none;
+        }
+
+        .role-view.is-active {
+            display: block;
+        }
+
+        .topbar {
+            min-height: 74px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 0 24px;
+            border-bottom: 1px solid var(--line);
+            background: #fbfaf7;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .mark {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            background: var(--accent);
+            color: #fff;
+            display: grid;
+            place-items: center;
+            font-weight: 900;
+        }
+
+        .brand-title {
+            display: grid;
+            gap: 2px;
+        }
+
+        .brand-title strong {
+            font-size: 15px;
+        }
+
+        .brand-title span {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .scope-strip {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .scope-pill,
+        .role-pill,
+        .plain-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 38px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: var(--surface);
+            padding: 0 13px;
+            font-weight: 800;
+            color: var(--ink);
+            white-space: nowrap;
+        }
+
+        .role-pill {
+            border-color: #b8decf;
+            background: #eefaf5;
+            color: var(--green);
+        }
+
+        .plain-pill {
+            color: var(--muted);
+            font-weight: 700;
+        }
+
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn {
+            min-height: 40px;
+            border: 1px solid var(--line);
+            background: var(--surface);
+            color: var(--ink);
+            border-radius: var(--radius);
+            padding: 0 13px;
+            font-weight: 800;
+        }
+
+        .btn.primary {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+
+        .shell-a {
+            display: grid;
+            grid-template-columns: 292px minmax(0, 1fr);
+            min-height: 686px;
+        }
+
+        .side {
+            background: #f7f5f1;
+            border-right: 1px solid var(--line);
+            padding: 20px;
+            display: grid;
+            align-content: start;
+            gap: 18px;
+        }
+
+        .identity-card {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 16px;
+            display: grid;
+            gap: 12px;
+        }
+
+        .identity-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .identity-row strong {
+            color: var(--ink);
+            text-align: right;
+        }
+
+        .nav {
+            display: grid;
+            gap: 6px;
+        }
+
+        .nav button {
+            min-height: 42px;
+            border: 0;
+            background: transparent;
+            text-align: left;
+            border-radius: var(--radius);
+            padding: 0 12px;
+            font-weight: 800;
+            color: var(--muted);
+        }
+
+        .nav button.is-active {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .main {
+            padding: 24px;
+            display: grid;
+            align-content: start;
+            gap: 18px;
+        }
+
+        .page-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: start;
+        }
+
+        .page-head h2 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .page-head p {
+            color: var(--muted);
+        }
+
+        .kpis {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .kpi {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 15px;
+            background: #fbfaf7;
+        }
+
+        .kpi span {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+
+        .kpi strong {
+            font-size: 28px;
+        }
+
+        .work-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+            gap: 16px;
+        }
+
+        .panel {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        .panel-title {
+            min-height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            border-bottom: 1px solid var(--line);
+            font-weight: 900;
+        }
+
+        .table {
+            display: grid;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 104px minmax(0, 1fr) 118px 110px;
+            gap: 12px;
+            align-items: center;
+            min-height: 62px;
+            padding: 0 16px;
+            border-bottom: 1px solid #eee9e1;
+        }
+
+        .row:last-child {
+            border-bottom: 0;
+        }
+
+        .ticket {
+            font-weight: 900;
+            color: var(--muted);
+        }
+
+        .row-title {
+            display: grid;
+            gap: 4px;
+        }
+
+        .row-title strong {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .row-title span,
+        .timeline span,
+        .permission-list span {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .status {
+            min-height: 30px;
+            border-radius: 999px;
+            padding: 0 11px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 900;
+            background: #f0ede7;
+            color: var(--muted);
+        }
+
+        .status.green {
+            background: #eefaf5;
+            color: var(--green);
+        }
+
+        .status.blue {
+            background: #eff6ff;
+            color: var(--blue);
+        }
+
+        .status.amber {
+            background: #fff8e6;
+            color: var(--amber);
+        }
+
+        .timeline {
+            display: grid;
+            gap: 12px;
+            padding: 16px;
+        }
+
+        .timeline-item {
+            display: grid;
+            grid-template-columns: 10px minmax(0, 1fr);
+            gap: 12px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent);
+            margin-top: 4px;
+        }
+
+        .timeline strong {
+            display: block;
+            margin-bottom: 3px;
+        }
+
+        .shell-b {
+            display: grid;
+            grid-template-columns: 250px minmax(0, 1fr) 340px;
+            min-height: 686px;
+        }
+
+        .workspace-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .workspace-item {
+            border: 1px solid var(--line);
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 13px;
+            display: grid;
+            gap: 5px;
+        }
+
+        .workspace-item.is-active {
+            border-color: var(--accent);
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
+
+        .workspace-item span {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .permission-list {
+            display: grid;
+            gap: 10px;
+            padding: 16px;
+        }
+
+        .permission {
+            display: grid;
+            grid-template-columns: 28px minmax(0, 1fr);
+            gap: 10px;
+            align-items: start;
+        }
+
+        .check {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: #eefaf5;
+            color: var(--green);
+            font-weight: 900;
+        }
+
+        .blocked .check {
+            background: #fef3f2;
+            color: var(--red);
+        }
+
+        .shell-c {
+            display: grid;
+            grid-template-columns: 320px minmax(0, 1fr);
+            min-height: 686px;
+        }
+
+        .super-rail {
+            padding: 20px;
+            border-right: 1px solid var(--line);
+            background: #171717;
+            color: #fff;
+            display: grid;
+            align-content: start;
+            gap: 18px;
+        }
+
+        .super-rail .identity-card {
+            background: #242424;
+            border-color: #3a3a3a;
+        }
+
+        .super-rail .identity-row {
+            color: #aaa;
+        }
+
+        .super-rail .identity-row strong {
+            color: #fff;
+        }
+
+        .super-nav button {
+            color: #cfcfcf;
+        }
+
+        .super-nav button.is-active {
+            background: #fff;
+            color: #111;
+        }
+
+        .tenant-cards {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .tenant-card {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 16px;
+            background: #fbfaf7;
+            display: grid;
+            gap: 12px;
+        }
+
+        .tenant-card strong {
+            font-size: 18px;
+        }
+
+        .tenant-card span {
+            color: var(--muted);
+            line-height: 1.4;
+        }
+
+        .split-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        @media (max-width: 1100px) {
+            .intro-grid,
+            .concept-meta,
+            .work-grid,
+            .shell-a,
+            .shell-b,
+            .shell-c {
+                grid-template-columns: 1fr;
+            }
+
+            .tenant-cards,
+            .kpis {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .shell-b {
+                display: block;
+            }
+
+            .side,
+            .super-rail {
+                border-right: 0;
+                border-bottom: 1px solid var(--line);
+            }
+
+            .row {
+                grid-template-columns: 90px minmax(0, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <section class="intro">
+            <div class="intro-grid">
+                <div>
+                    <h1>Admin UX: Identität, Rolle und Tenant-Kontext</h1>
+                    <p>Problem: Im aktuellen Admin ist unklar, ob man als eingeladener Workspace-User, Tenant-Admin oder globaler Betreiber unterwegs ist. Diese drei Vorschläge lösen das über unterschiedliche Informationsarchitekturen.</p>
+                </div>
+                <div class="decision-box">
+                    <strong>Empfehlung</strong>
+                    <span>Variante B ist wahrscheinlich die beste SaaS-MVP-Basis: links Scope/Workspace, oben Identität, rechts Rechte. Sie bleibt verständlich, auch wenn später Billing, Rollen und mehrere Tenants dazukommen.</span>
+                </div>
+            </div>
+        </section>
+
+        <nav class="tabs" aria-label="UX Konzepte">
+            <button class="tab is-active" data-target="concept-a">A: Kontextleiste</button>
+            <button class="tab" data-target="concept-b">B: Admin Shell</button>
+            <button class="tab" data-target="concept-c">C: Super-Konsole</button>
+        </nav>
+
+        <section id="concept-a" class="concept is-active">
+            <div class="concept-wrap">
+                <div class="concept-meta">
+                    <div class="meta-card">
+                        <h2>A: Kontextleiste über bestehendem Tenant Admin</h2>
+                        <p>Minimal-invasiv. Wir behalten die aktuelle Tenant-Admin-Struktur, ergänzen aber oben eine eindeutige Scope-Leiste: Wer bin ich, in welchem Workspace bin ich, welche Rolle habe ich, und was darf ich hier?</p>
+                    </div>
+                    <div class="meta-card pros-cons">
+                        <strong>Gut für: schnelle Korrektur</strong>
+                        <span>+ Wenig Umbau, klare Orientierung sofort</span>
+                        <span>- Super Admin und Tenant Admin bleiben getrennte Seiten</span>
+                    </div>
+                </div>
+
+                <div class="admin-frame">
+                    <header class="topbar">
+                        <div class="brand">
+                            <div class="mark">V</div>
+                            <div class="brand-title">
+                                <strong>Voting Tool Admin</strong>
+                                <span>Tenant Admin</span>
+                            </div>
+                        </div>
+                        <div class="scope-strip">
+                            <span class="scope-pill">Workspace: staging-saas-smoke</span>
+                            <span class="role-pill">Rolle: Admin</span>
+                            <span class="plain-pill">Angemeldet: ben@example.com</span>
+                        </div>
+                        <div class="top-actions">
+                            <button class="btn">Board</button>
+                            <button class="btn">Tenant wechseln</button>
+                            <button class="btn primary">Neu laden</button>
+                        </div>
+                    </header>
+
+                    <div class="shell-a">
+                        <aside class="side">
+                            <div class="identity-card">
+                                <div class="identity-row"><span>Du bist</span><strong>Tenant Admin</strong></div>
+                                <div class="identity-row"><span>Tenant</span><strong>staging-saas-smoke</strong></div>
+                                <div class="identity-row"><span>Super Admin</span><strong>Nein</strong></div>
+                                <div class="identity-row"><span>Zugriff</span><strong>Einträge, Team</strong></div>
+                            </div>
+                            <nav class="nav">
+                                <button class="is-active">Einträge</button>
+                                <button>Team & Rollen</button>
+                                <button>Boards</button>
+                                <button>Einstellungen</button>
+                            </nav>
+                        </aside>
+
+                        <main class="main">
+                            <div class="page-head">
+                                <div>
+                                    <h2>Einträge moderieren</h2>
+                                    <p>Du bearbeitest nur Daten im Tenant staging-saas-smoke.</p>
+                                </div>
+                                <button class="btn primary">Einladung senden</button>
+                            </div>
+                            <div class="kpis">
+                                <div class="kpi"><span>Offen</span><strong>12</strong></div>
+                                <div class="kpi"><span>Wartet</span><strong>4</strong></div>
+                                <div class="kpi"><span>Kommentare</span><strong>7</strong></div>
+                                <div class="kpi"><span>Team</span><strong>3</strong></div>
+                            </div>
+                            <div class="work-grid">
+                                <div class="panel">
+                                    <div class="panel-title">Aktuelle Einträge <span class="status blue">Workspace Scope</span></div>
+                                    <div class="table">
+                                        <div class="row"><span class="ticket">TEST-001</span><div class="row-title"><strong>Staging Feature Vorschlag</strong><span>Smoke Board</span></div><span class="status amber">wird geprüft</span><span class="status green">frei</span></div>
+                                        <div class="row"><span class="ticket">TEST-002</span><div class="row-title"><strong>Staging Bug Report</strong><span>Smoke Board</span></div><span class="status blue">offen</span><span class="status green">frei</span></div>
+                                        <div class="row"><span class="ticket">MBC-018</span><div class="row-title"><strong>Export im Admin</strong><span>Nicht sichtbar: anderer Tenant</span></div><span class="status">gefiltert</span><span class="status">kein Zugriff</span></div>
+                                    </div>
+                                </div>
+                                <aside class="panel">
+                                    <div class="panel-title">Was darf ich hier?</div>
+                                    <div class="permission-list">
+                                        <div class="permission"><div class="check">✓</div><div><strong>Einträge bearbeiten</strong><span>Status, Priorität, Kommentare</span></div></div>
+                                        <div class="permission"><div class="check">✓</div><div><strong>User einladen</strong><span>Admin und Viewer</span></div></div>
+                                        <div class="permission blocked"><div class="check">×</div><div><strong>Tenants anlegen</strong><span>Nur Super Admin</span></div></div>
+                                    </div>
+                                </aside>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="concept-b" class="concept">
+            <div class="concept-wrap">
+                <div class="concept-meta">
+                    <div class="meta-card">
+                        <h2>B: Einheitliche Admin Shell mit Workspace Switcher</h2>
+                        <p>Ein klares SaaS-Admin-Gerüst: Links alle Tenants/Workspaces, Mitte die aktive Arbeitsfläche, rechts Kontext zu Rolle und Rechten. Super-Admin-Funktionen erscheinen nur, wenn der User sie wirklich hat.</p>
+                    </div>
+                    <div class="meta-card pros-cons">
+                        <strong>Gut für: SaaS-MVP</strong>
+                        <span>+ Beste Orientierung und skalierbar für mehrere Workspaces</span>
+                        <span>- Braucht etwas mehr Frontend-Umbau als Variante A</span>
+                    </div>
+                </div>
+
+                <div class="admin-frame">
+                    <header class="topbar">
+                        <div class="brand">
+                            <div class="mark">V</div>
+                            <div class="brand-title">
+                                <strong>Admin Console</strong>
+                                <span>Workspace: staging-saas-smoke</span>
+                            </div>
+                        </div>
+                        <div class="scope-strip">
+                            <span class="role-pill">Admin in diesem Workspace</span>
+                            <span class="plain-pill">ben@example.com</span>
+                        </div>
+                        <div class="top-actions">
+                            <button class="btn">Hilfe</button>
+                            <button class="btn primary">Neuer Invite</button>
+                        </div>
+                    </header>
+
+                    <div class="shell-b">
+                        <aside class="side">
+                            <div class="brand-title">
+                                <strong>Workspaces</strong>
+                                <span>Dein Zugriff</span>
+                            </div>
+                            <div class="workspace-list">
+                                <div class="workspace-item is-active"><strong>staging-saas-smoke</strong><span>Admin · 1 Board</span></div>
+                                <div class="workspace-item"><strong>MBC</strong><span>Viewer · 2 Boards</span></div>
+                                <div class="workspace-item"><strong>Legacy</strong><span>Kein Zugriff</span></div>
+                            </div>
+                            <nav class="nav">
+                                <button class="is-active">Workspace Dashboard</button>
+                                <button>Einträge</button>
+                                <button>Team</button>
+                                <button>Boards</button>
+                                <button>Integrationen</button>
+                            </nav>
+                            <div class="identity-card">
+                                <div class="identity-row"><span>Globaler Zugriff</span><strong>Nein</strong></div>
+                                <div class="identity-row"><span>Super Admin</span><strong>Ausgeblendet</strong></div>
+                            </div>
+                        </aside>
+
+                        <main class="main">
+                            <div class="page-head">
+                                <div>
+                                    <h2>Workspace Dashboard</h2>
+                                    <p>Alle Aktionen gelten für staging-saas-smoke. Wechsel links den Workspace, wenn du in einem anderen Tenant arbeiten willst.</p>
+                                </div>
+                                <div class="split-actions">
+                                    <button class="btn">Public Board</button>
+                                    <button class="btn primary">Einträge öffnen</button>
+                                </div>
+                            </div>
+                            <div class="kpis">
+                                <div class="kpi"><span>Deine Rolle</span><strong>Admin</strong></div>
+                                <div class="kpi"><span>Aktiver Tenant</span><strong>1</strong></div>
+                                <div class="kpi"><span>Boards</span><strong>1</strong></div>
+                                <div class="kpi"><span>Offene Invites</span><strong>2</strong></div>
+                            </div>
+                            <div class="panel">
+                                <div class="panel-title">Nächste Arbeit</div>
+                                <div class="table">
+                                    <div class="row"><span class="ticket">Team</span><div class="row-title"><strong>2 Einladungen offen</strong><span>Einladungen laufen in 6 Tagen ab</span></div><span class="status amber">prüfen</span><button class="btn">Öffnen</button></div>
+                                    <div class="row"><span class="ticket">Mod</span><div class="row-title"><strong>4 Einträge warten</strong><span>Feature und Bug Report</span></div><span class="status blue">Todo</span><button class="btn">Öffnen</button></div>
+                                    <div class="row"><span class="ticket">Board</span><div class="row-title"><strong>Smoke Board</strong><span>Öffentliche URL aktiv</span></div><span class="status green">live</span><button class="btn">Ansehen</button></div>
+                                </div>
+                            </div>
+                        </main>
+
+                        <aside class="side">
+                            <div class="identity-card">
+                                <div class="brand-title">
+                                    <strong>Du bist hier als</strong>
+                                    <span>ben@example.com</span>
+                                </div>
+                                <div class="identity-row"><span>Workspace-Rolle</span><strong>Admin</strong></div>
+                                <div class="identity-row"><span>Platform-Rolle</span><strong>Keine</strong></div>
+                                <div class="identity-row"><span>Session</span><strong>Magic Link</strong></div>
+                            </div>
+                            <div class="panel">
+                                <div class="panel-title">Rechte</div>
+                                <div class="permission-list">
+                                    <div class="permission"><div class="check">✓</div><div><strong>Moderieren</strong><span>Status, Priorität, Kommentare</span></div></div>
+                                    <div class="permission"><div class="check">✓</div><div><strong>Team verwalten</strong><span>Einladen, Rollen setzen</span></div></div>
+                                    <div class="permission blocked"><div class="check">×</div><div><strong>Tenant erstellen</strong><span>Platform Owner nötig</span></div></div>
+                                </div>
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="concept-c" class="concept">
+            <div class="concept-wrap">
+                <div class="concept-meta">
+                    <div class="meta-card">
+                        <h2>C: Super Admin als eigene Betreiber-Konsole</h2>
+                        <p>Radikale Trennung: Normale Tenant-User sehen nie globale Navigation. Super Admins landen zuerst in einer dunklen Betreiber-Konsole und springen von dort gezielt in einen Tenant als Owner/Admin.</p>
+                    </div>
+                    <div class="meta-card pros-cons">
+                        <strong>Gut für: klare Sicherheitsgrenzen</strong>
+                        <span>+ Super Admin ist unmissverständlich</span>
+                        <span>- Zwei stärkere Produktbereiche statt einer gemeinsamen Shell</span>
+                    </div>
+                </div>
+
+                <div class="meta-card">
+                    <div class="role-switcher" aria-label="Rollenansicht Variante C">
+                        <button class="role-tab is-active" data-role-target="role-c-super-admin">Super Admin</button>
+                        <button class="role-tab" data-role-target="role-c-tenant-admin">Normaler Admin</button>
+                        <button class="role-tab" data-role-target="role-c-user">Normaler User</button>
+                    </div>
+                </div>
+
+                <div id="role-c-super-admin" class="role-view is-active">
+                <div class="admin-frame">
+                    <header class="topbar">
+                        <div class="brand">
+                            <div class="mark">V</div>
+                            <div class="brand-title">
+                                <strong>Platform Admin</strong>
+                                <span>Betreiber-Konsole</span>
+                            </div>
+                        </div>
+                        <div class="scope-strip">
+                            <span class="role-pill">Super Admin</span>
+                            <span class="plain-pill">ben@example.com</span>
+                        </div>
+                        <div class="top-actions">
+                            <button class="btn">Audit Log</button>
+                            <button class="btn primary">Tenant erstellen</button>
+                        </div>
+                    </header>
+
+                    <div class="shell-c">
+                        <aside class="super-rail">
+                            <div class="identity-card">
+                                <div class="identity-row"><span>Modus</span><strong>Platform</strong></div>
+                                <div class="identity-row"><span>Du kannst</span><strong>Alle Tenants</strong></div>
+                                <div class="identity-row"><span>Aktiver Tenant</span><strong>Keiner</strong></div>
+                            </div>
+                            <nav class="nav super-nav">
+                                <button class="is-active">Tenants</button>
+                                <button>Pläne & Billing</button>
+                                <button>User</button>
+                                <button>Systemstatus</button>
+                                <button>Audit Log</button>
+                            </nav>
+                        </aside>
+
+                        <main class="main">
+                            <div class="page-head">
+                                <div>
+                                    <h2>Tenants verwalten</h2>
+                                    <p>Du bist nicht in einem Tenant. Wähle einen Tenant, um als Betreiber hineinzuspringen.</p>
+                                </div>
+                                <button class="btn primary">Tenant erstellen</button>
+                            </div>
+                            <div class="tenant-cards">
+                                <div class="tenant-card">
+                                    <strong>staging-saas-smoke</strong>
+                                    <span>Aktiv · Testdaten · 1 Board · 3 Mitglieder</span>
+                                    <div class="split-actions"><button class="btn primary">Als Owner öffnen</button><button class="btn">Einstellungen</button></div>
+                                </div>
+                                <div class="tenant-card">
+                                    <strong>MBC</strong>
+                                    <span>Aktiv · Kunde · 2 Boards · 5 Mitglieder</span>
+                                    <div class="split-actions"><button class="btn primary">Als Owner öffnen</button><button class="btn">Einstellungen</button></div>
+                                </div>
+                                <div class="tenant-card">
+                                    <strong>Legacy</strong>
+                                    <span>Kompatibilität · Live-Betrieb · geschützt</span>
+                                    <div class="split-actions"><button class="btn">Nur ansehen</button><button class="btn">Schutzregeln</button></div>
+                                </div>
+                            </div>
+                            <div class="panel">
+                                <div class="panel-title">Sicherheitskontext</div>
+                                <div class="permission-list">
+                                    <div class="permission"><div class="check">✓</div><div><strong>Globale Tenant-Verwaltung</strong><span>Nur in dieser Konsole sichtbar</span></div></div>
+                                    <div class="permission"><div class="check">✓</div><div><strong>Impersonation mit Kontext</strong><span>Beim Öffnen eines Tenants steht oben: “Als Super Admin in Tenant X”</span></div></div>
+                                    <div class="permission"><div class="check">✓</div><div><strong>Legacy geschützt</strong><span>Extra Warnung vor Aktionen an Legacy-Daten</span></div></div>
+                                </div>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+                </div>
+
+                <div id="role-c-tenant-admin" class="role-view">
+                <div class="admin-frame">
+                    <header class="topbar">
+                        <div class="brand">
+                            <div class="mark">V</div>
+                            <div class="brand-title">
+                                <strong>Workspace Admin</strong>
+                                <span>Tenant-Konsole</span>
+                            </div>
+                        </div>
+                        <div class="scope-strip">
+                            <span class="scope-pill">Workspace: staging-saas-smoke</span>
+                            <span class="role-pill">Admin</span>
+                            <span class="plain-pill">anna@example.com</span>
+                        </div>
+                        <div class="top-actions">
+                            <button class="btn">Public Board</button>
+                            <button class="btn primary">Einladen</button>
+                        </div>
+                    </header>
+
+                    <div class="shell-a">
+                        <aside class="side">
+                            <div class="identity-card">
+                                <div class="identity-row"><span>Modus</span><strong>Workspace</strong></div>
+                                <div class="identity-row"><span>Tenant</span><strong>staging-saas-smoke</strong></div>
+                                <div class="identity-row"><span>Rolle</span><strong>Admin</strong></div>
+                                <div class="identity-row"><span>Super Admin</span><strong>Nein</strong></div>
+                            </div>
+                            <nav class="nav">
+                                <button class="is-active">Einträge</button>
+                                <button>Team</button>
+                                <button>Boards</button>
+                                <button>Workspace Settings</button>
+                            </nav>
+                        </aside>
+
+                        <main class="main">
+                            <div class="page-head">
+                                <div>
+                                    <h2>Einträge moderieren</h2>
+                                    <p>Du bist in genau einem Tenant-Kontext. Globale Betreiber-Aktionen existieren hier nicht.</p>
+                                </div>
+                                <div class="split-actions">
+                                    <button class="btn">Board ansehen</button>
+                                    <button class="btn primary">Team einladen</button>
+                                </div>
+                            </div>
+                            <div class="kpis">
+                                <div class="kpi"><span>Deine Rolle</span><strong>Admin</strong></div>
+                                <div class="kpi"><span>Offen</span><strong>12</strong></div>
+                                <div class="kpi"><span>Wartet</span><strong>4</strong></div>
+                                <div class="kpi"><span>Team</span><strong>3</strong></div>
+                            </div>
+                            <div class="work-grid">
+                                <div class="panel">
+                                    <div class="panel-title">Workspace-Arbeit</div>
+                                    <div class="table">
+                                        <div class="row"><span class="ticket">TEST-001</span><div class="row-title"><strong>Staging Feature Vorschlag</strong><span>Status und Priorität bearbeiten</span></div><span class="status amber">wird geprüft</span><button class="btn">Öffnen</button></div>
+                                        <div class="row"><span class="ticket">TEST-002</span><div class="row-title"><strong>Staging Bug Report</strong><span>Kommentare moderieren</span></div><span class="status blue">offen</span><button class="btn">Öffnen</button></div>
+                                        <div class="row"><span class="ticket">Tenant</span><div class="row-title"><strong>Tenant erstellen</strong><span>Nicht in dieser Ansicht verfügbar</span></div><span class="status">gesperrt</span><button class="btn">Info</button></div>
+                                    </div>
+                                </div>
+                                <aside class="panel">
+                                    <div class="panel-title">Rechte</div>
+                                    <div class="permission-list">
+                                        <div class="permission"><div class="check">✓</div><div><strong>Moderieren</strong><span>Status, Priorität, Kommentare</span></div></div>
+                                        <div class="permission"><div class="check">✓</div><div><strong>Team verwalten</strong><span>User einladen, Rollen setzen</span></div></div>
+                                        <div class="permission blocked"><div class="check">×</div><div><strong>Platform verwalten</strong><span>Super Admin nötig</span></div></div>
+                                    </div>
+                                </aside>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+                </div>
+
+                <div id="role-c-user" class="role-view">
+                <div class="admin-frame">
+                    <header class="topbar">
+                        <div class="brand">
+                            <div class="mark">V</div>
+                            <div class="brand-title">
+                                <strong>Feedback Portal</strong>
+                                <span>Tenant User</span>
+                            </div>
+                        </div>
+                        <div class="scope-strip">
+                            <span class="scope-pill">Workspace: staging-saas-smoke</span>
+                            <span class="role-pill">Viewer</span>
+                            <span class="plain-pill">sarah@example.com</span>
+                        </div>
+                        <div class="top-actions">
+                            <button class="btn">Board</button>
+                            <button class="btn primary">Vorschlag erstellen</button>
+                        </div>
+                    </header>
+
+                    <div class="shell-a">
+                        <aside class="side">
+                            <div class="identity-card">
+                                <div class="identity-row"><span>Modus</span><strong>User</strong></div>
+                                <div class="identity-row"><span>Tenant</span><strong>staging-saas-smoke</strong></div>
+                                <div class="identity-row"><span>Rolle</span><strong>Viewer</strong></div>
+                                <div class="identity-row"><span>Admin</span><strong>Nein</strong></div>
+                            </div>
+                            <nav class="nav">
+                                <button class="is-active">Meine Übersicht</button>
+                                <button>Einträge ansehen</button>
+                                <button>Meine Vorschläge</button>
+                                <button>Benachrichtigungen</button>
+                            </nav>
+                        </aside>
+
+                        <main class="main">
+                            <div class="page-head">
+                                <div>
+                                    <h2>Meine Übersicht</h2>
+                                    <p>Keine Admin-Navigation, keine Tenant-Verwaltung. Nur die Funktionen, die ein eingeladener User tatsächlich braucht.</p>
+                                </div>
+                                <div class="split-actions">
+                                    <button class="btn">Board öffnen</button>
+                                    <button class="btn primary">Neuer Vorschlag</button>
+                                </div>
+                            </div>
+                            <div class="kpis">
+                                <div class="kpi"><span>Deine Rolle</span><strong>Viewer</strong></div>
+                                <div class="kpi"><span>Eigene Vorschläge</span><strong>2</strong></div>
+                                <div class="kpi"><span>Beobachtet</span><strong>5</strong></div>
+                                <div class="kpi"><span>Votes</span><strong>8</strong></div>
+                            </div>
+                            <div class="work-grid">
+                                <div class="panel">
+                                    <div class="panel-title">Für dich relevant</div>
+                                    <div class="table">
+                                        <div class="row"><span class="ticket">TEST-001</span><div class="row-title"><strong>Staging Feature Vorschlag</strong><span>Du folgst diesem Eintrag</span></div><span class="status amber">wird geprüft</span><button class="btn">Ansehen</button></div>
+                                        <div class="row"><span class="ticket">TEST-002</span><div class="row-title"><strong>Staging Bug Report</strong><span>Von dir erstellt</span></div><span class="status blue">offen</span><button class="btn">Ansehen</button></div>
+                                        <div class="row"><span class="ticket">Team</span><div class="row-title"><strong>Teamverwaltung</strong><span>Für Viewer ausgeblendet oder gesperrt</span></div><span class="status">kein Zugriff</span><button class="btn">Info</button></div>
+                                    </div>
+                                </div>
+                                <aside class="panel">
+                                    <div class="panel-title">Rechte</div>
+                                    <div class="permission-list">
+                                        <div class="permission"><div class="check">✓</div><div><strong>Einträge lesen</strong><span>Board und Detailansicht</span></div></div>
+                                        <div class="permission"><div class="check">✓</div><div><strong>Voten und kommentieren</strong><span>Normale User-Aktionen</span></div></div>
+                                        <div class="permission blocked"><div class="check">×</div><div><strong>Moderieren</strong><span>Admin-Rolle nötig</span></div></div>
+                                        <div class="permission blocked"><div class="check">×</div><div><strong>User einladen</strong><span>Admin- oder Owner-Rolle nötig</span></div></div>
+                                    </div>
+                                </aside>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(item => item.classList.remove('is-active'));
+                document.querySelectorAll('.concept').forEach(item => item.classList.remove('is-active'));
+                tab.classList.add('is-active');
+                document.getElementById(tab.dataset.target).classList.add('is-active');
+            });
+        });
+
+        document.querySelectorAll('.role-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.role-tab').forEach(item => item.classList.remove('is-active'));
+                document.querySelectorAll('.role-view').forEach(item => item.classList.remove('is-active'));
+                tab.classList.add('is-active');
+                document.getElementById(tab.dataset.roleTarget).classList.add('is-active');
+            });
+        });
+    </script>
+</body>
+</html>
