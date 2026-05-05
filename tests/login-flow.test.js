@@ -38,10 +38,16 @@ test('login link API endpoints are exposed without global admin auth', () => {
   assert.equal(apiSource.includes('loginUrl,'), false);
 });
 
-test('login links prefer the current request host over configured base url', () => {
-  const requestHostIndex = apiSource.indexOf("req.headers['x-forwarded-host']");
-  const baseUrlIndex = apiSource.indexOf('process.env.BASE_URL', requestHostIndex);
+test('login links prefer configured BASE_URL over request host (anti host header injection)', () => {
+  const buildIndex = apiSource.indexOf('function buildRequestBaseUrl');
+  assert.ok(buildIndex > -1, 'buildRequestBaseUrl helper must exist');
 
+  const baseUrlIndex = apiSource.indexOf('process.env.BASE_URL', buildIndex);
+  const requestHostIndex = apiSource.indexOf("req.headers['x-forwarded-host']", buildIndex);
+
+  assert.ok(baseUrlIndex > -1);
   assert.ok(requestHostIndex > -1);
-  assert.ok(baseUrlIndex > requestHostIndex);
+  // BASE_URL must be consulted first so a spoofed Host / X-Forwarded-Host
+  // can never end up in an emailed login link.
+  assert.ok(baseUrlIndex < requestHostIndex);
 });

@@ -110,3 +110,32 @@ test('builds hashed login link data for email login', () => {
   assert.equal(isLoginLinkExpired(loginLink, new Date('2026-01-01T00:10:00.000Z')), false);
   assert.equal(isLoginLinkExpired(loginLink, new Date('2026-01-01T00:16:00.000Z')), true);
 });
+
+test('login link redirectUrl rejects open-redirect bypass attempts', () => {
+  const baseArgs = {
+    email: 'user@example.com',
+    token: 'raw-login-token',
+    now: new Date('2026-01-01T00:00:00.000Z'),
+  };
+
+  const expectAccept = path => {
+    const link = buildLoginLinkData({ ...baseArgs, redirectUrl: path });
+    assert.equal(link.redirectUrl, path, `expected ${JSON.stringify(path)} to be accepted`);
+  };
+  const expectReject = path => {
+    const link = buildLoginLinkData({ ...baseArgs, redirectUrl: path });
+    assert.equal(link.redirectUrl, null, `expected ${JSON.stringify(path)} to be rejected`);
+  };
+
+  expectAccept('/dashboard');
+  expectAccept('/tenant-admin.html?tenant=acme');
+
+  expectReject('//evil.com/path');           // protocol-relative
+  expectReject('/\\evil.com/path');          // backslash variant some browsers normalise
+  expectReject('https://evil.com');          // absolute URL, no leading slash
+  expectReject('javascript:alert(1)');       // scheme attack
+  expectReject('dashboard');                 // missing leading slash
+  expectReject('');                          // empty
+  expectReject(null);
+  expectReject(undefined);
+});

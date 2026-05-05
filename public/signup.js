@@ -68,6 +68,7 @@ class SignupApp {
             if (!response.ok) throw new Error(data.error || 'Workspace konnte nicht erstellt werden');
 
             this.form.reset();
+            this.slugTouched = false;
             this.setStatus('Login-Link wurde per E-Mail verschickt.', 'success');
             this.result.innerHTML = `
                 <p>Workspace <strong>${this.escapeHtml(data.tenant?.name || payload.workspaceName)}</strong> wurde erstellt.</p>

@@ -142,6 +142,7 @@ async function ensureDefaultApps() {
     try {
       const existing = await db.collection('apps')
         .where('name', '==', app.name)
+        .where('tenantId', '==', LEGACY_TENANT_ID)
         .limit(1)
         .get();
 

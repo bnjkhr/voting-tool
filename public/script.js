@@ -1210,9 +1210,15 @@ class VotingApp {
 
     // Utility methods
     escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        // Escape both quote variants so the result is safe in HTML text,
+        // attribute values, AND single/double-quoted JavaScript string
+        // literals embedded via inline event handlers (e.g. onclick).
+        return String(text == null ? '' : text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     showToast(message, type = 'success') {

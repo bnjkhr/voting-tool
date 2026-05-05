@@ -12,11 +12,12 @@ const {
 } = require('./firebase-admin-utils');
 
 function createUniqueSlug(baseSlug, usedSlugs) {
-  let candidate = baseSlug || 'app';
+  const resolvedBase = baseSlug || 'app';
+  let candidate = resolvedBase;
   let suffix = 2;
 
   while (usedSlugs.has(candidate)) {
-    candidate = `${baseSlug}-${suffix}`;
+    candidate = `${resolvedBase}-${suffix}`;
     suffix += 1;
   }
 

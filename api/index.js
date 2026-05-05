@@ -698,6 +698,13 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
 }
 
 function buildRequestBaseUrl(req) {
+  // Trust the operator-configured BASE_URL above any request header. Host
+  // and X-Forwarded-Host are client-controllable and would otherwise let an
+  // attacker poison the origin baked into outgoing email login links.
+  if (process.env.BASE_URL) {
+    return process.env.BASE_URL.replace(/\/+$/, '');
+  }
+
   const protoHeader = req.headers['x-forwarded-proto'];
   const hostHeader = req.headers['x-forwarded-host'] || req.headers.host;
   const proto = Array.isArray(protoHeader) ? protoHeader[0] : protoHeader;
@@ -705,10 +712,6 @@ function buildRequestBaseUrl(req) {
 
   if (host) {
     return `${proto || req.protocol || 'https'}://${host}`;
-  }
-
-  if (process.env.BASE_URL) {
-    return process.env.BASE_URL.replace(/\/+$/, '');
   }
 
   return 'http://localhost:3000';

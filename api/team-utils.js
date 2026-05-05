@@ -120,6 +120,16 @@ function isSessionExpired(session = {}, now = new Date()) {
   return expiresAt.getTime() <= new Date(now).getTime();
 }
 
+function isSafeRedirectPath(value) {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  // Must be a same-origin absolute path. Reject protocol-relative URLs
+  // (`//evil.com/x`) and backslash variants (`/\evil.com/x`) that some
+  // browsers normalise into a host change.
+  if (value[0] !== '/') return false;
+  if (value[1] === '/' || value[1] === '\\') return false;
+  return true;
+}
+
 function buildLoginLinkData({
   email,
   token,
@@ -137,7 +147,7 @@ function buildLoginLinkData({
     createdAt,
     updatedAt: createdAt,
     expiresAt,
-    redirectUrl: typeof redirectUrl === 'string' && redirectUrl.startsWith('/') ? redirectUrl : null,
+    redirectUrl: isSafeRedirectPath(redirectUrl) ? redirectUrl : null,
     consumedAt: null,
   };
 }
