@@ -14,6 +14,7 @@ class VotingApp {
         // Ticket/Bug statuses
         'offen':                { color: '#3b82f6', icon: '\u25CB' },
         'in Bearbeitung':       { color: '#f59e0b', icon: '\u231B' },
+        'im Test':              { color: '#06b6d4', icon: '\u2699' },
         'wartend':              { color: '#a855f7', icon: '\u23F8' },
         'gel\u00f6st':          { color: '#10b981', icon: '\u2713' },
         'geschlossen':          { color: '#64748b', icon: '\u2717' },
@@ -547,6 +548,7 @@ class VotingApp {
             'wird nicht umgesetzt': { label: 'Abgelehnt', color: '#ef4444' },
             'offen': { label: 'Offen', color: '#3b82f6' },
             'in Bearbeitung': { label: 'In Bearbeitung', color: '#f59e0b' },
+            'im Test': { label: 'Im Test', color: '#06b6d4' },
             'wartend': { label: 'Wartend', color: '#a855f7' },
             'gelöst': { label: 'Gelöst', color: '#10b981' },
             'geschlossen': { label: 'Geschlossen', color: '#64748b' },
