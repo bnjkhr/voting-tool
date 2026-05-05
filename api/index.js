@@ -105,14 +105,14 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
-const FEATURE_TAGS = ['wird umgesetzt', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
+const FEATURE_TAGS = ['wird umgesetzt', 'im Test', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
 const BUG_TAGS = ['neu', 'in analyse', 'behoben', 'nicht reproduzierbar'];
 const VALID_SUGGESTION_TYPES = ['feature', 'bug', 'ticket'];
 const VALID_BUG_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const VALID_PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
 
-const TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'wartend', 'gelöst', 'geschlossen'];
-const FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'ist umgesetzt', 'wird nicht umgesetzt'];
+const TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'im Test', 'wartend', 'gelöst', 'geschlossen'];
+const FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'im Test', 'ist umgesetzt', 'wird nicht umgesetzt'];
 const RESOLVED_STATUSES = ['ist umgesetzt', 'wird nicht umgesetzt', 'gelöst', 'geschlossen'];
 const RELEASE_STATUSES = ['geplant', 'in Arbeit', 'veröffentlicht'];
 
@@ -132,6 +132,7 @@ function mapStatusToLegacyTag(type, status) {
     case 'neu': return null;
     case 'offen': return 'neu';
     case 'in Bearbeitung': return 'in analyse';
+    case 'im Test': return 'in analyse';
     case 'gelöst': return 'behoben';
     case 'geschlossen': return 'nicht reproduzierbar';
     default: return null;
