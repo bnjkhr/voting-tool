@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="theme-color" content="#FFFFFF">
+    <title>Platform Admin - Voting Tool</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body > .container {
+            max-width: 1240px;
+        }
+
+        body.platform-admin-shell {
+            background: #f6f4ef;
+        }
+
+        .sa-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--spacing-md);
+            padding: var(--spacing-lg) 0 var(--spacing-md);
+            margin-bottom: var(--spacing-lg);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sa-header-title {
+            display: grid;
+            gap: 4px;
+        }
+
+        .sa-header h1 {
+            margin: 0;
+            font-family: var(--font-heading);
+            font-size: clamp(1.5rem, 3.5vw, 2rem);
+        }
+
+        .sa-header-meta {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .sa-header-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+            align-items: center;
+        }
+
+        .sa-layout {
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr);
+            gap: var(--spacing-lg);
+            align-items: start;
+        }
+
+        .sa-rail {
+            display: grid;
+            gap: var(--spacing-md);
+            position: sticky;
+            top: var(--spacing-lg);
+        }
+
+        .sa-rail-status {
+            display: grid;
+            gap: 6px;
+            padding: var(--spacing-md);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+        }
+
+        .sa-rail-status-row {
+            display: flex;
+            justify-content: space-between;
+            gap: var(--spacing-sm);
+            font-size: 0.85rem;
+        }
+
+        .sa-rail-status-row span {
+            color: var(--text-secondary);
+        }
+
+        .sa-rail-status-row strong {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .sa-nav {
+            display: grid;
+            gap: 2px;
+        }
+
+        .sa-nav a {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 12px;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.92rem;
+            font-weight: 600;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+        .sa-nav a:hover {
+            background: var(--surface);
+            color: var(--text-primary);
+        }
+
+        .sa-nav a.is-active {
+            background: var(--text-primary);
+            color: var(--surface);
+        }
+
+        .sa-workspace {
+            display: grid;
+            gap: var(--spacing-lg);
+        }
+
+        .sa-panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+        }
+
+        .sa-panel-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--spacing-md);
+            padding: var(--spacing-md) var(--spacing-lg);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .sa-panel-head h2 {
+            margin: 0;
+            font-size: 1.05rem;
+            font-family: var(--font-heading);
+        }
+
+        .sa-panel-head p {
+            margin: 2px 0 0;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .sa-panel-body {
+            padding: var(--spacing-lg);
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .sa-panel-body--tight {
+            padding: var(--spacing-md) var(--spacing-lg);
+        }
+
+        .sa-form {
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .sa-form label {
+            display: grid;
+            gap: 4px;
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .sa-form input {
+            width: 100%;
+            min-height: 40px;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 0.95rem;
+        }
+
+        .sa-form input:hover {
+            border-color: var(--text-secondary);
+        }
+
+        .sa-form input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .sa-form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: var(--spacing-md);
+        }
+
+        .sa-form-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+            align-items: center;
+            margin-top: 4px;
+        }
+
+        .sa-help {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            line-height: 1.5;
+            margin: 0;
+        }
+
+        .sa-result {
+            display: none;
+            padding: var(--spacing-md);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            background: var(--background-alt);
+            gap: var(--spacing-sm);
+        }
+
+        .sa-result.is-visible {
+            display: grid;
+        }
+
+        .sa-result-row {
+            display: grid;
+            gap: 2px;
+        }
+
+        .sa-result-row span {
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .sa-result-row a,
+        .sa-result-row code {
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            word-break: break-word;
+        }
+
+        .sa-status {
+            min-height: 20px;
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .sa-status.is-error {
+            color: #b91c1c;
+        }
+
+        .sa-status.is-success {
+            color: #047857;
+        }
+
+        .tenant-list {
+            display: grid;
+            gap: var(--spacing-sm);
+        }
+
+        .tenant-list-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: var(--spacing-md);
+            padding: var(--spacing-md);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            align-items: center;
+        }
+
+        .tenant-list-item-main {
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .tenant-list-item h4 {
+            margin: 0;
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+
+        .tenant-list-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .tenant-list-badge {
+            font-size: 0.72rem;
+            line-height: 1;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: var(--background-alt);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            font-weight: 600;
+            font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+        }
+
+        .tenant-list-badge.is-legacy {
+            color: #92400e;
+            border-color: #f59e0b;
+            background: color-mix(in srgb, #f59e0b 12%, var(--surface));
+            font-family: inherit;
+        }
+
+        .tenant-list-badge.is-active {
+            color: #047857;
+            border-color: #10b981;
+            background: color-mix(in srgb, #10b981 12%, var(--surface));
+            font-family: inherit;
+        }
+
+        .tenant-list-actions {
+            display: flex;
+            gap: var(--spacing-xs);
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .tenant-list-actions a {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 6px 10px;
+            border-radius: var(--radius-sm);
+            text-decoration: none;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+        .tenant-list-actions a:hover {
+            background: var(--background-alt);
+            color: var(--text-primary);
+        }
+
+        .pilot-step {
+            display: grid;
+            gap: var(--spacing-sm);
+            padding-bottom: var(--spacing-md);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .pilot-step:last-child {
+            padding-bottom: 0;
+            border-bottom: 0;
+        }
+
+        .pilot-step-head {
+            display: flex;
+            align-items: baseline;
+            gap: var(--spacing-sm);
+        }
+
+        .pilot-step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 999px;
+            background: var(--text-primary);
+            color: var(--surface);
+            font-size: 0.78rem;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .pilot-step-head h3 {
+            margin: 0;
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+
+        .pilot-step p {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .pilot-tenant-input {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: var(--spacing-sm);
+            align-items: end;
+        }
+
+        .pilot-tenant-input label {
+            display: grid;
+            gap: 4px;
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .pilot-tenant-input input {
+            min-height: 40px;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            font: inherit;
+            font-size: 0.95rem;
+        }
+
+        .pilot-tenant-input input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .pilot-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: var(--background-alt);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .pilot-status-pill::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--text-secondary);
+        }
+
+        .pilot-status-pill.is-ready {
+            background: color-mix(in srgb, #10b981 12%, var(--surface));
+            border-color: #10b981;
+            color: #047857;
+        }
+
+        .pilot-status-pill.is-ready::before {
+            background: #10b981;
+        }
+
+        .pilot-status-pill.is-warning {
+            background: color-mix(in srgb, #f59e0b 12%, var(--surface));
+            border-color: #f59e0b;
+            color: #92400e;
+        }
+
+        .pilot-status-pill.is-warning::before {
+            background: #f59e0b;
+        }
+
+        .pilot-link-list {
+            display: grid;
+            gap: 8px;
+        }
+
+        .pilot-link-item {
+            display: grid;
+            grid-template-columns: 110px minmax(0, 1fr) auto;
+            gap: var(--spacing-sm);
+            align-items: center;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+        }
+
+        .pilot-link-item > span:first-child {
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .pilot-link-item code {
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+        }
+
+        .pilot-copy-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }
+
+        .pilot-copy-btn:hover {
+            border-color: var(--text-primary);
+            color: var(--text-primary);
+            background: var(--background-alt);
+        }
+
+        .pilot-copy-btn.is-copied {
+            border-color: #10b981;
+            color: #047857;
+            background: color-mix(in srgb, #10b981 12%, var(--surface));
+        }
+
+        .pilot-copy-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .pilot-checklist {
+            display: grid;
+            gap: 8px;
+            margin: 0;
+            padding: 0;
+        }
+
+        .pilot-check {
+            display: grid;
+            grid-template-columns: 18px minmax(0, 1fr);
+            gap: 10px;
+            align-items: start;
+            padding: 8px 0;
+            cursor: pointer;
+        }
+
+        .pilot-check input[type="checkbox"] {
+            margin: 2px 0 0;
+        }
+
+        .pilot-check-label {
+            display: grid;
+            gap: 2px;
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 0.92rem;
+        }
+
+        .pilot-check-label small {
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+
+        details.pilot-roles {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--background-alt);
+        }
+
+        details.pilot-roles[open] {
+            background: var(--surface);
+        }
+
+        details.pilot-roles summary {
+            padding: 10px 14px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            font-weight: 600;
+            list-style: none;
+        }
+
+        details.pilot-roles summary::before {
+            content: '▸';
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.15s ease;
+        }
+
+        details.pilot-roles[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        details.pilot-roles summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .pilot-role-list {
+            padding: 0 14px 12px;
+            display: grid;
+            gap: 6px;
+        }
+
+        .pilot-role-row {
+            display: grid;
+            grid-template-columns: 70px minmax(0, 1fr);
+            gap: var(--spacing-sm);
+            padding: 6px 0;
+            font-size: 0.88rem;
+        }
+
+        .pilot-role-row strong {
+            color: var(--text-primary);
+        }
+
+        .pilot-role-row span {
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+
+        .admin-auth-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: none;
+            place-items: center;
+            padding: var(--spacing-lg);
+            background: rgba(20, 18, 16, 0.52);
+            backdrop-filter: blur(6px);
+        }
+
+        .admin-auth-overlay.is-visible {
+            display: grid;
+        }
+
+        .admin-auth-form {
+            width: min(100%, 420px);
+            display: grid;
+            gap: var(--spacing-md);
+            padding: var(--spacing-xl);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            background: var(--surface);
+            box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+        }
+
+        .admin-auth-form h2,
+        .admin-auth-form p {
+            margin: 0;
+        }
+
+        .admin-auth-form p,
+        .admin-auth-form label {
+            color: var(--text-secondary);
+        }
+
+        .admin-auth-form label {
+            display: grid;
+            gap: 6px;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .admin-auth-form input {
+            min-height: 42px;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+        }
+
+        .admin-auth-form input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+            outline: none;
+        }
+
+        .admin-auth-error {
+            min-height: 20px;
+            color: #b91c1c;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 900px) {
+            .sa-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .sa-rail {
+                position: static;
+            }
+
+            .sa-form-grid,
+            .pilot-tenant-input {
+                grid-template-columns: 1fr;
+            }
+
+            .pilot-link-item {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+
+            .pilot-link-item > span:first-child {
+                grid-column: 1 / -1;
+            }
+
+            .tenant-list-item {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body class="platform-admin-shell">
+    <div class="container">
+        <header class="sa-header">
+            <div class="sa-header-title">
+                <h1>Platform Admin</h1>
+                <span class="sa-header-meta">Tenants, Provisioning und Friendly Pilot</span>
+            </div>
+            <div class="sa-header-actions">
+                <button id="logoutBtn" class="secondary-btn" type="button">Logout</button>
+            </div>
+        </header>
+
+        <main class="sa-layout">
+            <aside class="sa-rail">
+                <div class="sa-rail-status">
+                    <div class="sa-rail-status-row"><span>Modus</span><strong>Platform</strong></div>
+                    <div class="sa-rail-status-row"><span>Reichweite</span><strong>Alle Tenants</strong></div>
+                    <div class="sa-rail-status-row"><span>Aktiver Tenant</span><strong>—</strong></div>
+                </div>
+                <nav class="sa-nav" aria-label="Platform Navigation">
+                    <a class="is-active" href="#tenants">Tenants</a>
+                    <a href="#provisioning">Tenant erstellen</a>
+                    <a href="#pilot">Friendly Pilot</a>
+                </nav>
+            </aside>
+
+            <section class="sa-workspace">
+                <section id="tenants" class="sa-panel">
+                    <div class="sa-panel-head">
+                        <div>
+                            <h2>Tenants</h2>
+                            <p>Alle bereitgestellten Workspaces inklusive Legacy.</p>
+                        </div>
+                        <button id="refreshTenantsBtn" class="secondary-btn" type="button">Aktualisieren</button>
+                    </div>
+                    <div class="sa-panel-body sa-panel-body--tight">
+                        <div id="tenantList" class="tenant-list">
+                            <div class="sa-status">Lade Tenants…</div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="provisioning" class="sa-panel">
+                    <div class="sa-panel-head">
+                        <div>
+                            <h2>Tenant erstellen</h2>
+                            <p>Erstellt Tenant, erstes Board und Counter. Slug muss eindeutig sein.</p>
+                        </div>
+                    </div>
+                    <div class="sa-panel-body">
+                        <form id="tenantProvisionForm" class="sa-form">
+                            <div class="sa-form-grid">
+                                <label>
+                                    Tenant-Name
+                                    <input name="tenantName" type="text" autocomplete="organization" required placeholder="Acme GmbH">
+                                </label>
+                                <label>
+                                    Tenant-Slug
+                                    <input name="tenantSlug" type="text" inputmode="url" placeholder="acme">
+                                </label>
+                            </div>
+                            <div class="sa-form-grid">
+                                <label>
+                                    Erstes Board
+                                    <input name="appName" type="text" required placeholder="Feedback Board">
+                                </label>
+                                <label>
+                                    Ticket-Prefix
+                                    <input name="ticketPrefix" type="text" maxlength="5" placeholder="AC">
+                                </label>
+                            </div>
+                            <div class="sa-form-actions">
+                                <button id="createTenantBtn" class="primary-btn" type="submit">Tenant erstellen</button>
+                                <span id="provisionStatus" class="sa-status"></span>
+                            </div>
+                        </form>
+
+                        <div id="provisionResult" class="sa-result" aria-live="polite">
+                            <div class="sa-result-row">
+                                <span>Tenant</span>
+                                <code id="resultTenant"></code>
+                            </div>
+                            <div class="sa-result-row">
+                                <span>Public Board</span>
+                                <a id="resultPublicUrl" href="#"></a>
+                            </div>
+                            <div class="sa-result-row">
+                                <span>Tenant Admin</span>
+                                <a id="resultAdminUrl" href="#"></a>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="pilot" class="sa-panel">
+                    <div class="sa-panel-head">
+                        <div>
+                            <h2>Friendly Pilot</h2>
+                            <p>Kleiner Tenant-basierter Test mit 1–2 Personen.</p>
+                        </div>
+                        <span id="pilotStatusPill" class="pilot-status-pill">Tenant wählen</span>
+                    </div>
+                    <div class="sa-panel-body">
+                        <div class="pilot-step">
+                            <div class="pilot-step-head">
+                                <span class="pilot-step-num">1</span>
+                                <h3>Pilot-Tenant wählen</h3>
+                            </div>
+                            <div class="pilot-tenant-input">
+                                <label>
+                                    Slug
+                                    <input id="pilotTenantSlug" type="text" inputmode="url" placeholder="pilot-ben">
+                                </label>
+                            </div>
+                            <p id="pilotTenantStatus" class="sa-help">
+                                Tenant auswählen oder Slug eingeben. Die Links unten bleiben tenant-basiert.
+                            </p>
+                        </div>
+
+                        <div class="pilot-step">
+                            <div class="pilot-step-head">
+                                <span class="pilot-step-num">2</span>
+                                <h3>Links teilen</h3>
+                            </div>
+                            <div class="pilot-link-list">
+                                <div class="pilot-link-item">
+                                    <span>Public Board</span>
+                                    <code id="pilotPublicLink">/?tenant=pilot-ben</code>
+                                    <button class="pilot-copy-btn" type="button" data-copy-target="pilotPublicLink" aria-label="Public Board Link kopieren" title="Kopieren">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="pilot-link-item">
+                                    <span>Tenant Admin</span>
+                                    <code id="pilotAdminLink">/tenant-admin.html?tenant=pilot-ben</code>
+                                    <button class="pilot-copy-btn" type="button" data-copy-target="pilotAdminLink" aria-label="Tenant Admin Link kopieren" title="Kopieren">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="pilot-link-item">
+                                    <span>Login</span>
+                                    <code id="pilotLoginLink">/login.html</code>
+                                    <button class="pilot-copy-btn" type="button" data-copy-target="pilotLoginLink" aria-label="Login Link kopieren" title="Kopieren">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <details class="pilot-roles">
+                                <summary>Rollen-Übersicht</summary>
+                                <div class="pilot-role-list">
+                                    <div class="pilot-role-row"><strong>Owner</strong><span>Workspace Settings, Team, Rollen und alle Moderationsaktionen.</span></div>
+                                    <div class="pilot-role-row"><strong>Admin</strong><span>Einträge moderieren, Status/Priorität pflegen, Kommentare bearbeiten.</span></div>
+                                    <div class="pilot-role-row"><strong>Viewer</strong><span>Admin-Kontext lesen, keine gefährlichen Schreibaktionen.</span></div>
+                                </div>
+                            </details>
+                        </div>
+
+                        <div class="pilot-step">
+                            <div class="pilot-step-head">
+                                <span class="pilot-step-num">3</span>
+                                <h3>Checkliste</h3>
+                            </div>
+                            <div class="pilot-checklist">
+                                <label class="pilot-check">
+                                    <input type="checkbox" data-pilot-check="tenant">
+                                    <span class="pilot-check-label">Pilot-Tenant ist sauber angelegt<small>Kein Smoke-Text, sinnvoller Name, Board-Link geprüft.</small></span>
+                                </label>
+                                <label class="pilot-check">
+                                    <input type="checkbox" data-pilot-check="owner">
+                                    <span class="pilot-check-label">Owner-Zugang getestet<small>Du kommst per E-Mail-Login in den Tenant Admin.</small></span>
+                                </label>
+                                <label class="pilot-check">
+                                    <input type="checkbox" data-pilot-check="invites">
+                                    <span class="pilot-check-label">Einladungen verschickt<small>Mindestens ein Admin und optional ein Viewer eingeladen.</small></span>
+                                </label>
+                                <label class="pilot-check">
+                                    <input type="checkbox" data-pilot-check="public-board">
+                                    <span class="pilot-check-label">Public Board geprüft<small>Feature, Bug/Ticket, Vote und Kommentar einmal getestet.</small></span>
+                                </label>
+                                <label class="pilot-check">
+                                    <input type="checkbox" data-pilot-check="roles">
+                                    <span class="pilot-check-label">Rollen geprüft<small>Admin darf moderieren, Viewer sieht keine Schreibaktionen.</small></span>
+                                </label>
+                                <label class="pilot-check">
+                                    <input type="checkbox" data-pilot-check="feedback">
+                                    <span class="pilot-check-label">Feedback-Kanal steht<small>Ein fixer Kanal für Bugs/UX-Feedback ist vereinbart.</small></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="admin-auth.js"></script>
+    <script src="super-admin.js"></script>
+</body>
+</html>
