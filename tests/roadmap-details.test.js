@@ -37,12 +37,17 @@ test('opened roadmap suggestions are visibly highlighted', () => {
 });
 
 test('public/script.js does not emit inline event-handler attributes', () => {
-  // Inline onclick=/onchange= etc. would re-open the HTML/JS injection
-  // surface that the click/change delegation refactor was meant to close.
-  const inlineHandler = /\son(?:click|change|input|submit|keyup|keydown|mouseover|focus|blur)\s*=/i;
+  // Any inline event-handler attribute (onclick, onchange, onerror, onload,
+  // onmouseover, onpointerdown, ondragstart, onbeforeunload, ...) re-opens
+  // the HTML/JS injection surface that the click/change delegation refactor
+  // was meant to close. Match the *attribute* form specifically — `=` followed
+  // by a quote — so that legitimate JS property assignments inside this same
+  // file (e.g. `reader.onload = ...`) do not trigger a false positive.
+  const inlineHandler = /\bon[a-z]+\s*=\s*["']/i;
+  const match = publicScript.match(inlineHandler);
   assert.equal(
-    inlineHandler.test(publicScript),
-    false,
-    'expected no inline on*= handlers in public/script.js — use data-action / data-change-action delegation instead'
+    match,
+    null,
+    `expected no inline on*= handlers in public/script.js — use data-action / data-change-action delegation instead. Found: ${match?.[0]}`
   );
 });
