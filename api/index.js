@@ -13,6 +13,11 @@ const {
 } = require('./comment-utils');
 const { compareAdminSuggestions } = require('./admin-suggestion-sort');
 const { queryCollectionInChunks } = require('./firestore-chunks');
+const {
+  LEGACY_TENANT_ID,
+  LEGACY_PUBLIC_HIDDEN_APP_IDS,
+  isLegacyPublicAppVisible,
+} = require('./legacy-public-filter');
 
 const app = express();
 
@@ -370,16 +375,14 @@ function generateUserFingerprint(req) {
   return `${ip}_${Buffer.from(userAgent).toString('base64').slice(0, 10)}`;
 }
 
-// Get all apps
+// Get all apps (legacy public board: only legacy-tenant apps, no test/hidden/blacklisted ones)
 app.get('/api/apps', async (req, res) => {
   try {
     const appsSnapshot = await db.collection('apps').get();
-    const apps = appsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const apps = appsSnapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(appData => isLegacyPublicAppVisible(appData));
 
-    // Sort by name
     apps.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     res.json(apps);
@@ -398,6 +401,11 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
     // Validate appId format
     if (!/^[a-zA-Z0-9_-]+$/.test(appId)) {
       return res.status(400).json({ error: 'Invalid app ID format' });
+    }
+
+    const appDoc = await db.collection('apps').doc(appId).get();
+    if (!appDoc.exists || !isLegacyPublicAppVisible({ id: appId, ...appDoc.data() })) {
+      return res.status(404).json({ error: 'App not found' });
     }
 
     // Get suggestions for this app
@@ -515,9 +523,9 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
     const { appId } = req.params;
     const userFingerprint = generateUserFingerprint(req);
 
-    // Check if app exists
+    // Check if app exists and is publicly visible on the legacy board
     const appDoc = await db.collection('apps').doc(appId).get();
-    if (!appDoc.exists) {
+    if (!appDoc.exists || !isLegacyPublicAppVisible({ id: appId, ...appDoc.data() })) {
       return res.status(404).json({ error: 'App not found' });
     }
 
@@ -1972,6 +1980,11 @@ app.get('/api/apps/:appId/releases', async (req, res) => {
 
     if (!/^[a-zA-Z0-9_-]+$/.test(appId)) {
       return res.status(400).json({ error: 'Invalid app ID format' });
+    }
+
+    const appDoc = await db.collection('apps').doc(appId).get();
+    if (!appDoc.exists || !isLegacyPublicAppVisible({ id: appId, ...appDoc.data() })) {
+      return res.status(404).json({ error: 'App not found' });
     }
 
     let query = db.collection('releases').where('appId', '==', appId);
