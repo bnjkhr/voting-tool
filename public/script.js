@@ -49,6 +49,53 @@ class VotingApp {
         this.currentReportType = 'feature';
         this.bugScreenshots = [];
         this.selectedCommentScreenshots = {};
+
+        // Click/change delegation table. Templates declare data-action / data-change-action;
+        // these handlers receive the trigger element and the event. Keeping inline
+        // event attributes out of template strings removes a whole class of HTML/JS
+        // injection footguns where unescaped user data could break out of attribute or
+        // string-literal context.
+        this.clickActions = {
+            'set-filter': (el) => {
+                this.setFilter(el.dataset.filterGroup, decodeURIComponent(el.dataset.filterId));
+            },
+            'select-app': (el) => {
+                this.selectApp(el.dataset.appId, el.dataset.appName, { appSlug: el.dataset.appSlug || '' });
+            },
+            'show-image-modal': (el) => {
+                const src = el.tagName === 'IMG' ? el.src : el.dataset.imageSrc;
+                if (src) this.showImageModal(src);
+            },
+            'toggle-comments': (el, event) => {
+                event.stopPropagation();
+                this.toggleComments(el.dataset.suggestionId);
+            },
+            'vote-suggestion': (el) => {
+                this.voteSuggestion(el.dataset.suggestionId, el);
+            },
+            'open-roadmap-item': (el) => {
+                this.openRoadmapItem(el.dataset.itemId);
+            },
+            'trigger-file-input': (el) => {
+                const input = document.getElementById(el.dataset.fileInputId);
+                if (input) input.click();
+            },
+            'submit-ticket-comment': (el) => {
+                this.submitTicketComment(el.dataset.suggestionId);
+            },
+            'remove-ticket-comment-screenshot': (el) => {
+                this.removeTicketCommentScreenshot(el.dataset.suggestionId, Number(el.dataset.screenshotIndex));
+            },
+            'remove-bug-screenshot': (el) => {
+                this.removeBugScreenshot(Number(el.dataset.screenshotIndex));
+            },
+        };
+        this.changeActions = {
+            'handle-ticket-comment-files': (el) => {
+                this.handleTicketCommentFiles(el.dataset.suggestionId);
+            },
+        };
+
         this.init();
     }
 
@@ -102,6 +149,20 @@ class VotingApp {
     }
 
     bindEvents() {
+        // Delegated click/change for templated content (see clickActions / changeActions).
+        document.body.addEventListener('click', (event) => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const handler = this.clickActions[trigger.dataset.action];
+            if (handler) handler(trigger, event);
+        });
+        document.body.addEventListener('change', (event) => {
+            const trigger = event.target.closest('[data-change-action]');
+            if (!trigger) return;
+            const handler = this.changeActions[trigger.dataset.changeAction];
+            if (handler) handler(trigger, event);
+        });
+
         // Navigation
         document.getElementById('backBtn').addEventListener('click', () => this.showAppSelection());
         document.getElementById('formBackBtn').addEventListener('click', () => this.showSuggestions());
@@ -718,7 +779,9 @@ class VotingApp {
                         const encodedId = encodeURIComponent(filter.id);
                         return `
                             <button
-                                onclick="app.setFilter('${groupKey}', decodeURIComponent('${encodedId}'))"
+                                data-action="set-filter"
+                                data-filter-group="${this.escapeHtml(groupKey)}"
+                                data-filter-id="${this.escapeHtml(encodedId)}"
                                 class="filter-pill ${activeFilterId === filter.id ? 'active' : ''}"
                                 style="--filter-color: ${filter.color};"
                                 type="button"
@@ -787,7 +850,10 @@ class VotingApp {
         appGrid.innerHTML = apps.map(app => `
             <div
                 class="app-card"
-                onclick="app.selectApp('${this.escapeHtml(app.id)}', '${this.escapeHtml(app.name)}', { appSlug: '${this.escapeHtml(app.slug || '')}' })"
+                data-action="select-app"
+                data-app-id="${this.escapeHtml(app.id)}"
+                data-app-name="${this.escapeHtml(app.name)}"
+                data-app-slug="${this.escapeHtml(app.slug || '')}"
             >
                 <h3>${this.escapeHtml(app.name)}</h3>
                 <p>${this.escapeHtml(app.description || 'Keine Beschreibung verfügbar')}</p>
@@ -887,7 +953,7 @@ class VotingApp {
             const screenshotGallery = (suggestion.screenshots && suggestion.screenshots.length > 0)
                 ? `<div class="bug-screenshots">
                     ${suggestion.screenshots.map((src, idx) =>
-                        `<img src="${src}" alt="Screenshot ${idx + 1}" onclick="app.showImageModal(this.src)">`
+                        `<img src="${this.escapeHtml(src)}" alt="Screenshot ${idx + 1}" data-action="show-image-modal">`
                     ).join('')}
                   </div>`
                 : '';
@@ -911,7 +977,8 @@ class VotingApp {
                 ? `<div class="badge-row">
                         <button
                             type="button"
-                            onclick="app.toggleComments('${suggestion.id}'); event.stopPropagation();"
+                            data-action="toggle-comments"
+                            data-suggestion-id="${suggestion.id}"
                             id="comments-toggle-${suggestion.id}"
                             class="comment-toggle-btn"
                             aria-expanded="${hasComments ? 'true' : 'false'}"
@@ -932,7 +999,8 @@ class VotingApp {
                     <button
                         class="upvote-btn ${suggestion.hasVoted ? 'voted' : ''}"
                         ${suggestion.hasVoted || isImplemented ? 'disabled' : ''}
-                        onclick="app.voteSuggestion('${suggestion.id}', this)"
+                        data-action="vote-suggestion"
+                        data-suggestion-id="${suggestion.id}"
                         title="${suggestion.hasVoted ? 'Vote entfernen' : 'Upvoten'}"
                     >▲</button>
                     <span class="vote-count ${suggestion.hasVoted ? 'voted' : ''}">${suggestion.votes || 0}</span>
@@ -1109,7 +1177,7 @@ class VotingApp {
                 const typeIcon = item.type === 'bug' ? '\uD83D\uDC1E' : item.type === 'ticket' ? '\uD83C\uDFAB' : '\u2728';
                 const statusStyle = VotingApp.TAG_STYLES[item.status] || VotingApp.DEFAULT_TAG_STYLE;
                 return `
-                    <button type="button" class="release-item release-item-button" onclick="app.openRoadmapItem('${item.id}')">
+                    <button type="button" class="release-item release-item-button" data-action="open-roadmap-item" data-item-id="${this.escapeHtml(item.id)}">
                         <span class="release-item-icon">${typeIcon}</span>
                         ${item.ticketNumber ? `<span class="ticket-number">${this.escapeHtml(item.ticketNumber)}</span>` : ''}
                         <span class="release-item-title">${this.escapeHtml(item.title)}</span>
@@ -1373,11 +1441,11 @@ class VotingApp {
                         <div class="comment-screenshots">
                             ${comment.screenshots.map((screenshot, idx) => `
                                 <img
-                                    src="${screenshot}"
+                                    src="${this.escapeHtml(screenshot)}"
                                     alt="Screenshot ${idx + 1}"
                                     class="comment-screenshot"
                                     data-screenshot-index="${commentIdx}-${idx}"
-                                    onclick="app.showImageModal(this.src)"
+                                    data-action="show-image-modal"
                                 >
                             `).join('')}
                         </div>
@@ -1415,19 +1483,22 @@ class VotingApp {
                         accept="image/*"
                         multiple
                         style="display: none;"
-                        onchange="app.handleTicketCommentFiles('${suggestionId}')"
+                        data-change-action="handle-ticket-comment-files"
+                        data-suggestion-id="${this.escapeHtml(suggestionId)}"
                     >
                     <button
                         type="button"
                         class="secondary-btn"
-                        onclick="document.getElementById('ticket-comment-files-${suggestionId}').click()"
+                        data-action="trigger-file-input"
+                        data-file-input-id="ticket-comment-files-${this.escapeHtml(suggestionId)}"
                     >
                         Bild anhängen
                     </button>
                     <button
                         type="button"
                         class="primary-btn"
-                        onclick="app.submitTicketComment('${suggestionId}')"
+                        data-action="submit-ticket-comment"
+                        data-suggestion-id="${this.escapeHtml(suggestionId)}"
                     >
                         Kommentar absenden
                     </button>
@@ -1478,14 +1549,16 @@ class VotingApp {
             imgContainer.className = 'comment-preview-item';
             imgContainer.innerHTML = `
                 <img
-                    src="${screenshot}"
+                    src="${this.escapeHtml(screenshot)}"
                     alt="Ausgewähltes Bild ${idx + 1}"
                     class="comment-preview-thumb"
                 >
                 <button
                     type="button"
                     class="comment-preview-remove"
-                    onclick="app.removeTicketCommentScreenshot('${suggestionId}', ${idx})"
+                    data-action="remove-ticket-comment-screenshot"
+                    data-suggestion-id="${this.escapeHtml(suggestionId)}"
+                    data-screenshot-index="${idx}"
                 >×</button>
             `;
             previewDiv.appendChild(imgContainer);
@@ -1603,8 +1676,8 @@ class VotingApp {
         const preview = document.getElementById('bugScreenshotPreview');
         preview.innerHTML = this.bugScreenshots.map((src, idx) => `
             <div class="screenshot-thumb">
-                <img src="${src}" alt="Screenshot ${idx + 1}">
-                <button type="button" class="remove-btn" onclick="app.removeBugScreenshot(${idx})">×</button>
+                <img src="${this.escapeHtml(src)}" alt="Screenshot ${idx + 1}">
+                <button type="button" class="remove-btn" data-action="remove-bug-screenshot" data-screenshot-index="${idx}">×</button>
             </div>
         `).join('');
     }
