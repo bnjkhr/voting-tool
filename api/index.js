@@ -362,7 +362,8 @@ function parseStatusFilter(statusFilter) {
 
 function sortPublicReleases(releases) {
   releases.sort((a, b) => {
-    const statusOrder = { 'in Arbeit': 0, 'geplant': 1, 'veröffentlicht': 2 };
+    // "in Arbeit" und "geplant" gemeinsam chronologisch nach Datum, "veröffentlicht" separat ans Ende
+    const statusOrder = { 'in Arbeit': 0, 'geplant': 0, 'veröffentlicht': 1 };
     const aOrder = statusOrder[a.status] ?? 9;
     const bOrder = statusOrder[b.status] ?? 9;
     if (aOrder !== bOrder) return aOrder - bOrder;
@@ -4861,19 +4862,7 @@ app.get('/api/apps/:appId/releases', async (req, res) => {
       items: suggestionsByRelease[r.id] || [],
     }));
 
-    // Sort: "in Arbeit" before "geplant", "veröffentlicht" by date desc
-    releases.sort((a, b) => {
-      const statusOrder = { 'in Arbeit': 0, 'geplant': 1, 'veröffentlicht': 2 };
-      const aOrder = statusOrder[a.status] ?? 9;
-      const bOrder = statusOrder[b.status] ?? 9;
-      if (aOrder !== bOrder) return aOrder - bOrder;
-
-      // Within same status: by releaseDate
-      const aDate = a.releaseDate?.toDate?.() ?? (a.releaseDate?._seconds != null ? new Date(a.releaseDate._seconds * 1000) : new Date(0));
-      const bDate = b.releaseDate?.toDate?.() ?? (b.releaseDate?._seconds != null ? new Date(b.releaseDate._seconds * 1000) : new Date(0));
-      // For published: newest first. For planned: earliest first.
-      return a.status === 'veröffentlicht' ? bDate - aDate : aDate - bDate;
-    });
+    sortPublicReleases(releases);
 
     res.json(releases);
   } catch (error) {
