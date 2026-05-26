@@ -8,6 +8,7 @@ class TenantAdminApp {
         this.apps = [];
         this.suggestions = [];
         this.team = { members: [], invites: [] };
+        this.apiKeys = [];
         this.stats = null;
         this.settings = null;
         this.filters = { app: '', type: '', status: '', approval: '' };
@@ -62,6 +63,20 @@ class TenantAdminApp {
             this.createBoard();
         });
         document.getElementById('dismissOnboardingBtn').addEventListener('click', () => this.dismissOnboarding());
+        document.getElementById('apiKeyForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.createApiKey();
+        });
+        document.getElementById('apiKeysList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="revoke-api-key"]');
+            if (!trigger) return;
+            this.revokeApiKey(trigger.dataset.keyId);
+        });
+        document.getElementById('apiKeyReveal').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="copy-api-key"]');
+            if (!trigger) return;
+            this.copyApiKeyToClipboard(trigger.dataset.token, trigger);
+        });
     }
 
     async loadData() {
@@ -72,6 +87,7 @@ class TenantAdminApp {
                 this.loadStats(),
                 this.loadSuggestions(),
                 this.loadTeam(),
+                this.loadApiKeys(),
             ]);
         } catch (error) {
             console.error('Error loading tenant admin data:', error);
@@ -821,6 +837,160 @@ class TenantAdminApp {
         } catch (error) {
             console.error('Error moderating tenant comment:', error);
             this.showToast(error.message || 'Kommentar konnte nicht moderiert werden', 'error');
+        }
+    }
+
+    async loadApiKeys() {
+        if (!this.canManageWorkspace()) {
+            this.apiKeys = [];
+            this.renderApiKeys();
+            return;
+        }
+
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/api-keys'));
+            const keys = await response.json();
+            if (!response.ok) throw new Error(keys.error || 'API-Schlüssel konnten nicht geladen werden');
+
+            this.apiKeys = Array.isArray(keys) ? keys.filter(key => !key.revokedAt) : [];
+        } catch (error) {
+            console.error('Error loading API keys:', error);
+            this.apiKeys = [];
+        }
+        this.renderApiKeys();
+    }
+
+    renderApiKeys() {
+        const host = document.getElementById('apiKeysList');
+        if (!host) return;
+
+        if (!this.canManageWorkspace()) {
+            host.innerHTML = '<div class="tenant-empty">API-Schlüssel sind nur für Admins sichtbar.</div>';
+            return;
+        }
+
+        if (this.apiKeys.length === 0) {
+            host.innerHTML = '<div class="tenant-empty">Noch keine API-Schlüssel erstellt.</div>';
+            return;
+        }
+
+        host.innerHTML = this.apiKeys.map(key => `
+            <div class="tenant-api-key-item">
+                <strong>${this.escapeHtml(key.name || 'Unbenannt')}</strong>
+                <code>${this.escapeHtml(key.tokenPrefix || 'vt_live_…')}…</code>
+                <div class="tenant-badges">
+                    ${(key.scopes || []).map(scope => `<span class="tenant-badge">${this.escapeHtml(scope)}</span>`).join('')}
+                </div>
+                <div class="tenant-badges">
+                    <span class="tenant-badge">Erstellt: ${this.formatDate(key.createdAt)}</span>
+                    <span class="tenant-badge">Zuletzt benutzt: ${key.lastUsedAt ? this.formatDate(key.lastUsedAt) : 'noch nie'}</span>
+                </div>
+                <div class="tenant-team-actions">
+                    <span></span>
+                    <button class="secondary-btn btn-small" type="button"
+                            data-action="revoke-api-key"
+                            data-key-id="${this.escapeHtml(key.id)}">Widerrufen</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async createApiKey() {
+        if (!this.canManageWorkspace()) {
+            this.showToast('Keine Berechtigung für API-Schlüssel', 'error');
+            return;
+        }
+
+        const form = document.getElementById('apiKeyForm');
+        const formData = new FormData(form);
+        const name = (formData.get('apiKeyName') || '').toString().trim();
+        const scopes = formData.getAll('apiKeyScope').map(value => value.toString());
+
+        if (!name) {
+            this.showToast('Name fehlt', 'error');
+            return;
+        }
+        if (scopes.length === 0) {
+            this.showToast('Mindestens einen Scope auswählen', 'error');
+            return;
+        }
+
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/api-keys'), {
+                method: 'POST',
+                body: JSON.stringify({ name, scopes }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Schlüssel konnte nicht erstellt werden');
+
+            form.reset();
+            form.querySelectorAll('input[name="apiKeyScope"]').forEach(input => {
+                input.checked = ['suggestions:read', 'suggestions:write'].includes(input.value);
+            });
+
+            this.revealApiKey(result);
+            await this.loadApiKeys();
+            this.showToast('API-Schlüssel erstellt', 'success');
+        } catch (error) {
+            console.error('Error creating API key:', error);
+            this.showToast(error.message || 'Schlüssel konnte nicht erstellt werden', 'error');
+        }
+    }
+
+    revealApiKey(payload) {
+        const host = document.getElementById('apiKeyReveal');
+        if (!host || !payload?.token) return;
+
+        host.classList.remove('is-hidden');
+        host.innerHTML = `
+            <strong>${this.escapeHtml(payload.name || 'Neuer Schlüssel')}</strong>
+            <p style="margin: 0; color: var(--text-secondary); font-size: 0.85rem;">Token nur einmal angezeigt. Bitte sicher kopieren und speichern.</p>
+            <code>${this.escapeHtml(payload.token)}</code>
+            <div class="tenant-api-key-reveal-actions">
+                <button class="primary-btn btn-small" type="button"
+                        data-action="copy-api-key"
+                        data-token="${this.escapeHtml(payload.token)}">Kopieren</button>
+            </div>
+        `;
+    }
+
+    async copyApiKeyToClipboard(token, button) {
+        if (!token) return;
+        try {
+            await navigator.clipboard.writeText(token);
+            if (button) {
+                const original = button.textContent;
+                button.textContent = 'Kopiert';
+                setTimeout(() => { button.textContent = original; }, 1500);
+            }
+            this.showToast('Token in die Zwischenablage kopiert', 'success');
+        } catch (error) {
+            console.error('Clipboard copy failed:', error);
+            this.showToast('Konnte nicht kopieren — bitte manuell auswählen', 'error');
+        }
+    }
+
+    async revokeApiKey(keyId) {
+        if (!keyId) return;
+        if (!confirm('API-Schlüssel wirklich widerrufen? Tools, die ihn nutzen, verlieren sofort den Zugriff.')) return;
+
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath(`/api-keys/${encodeURIComponent(keyId)}`), {
+                method: 'DELETE',
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Schlüssel konnte nicht widerrufen werden');
+
+            this.showToast('API-Schlüssel widerrufen', 'success');
+            const reveal = document.getElementById('apiKeyReveal');
+            if (reveal) {
+                reveal.classList.add('is-hidden');
+                reveal.innerHTML = '';
+            }
+            await this.loadApiKeys();
+        } catch (error) {
+            console.error('Error revoking API key:', error);
+            this.showToast(error.message || 'Schlüssel konnte nicht widerrufen werden', 'error');
         }
     }
 

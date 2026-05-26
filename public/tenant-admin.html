@@ -263,6 +263,80 @@
             display: block;
         }
 
+        .tenant-api-key-scopes {
+            display: grid;
+            gap: 6px;
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--background-alt);
+            margin: 0;
+        }
+
+        .tenant-api-key-scopes legend {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            padding: 0 4px;
+        }
+
+        .tenant-api-key-scopes label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .tenant-api-key-reveal {
+            margin-top: var(--spacing-sm);
+            padding: var(--spacing-md);
+            border: 1px solid color-mix(in srgb, #10b981 45%, var(--border));
+            border-radius: var(--radius-sm);
+            background: color-mix(in srgb, #10b981 9%, var(--surface));
+            display: grid;
+            gap: var(--spacing-xs);
+        }
+
+        .tenant-api-key-reveal strong {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+        }
+
+        .tenant-api-key-reveal code {
+            display: block;
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+            font-size: 0.85rem;
+            word-break: break-all;
+        }
+
+        .tenant-api-key-reveal-actions {
+            display: flex;
+            gap: var(--spacing-xs);
+            flex-wrap: wrap;
+        }
+
+        .tenant-api-key-item {
+            display: grid;
+            gap: 4px;
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+        }
+
+        .tenant-api-key-item code {
+            font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+        }
+
         .tenant-board-list {
             display: grid;
             gap: var(--spacing-sm);
@@ -722,6 +796,32 @@
                         <h4>Offene Einladungen</h4>
                         <div id="teamInvitesList">
                             <div class="tenant-empty">Lade Einladungen...</div>
+                        </div>
+                    </div>
+                </div>
+                <h3>API-Schlüssel</h3>
+                <div class="tenant-admin-panel-body">
+                    <p class="tenant-settings-note">Erlauben Tools (z.B. Claude Code) Einträge per API anzulegen oder zu aktualisieren. Token wird nur einmal angezeigt.</p>
+                    <form id="apiKeyForm" class="tenant-team-form" data-admin-only>
+                        <label>
+                            Name
+                            <input name="apiKeyName" type="text" maxlength="80" placeholder="z.B. Claude Code lokal" required>
+                        </label>
+                        <fieldset class="tenant-api-key-scopes">
+                            <legend>Scopes</legend>
+                            <label><input type="checkbox" name="apiKeyScope" value="suggestions:read" checked> Einträge lesen</label>
+                            <label><input type="checkbox" name="apiKeyScope" value="suggestions:write" checked> Einträge erstellen (auto-freigegeben)</label>
+                            <label><input type="checkbox" name="apiKeyScope" value="suggestions:status"> Status / Priorität ändern</label>
+                            <label><input type="checkbox" name="apiKeyScope" value="comments:read"> Kommentare lesen</label>
+                            <label><input type="checkbox" name="apiKeyScope" value="comments:write"> Kommentare schreiben</label>
+                        </fieldset>
+                        <button class="primary-btn" type="submit">Schlüssel erstellen</button>
+                    </form>
+                    <div id="apiKeyReveal" class="tenant-api-key-reveal is-hidden" aria-live="polite"></div>
+                    <div class="tenant-team-section">
+                        <h4>Aktive Schlüssel</h4>
+                        <div id="apiKeysList">
+                            <div class="tenant-empty">Lade Schlüssel...</div>
                         </div>
                     </div>
                 </div>
