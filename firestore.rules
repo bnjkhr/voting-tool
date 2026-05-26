@@ -1,32 +1,62 @@
 rules_version = '2';
+
+// Defense-in-depth: the Express backend always talks to Firestore via the
+// Firebase Admin SDK, which bypasses these rules. These rules only protect
+// against direct client access (e.g. via a leaked Web SDK config).
+//
+// SaaS tenants must NEVER be reachable from a browser-side SDK. Reads are
+// only kept open for legacy public data, because the historical voting-tool
+// frontend was designed before tenancy and used to read Firestore directly
+// in earlier iterations. Every modern path goes through /api/* with proper
+// tenant scoping and auth.
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Apps - Public read access, server-side writes via Admin SDK
+
+    // -------------------------------------------------------------------
+    // Public legacy reads — restricted to the legacy tenant only.
+    // SaaS tenant data is never exposed to direct client reads.
+    // -------------------------------------------------------------------
+
     match /apps/{appId} {
-      allow read: if true;
-      // Admin SDK bypasses these rules automatically
+      allow read: if resource.data.tenantId == 'legacy';
+      allow write: if false;
     }
 
-    // Suggestions - Public read access, server-side writes via Admin SDK
     match /suggestions/{suggestionId} {
-      allow read: if true;
-      // Admin SDK bypasses these rules automatically
+      allow read: if resource.data.tenantId == 'legacy'
+                  && resource.data.approved == true;
+      allow write: if false;
     }
 
-    // Releases - Public read access, server-side writes via Admin SDK
     match /releases/{releaseId} {
-      allow read: if true;
-      // Admin SDK bypasses these rules automatically
+      allow read: if resource.data.tenantId == 'legacy';
+      allow write: if false;
     }
 
-    // Votes - No direct client access, server-side only
-    match /votes/{voteId} {
-      allow read, write: if false;
-      // Admin SDK bypasses these rules automatically
-    }
+    // -------------------------------------------------------------------
+    // Strictly server-only collections — Admin SDK bypasses these rules.
+    // Listing them explicitly makes the intent reviewable.
+    // -------------------------------------------------------------------
 
+    match /tenants/{tenantId}         { allow read, write: if false; }
+    match /memberships/{membershipId} { allow read, write: if false; }
+    match /users/{userId}             { allow read, write: if false; }
+    match /sessions/{sessionId}       { allow read, write: if false; }
+    match /invites/{inviteId}         { allow read, write: if false; }
+    match /loginLinks/{linkId}        { allow read, write: if false; }
+    match /apiKeys/{keyId}            { allow read, write: if false; }
+    match /userSettings/{settingsId}  { allow read, write: if false; }
+    match /votes/{voteId}             { allow read, write: if false; }
+    match /comments/{commentId}       { allow read, write: if false; }
+    match /activity/{activityId}      { allow read, write: if false; }
+    match /counters/{counterId}       { allow read, write: if false; }
 
-    // Block all other direct access
+    // -------------------------------------------------------------------
+    // Default deny — covers any collection that gets added later before
+    // its rule is written.
+    // -------------------------------------------------------------------
+
     match /{document=**} {
       allow read, write: if false;
     }
