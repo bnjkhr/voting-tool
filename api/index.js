@@ -3433,6 +3433,329 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', req
   }
 });
 
+// ---------------------------------------------------------------------------
+// Tenant Admin: Releases (Roadmap & Changelog)
+//
+// Parallel to the legacy /api/admin/releases endpoints, but tenant-scoped via
+// requireTenantAccess + getTenantId === tenant.id. The legacy endpoints stay
+// untouched (they remain password-gated and locked to the legacy tenant).
+// ---------------------------------------------------------------------------
+
+function toReleaseDate(value) {
+  return value?.toDate?.()
+    ?? (value?._seconds != null ? new Date(value._seconds * 1000) : new Date(0));
+}
+
+// Firestore caps a write batch at 500 ops; stay safely under it when unlinking.
+const RELEASE_UNLINK_BATCH_LIMIT = 400;
+
+const INVALID_RELEASE_DATE = Symbol('invalid-release-date');
+
+function parseReleaseDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return INVALID_RELEASE_DATE;
+  return admin.firestore.Timestamp.fromDate(date);
+}
+
+function sortAdminReleases(releases) {
+  const statusOrder = { 'geplant': 0, 'in Arbeit': 1, 'veröffentlicht': 2 };
+  releases.sort((a, b) => {
+    const aOrder = statusOrder[a.status] ?? 9;
+    const bOrder = statusOrder[b.status] ?? 9;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return toReleaseDate(b.releaseDate) - toReleaseDate(a.releaseDate);
+  });
+  return releases;
+}
+
+async function countSuggestionsByReleaseId(releaseIds, tenantId) {
+  const itemCountMap = {};
+  if (releaseIds.length === 0) return itemCountMap;
+
+  const chunks = [];
+  for (let i = 0; i < releaseIds.length; i += 10) {
+    chunks.push(releaseIds.slice(i, i + 10));
+  }
+
+  const snapshots = await Promise.all(
+    chunks.map(chunk =>
+      db.collection('suggestions')
+        .where('releaseId', 'in', chunk)
+        .get()
+        .catch(() => ({ docs: [] }))
+    )
+  );
+
+  snapshots.forEach(snapshot => {
+    snapshot.docs.forEach(doc => {
+      const data = doc.data() || {};
+      if (getTenantId(data) !== tenantId) return;
+      itemCountMap[data.releaseId] = (itemCountMap[data.releaseId] || 0) + 1;
+    });
+  });
+
+  return itemCountMap;
+}
+
+async function loadReleasesForTenant(tenantId, { appId } = {}) {
+  // Scope the read to the tenant directly instead of pulling the whole
+  // releases collection and filtering in memory. tenantId is a single-field
+  // equality filter (auto-indexed), so no composite index is needed; the
+  // optional appId narrows the already-small per-tenant set in memory.
+  const [releasesSnapshot, appsSnapshot] = await Promise.all([
+    db.collection('releases').where('tenantId', '==', tenantId).get(),
+    db.collection('apps').where('tenantId', '==', tenantId).get(),
+  ]);
+
+  const appsMap = {};
+  appsSnapshot.docs.forEach(doc => {
+    appsMap[doc.id] = { id: doc.id, ...doc.data() };
+  });
+
+  let scopedReleases = releasesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  if (appId) {
+    scopedReleases = scopedReleases.filter(release => release.appId === appId);
+  }
+
+  const itemCountMap = await countSuggestionsByReleaseId(
+    scopedReleases.map(release => release.id),
+    tenantId,
+  );
+
+  const releases = scopedReleases.map(release => ({
+    ...release,
+    app: appsMap[release.appId] || { name: 'Unbekannte App' },
+    itemCount: itemCountMap[release.id] || 0,
+  }));
+
+  return sortAdminReleases(releases);
+}
+
+app.get('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const requestedAppId = req.query.appId;
+    const appId = requestedAppId && /^[a-zA-Z0-9_-]+$/.test(requestedAppId) ? requestedAppId : null;
+
+    const releases = await loadReleasesForTenant(tenant.id, { appId });
+    res.json(releases);
+  } catch (error) {
+    console.error('Error fetching tenant releases:', error);
+    res.status(500).json({ error: 'Failed to fetch releases' });
+  }
+});
+
+app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 20), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { appId, version, title, description, status, releaseDate } = req.body || {};
+
+    if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) {
+      return res.status(400).json({ error: 'Ungültige App-ID' });
+    }
+
+    const appDoc = await db.collection('apps').doc(appId).get();
+    if (!appDoc.exists || getTenantId(appDoc.data() || {}) !== tenant.id) {
+      return res.status(404).json({ error: 'App nicht gefunden' });
+    }
+
+    const validVersion = validateInput(version, 50);
+    if (!validVersion) {
+      return res.status(400).json({ error: 'Version ist erforderlich (max. 50 Zeichen)' });
+    }
+
+    const parsedReleaseDate = parseReleaseDate(releaseDate);
+    if (parsedReleaseDate === INVALID_RELEASE_DATE) {
+      return res.status(400).json({ error: 'Ungültiges Release-Datum' });
+    }
+
+    const validStatus = RELEASE_STATUSES.includes(status) ? status : 'geplant';
+    const release = {
+      tenantId: tenant.id,
+      appId,
+      version: validVersion,
+      title: validateInput(title, 200) || '',
+      description: validateInput(description, 5000) || '',
+      status: validStatus,
+      releaseDate: parsedReleaseDate,
+      publishedAt: validStatus === 'veröffentlicht' ? admin.firestore.FieldValue.serverTimestamp() : null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const docRef = await db.collection('releases').add(release);
+    res.status(201).json({
+      id: docRef.id,
+      ...release,
+      // serverTimestamp() is a write-only sentinel — resolve the timestamps for
+      // the response so the client never sees {"_methodName":"serverTimestamp"}.
+      publishedAt: validStatus === 'veröffentlicht' ? new Date() : null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('Error creating tenant release:', error);
+    res.status(500).json({ error: 'Failed to create release' });
+  }
+});
+
+app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { releaseId } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return res.status(400).json({ error: 'Invalid release ID format' });
+    }
+
+    const releaseDoc = await db.collection('releases').doc(releaseId).get();
+    if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+      return res.status(404).json({ error: 'Release nicht gefunden' });
+    }
+
+    const { version, title, description, status, releaseDate } = req.body || {};
+    const updateData = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+
+    if (version !== undefined) {
+      const validVersion = validateInput(version, 50);
+      if (!validVersion) {
+        return res.status(400).json({ error: 'Ungültige Version' });
+      }
+      updateData.version = validVersion;
+    }
+
+    if (title !== undefined) {
+      updateData.title = validateInput(title, 200) || '';
+    }
+
+    if (description !== undefined) {
+      updateData.description = validateInput(description, 5000) || '';
+    }
+
+    if (status !== undefined) {
+      if (!RELEASE_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${RELEASE_STATUSES.join(', ')}` });
+      }
+      updateData.status = status;
+
+      const previousStatus = releaseDoc.data().status;
+      if (status === 'veröffentlicht' && previousStatus !== 'veröffentlicht') {
+        updateData.publishedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
+
+    if (releaseDate !== undefined) {
+      const parsedReleaseDate = parseReleaseDate(releaseDate);
+      if (parsedReleaseDate === INVALID_RELEASE_DATE) {
+        return res.status(400).json({ error: 'Ungültiges Release-Datum' });
+      }
+      updateData.releaseDate = parsedReleaseDate;
+    }
+
+    await db.collection('releases').doc(releaseId).update(updateData);
+    res.json({ success: true, message: 'Release erfolgreich aktualisiert' });
+  } catch (error) {
+    console.error('Error updating tenant release:', error);
+    res.status(500).json({ error: 'Failed to update release' });
+  }
+});
+
+app.delete('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { releaseId } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return res.status(400).json({ error: 'Invalid release ID format' });
+    }
+
+    const releaseDoc = await db.collection('releases').doc(releaseId).get();
+    if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+      return res.status(404).json({ error: 'Release nicht gefunden' });
+    }
+
+    const linkedSuggestions = await db.collection('suggestions')
+      .where('releaseId', '==', releaseId)
+      .get();
+
+    const scopedSuggestions = linkedSuggestions.docs
+      .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+
+    // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
+    // one batch — a release on a large tenant can have more linked entries than
+    // that. The release itself is deleted last; the operation is idempotent, so
+    // a retry after a partial failure simply finishes the remaining unlinks.
+    for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
+      const batch = db.batch();
+      scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
+        batch.update(doc.ref, { releaseId: null });
+      });
+      await batch.commit();
+    }
+    await db.collection('releases').doc(releaseId).delete();
+
+    res.json({
+      success: true,
+      message: 'Release gelöscht',
+      unlinkedSuggestions: scopedSuggestions.length,
+    });
+  } catch (error) {
+    console.error('Error deleting tenant release:', error);
+    res.status(500).json({ error: 'Failed to delete release' });
+  }
+});
+
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const { releaseId } = req.body || {};
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    if (releaseId) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+        return res.status(400).json({ error: 'Invalid release ID format' });
+      }
+      const releaseDoc = await db.collection('releases').doc(releaseId).get();
+      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+    }
+
+    const previousReleaseId = suggestionData.releaseId || null;
+    await db.collection('suggestions').doc(suggestionId).update({ releaseId: releaseId || null });
+
+    await logActivity(suggestionId, 'release_changed', {
+      oldValue: previousReleaseId,
+      newValue: releaseId || null,
+      detail: releaseId ? 'Einem Release zugeordnet' : 'Release-Zuordnung entfernt',
+      tenantId: tenant.id,
+    });
+
+    res.json({ success: true, message: releaseId ? 'Release zugeordnet' : 'Release-Zuordnung entfernt' });
+  } catch (error) {
+    console.error('Error assigning tenant release:', error);
+    res.status(500).json({ error: 'Failed to assign release' });
+  }
+});
+
 // Tenant Admin: get comments
 app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', requireTenantAccess(), async (req, res) => {
   try {
