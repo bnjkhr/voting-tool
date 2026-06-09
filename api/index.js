@@ -3446,6 +3446,9 @@ function toReleaseDate(value) {
     ?? (value?._seconds != null ? new Date(value._seconds * 1000) : new Date(0));
 }
 
+// Firestore caps a write batch at 500 ops; stay safely under it when unlinking.
+const RELEASE_UNLINK_BATCH_LIMIT = 400;
+
 const INVALID_RELEASE_DATE = Symbol('invalid-release-date');
 
 function parseReleaseDate(value) {
@@ -3496,13 +3499,12 @@ async function countSuggestionsByReleaseId(releaseIds, tenantId) {
 }
 
 async function loadReleasesForTenant(tenantId, { appId } = {}) {
-  let query = db.collection('releases');
-  if (appId) {
-    query = query.where('appId', '==', appId);
-  }
-
+  // Scope the read to the tenant directly instead of pulling the whole
+  // releases collection and filtering in memory. tenantId is a single-field
+  // equality filter (auto-indexed), so no composite index is needed; the
+  // optional appId narrows the already-small per-tenant set in memory.
   const [releasesSnapshot, appsSnapshot] = await Promise.all([
-    query.get(),
+    db.collection('releases').where('tenantId', '==', tenantId).get(),
     db.collection('apps').where('tenantId', '==', tenantId).get(),
   ]);
 
@@ -3511,9 +3513,10 @@ async function loadReleasesForTenant(tenantId, { appId } = {}) {
     appsMap[doc.id] = { id: doc.id, ...doc.data() };
   });
 
-  const scopedReleases = releasesSnapshot.docs
-    .map(doc => ({ id: doc.id, ...doc.data() }))
-    .filter(release => getTenantId(release) === tenantId);
+  let scopedReleases = releasesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  if (appId) {
+    scopedReleases = scopedReleases.filter(release => release.appId === appId);
+  }
 
   const itemCountMap = await countSuggestionsByReleaseId(
     scopedReleases.map(release => release.id),
@@ -3586,7 +3589,15 @@ app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner'
     };
 
     const docRef = await db.collection('releases').add(release);
-    res.status(201).json({ id: docRef.id, ...release, createdAt: new Date(), updatedAt: new Date() });
+    res.status(201).json({
+      id: docRef.id,
+      ...release,
+      // serverTimestamp() is a write-only sentinel — resolve the timestamps for
+      // the response so the client never sees {"_methodName":"serverTimestamp"}.
+      publishedAt: validStatus === 'veröffentlicht' ? new Date() : null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   } catch (error) {
     console.error('Error creating tenant release:', error);
     res.status(500).json({ error: 'Failed to create release' });
@@ -3677,12 +3688,18 @@ app.delete('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAc
     const scopedSuggestions = linkedSuggestions.docs
       .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
 
-    const batch = db.batch();
-    scopedSuggestions.forEach(doc => {
-      batch.update(doc.ref, { releaseId: null });
-    });
-    batch.delete(db.collection('releases').doc(releaseId));
-    await batch.commit();
+    // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
+    // one batch — a release on a large tenant can have more linked entries than
+    // that. The release itself is deleted last; the operation is idempotent, so
+    // a retry after a partial failure simply finishes the remaining unlinks.
+    for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
+      const batch = db.batch();
+      scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
+        batch.update(doc.ref, { releaseId: null });
+      });
+      await batch.commit();
+    }
+    await db.collection('releases').doc(releaseId).delete();
 
     res.json({
       success: true,

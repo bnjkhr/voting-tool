@@ -37,8 +37,26 @@ test('tenant release reads are scoped to the resolved tenant, not the legacy fil
     'expected a loadReleasesForTenant(tenantId, ...) helper',
   );
   assert.ok(
-    apiSource.includes("getTenantId(release) === tenantId"),
-    'expected the loader to keep only releases whose tenantId matches',
+    apiSource.includes("db.collection('releases').where('tenantId', '==', tenantId)"),
+    'expected the loader to query releases scoped to the tenant, not read the whole collection',
+  );
+});
+
+test('tenant release create resolves publishedAt instead of leaking the serverTimestamp sentinel', () => {
+  assert.ok(
+    apiSource.includes("publishedAt: validStatus === 'veröffentlicht' ? new Date() : null"),
+    'expected the create response to override publishedAt with a real date',
+  );
+});
+
+test('tenant release delete unlinks suggestions in bounded batches', () => {
+  assert.ok(
+    apiSource.includes('RELEASE_UNLINK_BATCH_LIMIT'),
+    'expected a batch-size limit so deletes survive Firestore’s 500-write cap',
+  );
+  assert.ok(
+    /for \(let i = 0; i < scopedSuggestions\.length; i \+= RELEASE_UNLINK_BATCH_LIMIT\)/.test(apiSource),
+    'expected the unlink updates to be committed in chunks',
   );
 });
 

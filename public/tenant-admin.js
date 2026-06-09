@@ -39,7 +39,8 @@ class TenantAdminApp {
 
         this.bindEvents();
         this.switchView((window.location.hash || '').replace('#', '') || 'entries');
-        window.adminAuth.requireTenantAuth(`${window.location.pathname}${window.location.search}`).then(async () => {
+        // Include the hash so the selected tab (e.g. #releases) survives a login redirect.
+        window.adminAuth.requireTenantAuth(`${window.location.pathname}${window.location.search}${window.location.hash}`).then(async () => {
             await this.loadSession();
             await this.loadData();
         });
