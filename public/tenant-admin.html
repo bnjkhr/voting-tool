@@ -88,13 +88,6 @@
             color: var(--text-secondary);
         }
 
-        .tenant-admin-layout {
-            display: grid;
-            grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-            gap: var(--spacing-lg);
-            align-items: start;
-        }
-
         .tenant-admin-panel {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -131,19 +124,6 @@
 
         .tenant-admin-stat strong {
             color: var(--text-primary);
-        }
-
-        .tenant-admin-filters {
-            display: grid;
-            gap: var(--spacing-md);
-        }
-
-        .tenant-admin-filters label {
-            display: grid;
-            gap: 6px;
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            font-weight: 600;
         }
 
         .tenant-team-form,
@@ -618,11 +598,91 @@
             font-size: 0.9rem;
         }
 
-        @media (max-width: 900px) {
-            .tenant-admin-layout {
-                grid-template-columns: 1fr;
-            }
+        .tenant-admin-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-xs, 6px);
+            margin-bottom: var(--spacing-lg);
+            border-bottom: 1px solid var(--border);
+        }
 
+        .tenant-tab {
+            appearance: none;
+            border: none;
+            background: transparent;
+            padding: var(--spacing-sm) var(--spacing-md);
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+        }
+
+        .tenant-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .tenant-tab.is-active {
+            color: var(--text-primary);
+            border-bottom-color: var(--text-primary);
+        }
+
+        .tenant-view {
+            display: none;
+        }
+
+        .tenant-view.is-active {
+            display: grid;
+            gap: var(--spacing-lg);
+            align-items: start;
+        }
+
+        .tenant-view[data-view="entries"].is-active {
+            grid-template-columns: 1fr;
+        }
+
+        .tenant-filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+        }
+
+        .tenant-filter-bar label {
+            display: grid;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+            min-width: 150px;
+            flex: 1 1 150px;
+        }
+
+        .tenant-release-list {
+            display: grid;
+            gap: var(--spacing-md);
+            padding: var(--spacing-lg);
+        }
+
+        .tenant-release-item {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md);
+        }
+
+        .tenant-release-date {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin: 4px 0;
+        }
+
+        .tenant-release-form-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+            margin-top: var(--spacing-md);
+        }
+
+        @media (max-width: 900px) {
             .tenant-admin-header {
                 flex-direction: column;
             }
@@ -663,174 +723,256 @@
             <button id="dismissOnboardingBtn" class="secondary-btn" type="button">Ausblenden</button>
         </section>
 
-        <main class="tenant-admin-layout">
-            <aside class="tenant-admin-panel">
+        <nav class="tenant-admin-tabs" id="tenantTabs" aria-label="Workspace-Bereiche">
+            <button type="button" class="tenant-tab is-active" data-action="switch-view" data-view="entries">Einträge</button>
+            <button type="button" class="tenant-tab" data-action="switch-view" data-view="releases">Releases</button>
+            <button type="button" class="tenant-tab" data-action="switch-view" data-view="boards">Boards</button>
+            <button type="button" class="tenant-tab" data-action="switch-view" data-view="team">Team</button>
+            <button type="button" class="tenant-tab" data-action="switch-view" data-view="settings">Einstellungen</button>
+        </nav>
+
+        <main class="tenant-admin-views">
+            <section class="tenant-view is-active" data-view="entries">
+                <div class="tenant-admin-panel">
+                    <h3>Filter</h3>
+                    <div class="tenant-admin-panel-body tenant-filter-bar">
+                        <label>
+                            App
+                            <select id="appFilter">
+                                <option value="">Alle Apps</option>
+                            </select>
+                        </label>
+                        <label>
+                            Typ
+                            <select id="typeFilter">
+                                <option value="">Alle Typen</option>
+                                <option value="feature">Feature</option>
+                                <option value="bug">Bug</option>
+                                <option value="ticket">Ticket</option>
+                            </select>
+                        </label>
+                        <label>
+                            Status
+                            <select id="statusFilter">
+                                <option value="">Alle Status</option>
+                            </select>
+                        </label>
+                        <label>
+                            Moderation
+                            <select id="approvalFilter">
+                                <option value="">Alle</option>
+                                <option value="pending">Wartet</option>
+                                <option value="approved">Freigegeben</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+                <div class="tenant-admin-panel">
+                    <h2>Einträge</h2>
+                    <div id="suggestionsList" class="tenant-admin-panel-body tenant-admin-list">
+                        <div class="tenant-empty">Lade Einträge...</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tenant-view" data-view="releases">
+                <div class="tenant-admin-panel">
+                    <h2>Releases</h2>
+                    <div class="tenant-admin-panel-body">
+                        <p class="tenant-settings-note">Plane Releases als Roadmap und veröffentliche sie als Changelog. Einzelne Einträge ordnest du direkt am Eintrag einem Release zu.</p>
+                        <form id="releaseForm" class="tenant-settings-form" data-admin-only>
+                            <input type="hidden" name="releaseId">
+                            <div class="tenant-settings-grid">
+                                <label>
+                                    App
+                                    <select name="releaseAppId" required>
+                                        <option value="">App wählen</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    Version
+                                    <input name="releaseVersion" type="text" maxlength="50" placeholder="z.B. 2.4.0" required>
+                                </label>
+                                <label>
+                                    Titel
+                                    <input name="releaseTitle" type="text" maxlength="200" placeholder="z.B. Sommer-Update">
+                                </label>
+                                <label>
+                                    Status
+                                    <select name="releaseStatus">
+                                        <option value="geplant">Geplant</option>
+                                        <option value="in Arbeit">In Arbeit</option>
+                                        <option value="veröffentlicht">Veröffentlicht</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    Release-Datum
+                                    <input name="releaseDate" type="date">
+                                </label>
+                            </div>
+                            <label>
+                                Release-Notes
+                                <textarea name="releaseDescription" maxlength="5000" rows="4" placeholder="Was ist in diesem Release enthalten?"></textarea>
+                            </label>
+                            <div class="tenant-release-form-actions">
+                                <button id="saveReleaseBtn" class="primary-btn" type="submit">Release speichern</button>
+                                <button class="secondary-btn" type="button" data-action="reset-release-form">Neu</button>
+                            </div>
+                        </form>
+                        <div id="releaseReadonly" class="tenant-empty is-hidden">
+                            Releases sind für deine Rolle schreibgeschützt.
+                        </div>
+                    </div>
+                    <div id="releasesList" class="tenant-release-list">
+                        <div class="tenant-empty">Lade Releases...</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tenant-view" data-view="boards">
+                <div class="tenant-admin-panel">
+                    <h2>Boards</h2>
+                    <div class="tenant-admin-panel-body">
+                        <form id="tenantBoardForm" class="tenant-settings-form" data-admin-only>
+                            <div class="tenant-settings-grid">
+                                <label>
+                                    Board Name
+                                    <input name="boardName" type="text" placeholder="Customer Feedback" required>
+                                </label>
+                                <label>
+                                    Public Board Slug
+                                    <input name="boardSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="customer-feedback">
+                                </label>
+                                <label>
+                                    Ticket Prefix
+                                    <input name="boardTicketPrefix" type="text" maxlength="5" placeholder="CF">
+                                </label>
+                            </div>
+                            <button id="createBoardBtn" class="primary-btn" type="submit">Board erstellen</button>
+                        </form>
+                        <div id="tenantBoardsList" class="tenant-board-list">
+                            <div class="tenant-empty">Lade Boards...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tenant-view" data-view="team">
+                <div class="tenant-admin-panel">
+                    <h2>Team</h2>
+                    <div class="tenant-admin-panel-body">
+                        <form id="teamInviteForm" class="tenant-team-form" data-admin-only>
+                            <label>
+                                E-Mail
+                                <input name="inviteEmail" type="email" autocomplete="email" placeholder="admin@example.com" required>
+                            </label>
+                            <label>
+                                Rolle
+                                <select name="inviteRole">
+                                    <option value="admin">Admin</option>
+                                    <option value="owner">Owner</option>
+                                    <option value="viewer">Viewer</option>
+                                </select>
+                            </label>
+                            <button class="primary-btn" type="submit">Einladen</button>
+                        </form>
+                        <div id="teamInviteLink" class="tenant-team-invite-link"></div>
+                        <div class="tenant-team-section">
+                            <h4>Mitglieder</h4>
+                            <div id="teamMembersList">
+                                <div class="tenant-empty">Lade Mitglieder...</div>
+                            </div>
+                        </div>
+                        <div class="tenant-team-section">
+                            <h4>Offene Einladungen</h4>
+                            <div id="teamInvitesList">
+                                <div class="tenant-empty">Lade Einladungen...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tenant-view" data-view="settings">
+                <div class="tenant-admin-panel">
+                    <h2>Workspace</h2>
+                    <div class="tenant-admin-panel-body">
+                        <form id="workspaceSettingsForm" class="tenant-settings-form" data-admin-only>
+                            <div class="tenant-settings-grid">
+                                <label>
+                                    Workspace Name
+                                    <input name="workspaceName" type="text" autocomplete="organization" placeholder="Mein Workspace" required>
+                                </label>
+                                <label>
+                                    Public Slug
+                                    <input name="workspaceSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="mein-workspace" required>
+                                </label>
+                                <label>
+                                    Default Board
+                                    <input name="boardName" type="text" placeholder="Feedback Board" required>
+                                </label>
+                                <label>
+                                    Ticket Prefix
+                                    <input name="ticketPrefix" type="text" maxlength="5" placeholder="APP">
+                                </label>
+                                <label>
+                                    Email From Name
+                                    <input name="emailFromName" type="text" placeholder="Voting Tool">
+                                </label>
+                                <label>
+                                    Reply-To E-Mail
+                                    <input name="replyToEmail" type="email" autocomplete="email" placeholder="support@example.com">
+                                </label>
+                            </div>
+                            <p class="tenant-settings-note">Domain-Versand kommt später als verifizierte Sender-Domain dazu. Hier speichern wir schon Absendername und Antwortadresse.</p>
+                            <button id="saveSettingsBtn" class="primary-btn" type="submit">Settings speichern</button>
+                        </form>
+                        <div id="workspaceSettingsReadonly" class="tenant-empty is-hidden">
+                            Workspace Settings sind für deine Rolle schreibgeschützt.
+                        </div>
+                    </div>
+                </div>
+                <div class="tenant-admin-panel">
+                    <h3>Überblick</h3>
+                    <div class="tenant-admin-panel-body">
+                        <div id="tenantStats" class="tenant-admin-stats">
+                            <div class="tenant-empty">Lade Statistiken...</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="tenant-admin-panel">
+                    <h3>API-Schlüssel</h3>
+                    <div class="tenant-admin-panel-body">
+                        <p class="tenant-settings-note">Erlauben Tools (z.B. Claude Code) Einträge per API anzulegen oder zu aktualisieren. Token wird nur einmal angezeigt.</p>
+                        <form id="apiKeyForm" class="tenant-team-form" data-admin-only>
+                            <label>
+                                Name
+                                <input name="apiKeyName" type="text" maxlength="80" placeholder="z.B. Claude Code lokal" required>
+                            </label>
+                            <fieldset class="tenant-api-key-scopes">
+                                <legend>Scopes</legend>
+                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:read" checked> Einträge lesen</label>
+                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:write" checked> Einträge erstellen (auto-freigegeben)</label>
+                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:status"> Status / Priorität ändern</label>
+                                <label><input type="checkbox" name="apiKeyScope" value="comments:read"> Kommentare lesen</label>
+                                <label><input type="checkbox" name="apiKeyScope" value="comments:write"> Kommentare schreiben</label>
+                            </fieldset>
+                            <button class="primary-btn" type="submit">Schlüssel erstellen</button>
+                        </form>
+                        <div id="apiKeyReveal" class="tenant-api-key-reveal is-hidden" aria-live="polite"></div>
+                        <div class="tenant-team-section">
+                            <h4>Aktive Schlüssel</h4>
+                            <div id="apiKeysList">
+                                <div class="tenant-empty">Lade Schlüssel...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div id="workspaceContext" class="workspace-context-card">
                     <div class="workspace-context-row"><span>Modus</span><strong>Workspace</strong></div>
                     <div class="workspace-context-row"><span>Tenant</span><strong id="workspaceTenantLabel">-</strong></div>
                     <div class="workspace-context-row"><span>Rolle</span><strong id="workspaceRoleLabel">-</strong></div>
                     <div class="workspace-context-row"><span>Platform</span><strong id="workspacePlatformLabel">Nein</strong></div>
-                </div>
-                <h3>Workspace</h3>
-                <div class="tenant-admin-panel-body">
-                    <form id="workspaceSettingsForm" class="tenant-settings-form" data-admin-only>
-                        <div class="tenant-settings-grid">
-                            <label>
-                                Workspace Name
-                                <input name="workspaceName" type="text" autocomplete="organization" placeholder="Mein Workspace" required>
-                            </label>
-                            <label>
-                                Public Slug
-                                <input name="workspaceSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="mein-workspace" required>
-                            </label>
-                            <label>
-                                Default Board
-                                <input name="boardName" type="text" placeholder="Feedback Board" required>
-                            </label>
-                            <label>
-                                Ticket Prefix
-                                <input name="ticketPrefix" type="text" maxlength="5" placeholder="APP">
-                            </label>
-                            <label>
-                                Email From Name
-                                <input name="emailFromName" type="text" placeholder="Voting Tool">
-                            </label>
-                            <label>
-                                Reply-To E-Mail
-                                <input name="replyToEmail" type="email" autocomplete="email" placeholder="support@example.com">
-                            </label>
-                        </div>
-                        <p class="tenant-settings-note">Domain-Versand kommt später als verifizierte Sender-Domain dazu. Hier speichern wir schon Absendername und Antwortadresse.</p>
-                        <button id="saveSettingsBtn" class="primary-btn" type="submit">Settings speichern</button>
-                    </form>
-                    <div id="workspaceSettingsReadonly" class="tenant-empty is-hidden">
-                        Workspace Settings sind für deine Rolle schreibgeschützt.
-                    </div>
-                </div>
-                <h3>Boards</h3>
-                <div class="tenant-admin-panel-body">
-                    <form id="tenantBoardForm" class="tenant-settings-form" data-admin-only>
-                        <div class="tenant-settings-grid">
-                            <label>
-                                Board Name
-                                <input name="boardName" type="text" placeholder="Customer Feedback" required>
-                            </label>
-                            <label>
-                                Public Board Slug
-                                <input name="boardSlug" type="text" inputmode="url" pattern="[a-z0-9-]+" placeholder="customer-feedback">
-                            </label>
-                            <label>
-                                Ticket Prefix
-                                <input name="boardTicketPrefix" type="text" maxlength="5" placeholder="CF">
-                            </label>
-                        </div>
-                        <button id="createBoardBtn" class="primary-btn" type="submit">Board erstellen</button>
-                    </form>
-                    <div id="tenantBoardsList" class="tenant-board-list">
-                        <div class="tenant-empty">Lade Boards...</div>
-                    </div>
-                </div>
-                <h2>Überblick</h2>
-                <div class="tenant-admin-panel-body">
-                    <div id="tenantStats" class="tenant-admin-stats">
-                        <div class="tenant-empty">Lade Statistiken...</div>
-                    </div>
-                </div>
-                <h3>Filter</h3>
-                <div class="tenant-admin-panel-body tenant-admin-filters">
-                    <label>
-                        App
-                        <select id="appFilter">
-                            <option value="">Alle Apps</option>
-                        </select>
-                    </label>
-                    <label>
-                        Typ
-                        <select id="typeFilter">
-                            <option value="">Alle Typen</option>
-                            <option value="feature">Feature</option>
-                            <option value="bug">Bug</option>
-                            <option value="ticket">Ticket</option>
-                        </select>
-                    </label>
-                    <label>
-                        Status
-                        <select id="statusFilter">
-                            <option value="">Alle Status</option>
-                        </select>
-                    </label>
-                    <label>
-                        Moderation
-                        <select id="approvalFilter">
-                            <option value="">Alle</option>
-                            <option value="pending">Wartet</option>
-                            <option value="approved">Freigegeben</option>
-                        </select>
-                    </label>
-                </div>
-                <h3>Team</h3>
-                <div class="tenant-admin-panel-body">
-                    <form id="teamInviteForm" class="tenant-team-form" data-admin-only>
-                        <label>
-                            E-Mail
-                            <input name="inviteEmail" type="email" autocomplete="email" placeholder="admin@example.com" required>
-                        </label>
-                        <label>
-                            Rolle
-                            <select name="inviteRole">
-                                <option value="admin">Admin</option>
-                                <option value="owner">Owner</option>
-                                <option value="viewer">Viewer</option>
-                            </select>
-                        </label>
-                        <button class="primary-btn" type="submit">Einladen</button>
-                    </form>
-                    <div id="teamInviteLink" class="tenant-team-invite-link"></div>
-                    <div class="tenant-team-section">
-                        <h4>Mitglieder</h4>
-                        <div id="teamMembersList">
-                            <div class="tenant-empty">Lade Mitglieder...</div>
-                        </div>
-                    </div>
-                    <div class="tenant-team-section">
-                        <h4>Offene Einladungen</h4>
-                        <div id="teamInvitesList">
-                            <div class="tenant-empty">Lade Einladungen...</div>
-                        </div>
-                    </div>
-                </div>
-                <h3>API-Schlüssel</h3>
-                <div class="tenant-admin-panel-body">
-                    <p class="tenant-settings-note">Erlauben Tools (z.B. Claude Code) Einträge per API anzulegen oder zu aktualisieren. Token wird nur einmal angezeigt.</p>
-                    <form id="apiKeyForm" class="tenant-team-form" data-admin-only>
-                        <label>
-                            Name
-                            <input name="apiKeyName" type="text" maxlength="80" placeholder="z.B. Claude Code lokal" required>
-                        </label>
-                        <fieldset class="tenant-api-key-scopes">
-                            <legend>Scopes</legend>
-                            <label><input type="checkbox" name="apiKeyScope" value="suggestions:read" checked> Einträge lesen</label>
-                            <label><input type="checkbox" name="apiKeyScope" value="suggestions:write" checked> Einträge erstellen (auto-freigegeben)</label>
-                            <label><input type="checkbox" name="apiKeyScope" value="suggestions:status"> Status / Priorität ändern</label>
-                            <label><input type="checkbox" name="apiKeyScope" value="comments:read"> Kommentare lesen</label>
-                            <label><input type="checkbox" name="apiKeyScope" value="comments:write"> Kommentare schreiben</label>
-                        </fieldset>
-                        <button class="primary-btn" type="submit">Schlüssel erstellen</button>
-                    </form>
-                    <div id="apiKeyReveal" class="tenant-api-key-reveal is-hidden" aria-live="polite"></div>
-                    <div class="tenant-team-section">
-                        <h4>Aktive Schlüssel</h4>
-                        <div id="apiKeysList">
-                            <div class="tenant-empty">Lade Schlüssel...</div>
-                        </div>
-                    </div>
-                </div>
-            </aside>
-
-            <section class="tenant-admin-panel">
-                <h2>Einträge</h2>
-                <div id="suggestionsList" class="tenant-admin-panel-body tenant-admin-list">
-                    <div class="tenant-empty">Lade Einträge...</div>
                 </div>
             </section>
         </main>
