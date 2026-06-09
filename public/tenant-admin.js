@@ -1,6 +1,6 @@
 class TenantAdminApp {
-    static FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'ist umgesetzt', 'wird nicht umgesetzt'];
-    static TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'wartend', 'gelöst', 'geschlossen'];
+    static FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'im Test', 'ist umgesetzt', 'wird nicht umgesetzt'];
+    static TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'im Test', 'wartend', 'gelöst', 'geschlossen'];
     static PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
 
     constructor() {
