@@ -152,6 +152,19 @@ test('tenant admin renders a release management surface', () => {
   });
 });
 
+test('entries can be filtered by release', () => {
+  assert.ok(tenantAdminHtml.includes('id="releaseFilter"'), 'expected a release filter dropdown');
+  assert.ok(tenantAdminScript.includes('renderReleaseFilter'), 'expected the release filter to be populated from releases');
+  assert.ok(
+    tenantAdminScript.includes('this.filters.release'),
+    'expected getFilteredSuggestions to honour the release filter',
+  );
+  assert.ok(
+    tenantAdminScript.includes("'__none__'"),
+    'expected an "Ohne Release" (unassigned) filter option',
+  );
+});
+
 test('release UI talks to the tenant-scoped release routes', () => {
   ['loadReleases', 'renderReleases', 'saveRelease', 'deleteRelease'].forEach(method => {
     assert.ok(tenantAdminScript.includes(method), `expected release method: ${method}`);

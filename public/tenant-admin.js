@@ -12,7 +12,7 @@ class TenantAdminApp {
         this.apiKeys = [];
         this.stats = null;
         this.settings = null;
-        this.filters = { app: '', type: '', status: '', approval: '' };
+        this.filters = { app: '', type: '', status: '', approval: '', release: '' };
         this.session = null;
         this.currentMembership = null;
         this.currentRole = 'viewer';
@@ -53,6 +53,7 @@ class TenantAdminApp {
         document.getElementById('typeFilter').addEventListener('change', () => this.applyFilters());
         document.getElementById('statusFilter').addEventListener('change', () => this.applyFilters());
         document.getElementById('approvalFilter').addEventListener('change', () => this.applyFilters());
+        document.getElementById('releaseFilter').addEventListener('change', () => this.applyFilters());
         document.getElementById('teamInviteForm').addEventListener('submit', event => {
             event.preventDefault();
             this.sendInvite();
@@ -472,6 +473,21 @@ class TenantAdminApp {
         `).join('');
     }
 
+    renderReleaseFilter() {
+        const select = document.getElementById('releaseFilter');
+        if (!select) return;
+
+        const currentValue = this.filters.release;
+        const options = this.releases.map(release => {
+            const label = `v${release.version || ''}${release.title ? ` · ${release.title}` : ''}`;
+            return `<option value="${this.escapeHtml(release.id)}" ${currentValue === release.id ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
+        }).join('');
+
+        select.innerHTML = '<option value="">Alle Releases</option>'
+            + `<option value="__none__" ${currentValue === '__none__' ? 'selected' : ''}>Ohne Release</option>`
+            + options;
+    }
+
     renderStats() {
         const stats = this.stats || {};
         document.getElementById('tenantStats').innerHTML = [
@@ -497,6 +513,7 @@ class TenantAdminApp {
             type: document.getElementById('typeFilter').value,
             status: document.getElementById('statusFilter').value,
             approval: document.getElementById('approvalFilter').value,
+            release: document.getElementById('releaseFilter').value,
         };
         this.renderSuggestions();
     }
@@ -508,6 +525,8 @@ class TenantAdminApp {
             if (this.filters.status && item.status !== this.filters.status) return false;
             if (this.filters.approval === 'pending' && item.approved) return false;
             if (this.filters.approval === 'approved' && !item.approved) return false;
+            if (this.filters.release === '__none__' && item.releaseId) return false;
+            if (this.filters.release && this.filters.release !== '__none__' && item.releaseId !== this.filters.release) return false;
             return true;
         });
     }
@@ -532,6 +551,7 @@ class TenantAdminApp {
 
             this.releases = Array.isArray(releases) ? releases : [];
             this.renderReleases();
+            this.renderReleaseFilter();
             if (this.suggestions.length) this.renderSuggestions();
         } catch (error) {
             console.error('Error loading tenant releases:', error);
