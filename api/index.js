@@ -45,6 +45,15 @@ const {
   normalizeInviteEmail,
   normalizeMembershipRole,
 } = require('./team-utils');
+const {
+  API_KEY_SCOPES,
+  buildApiKeyData,
+  generateApiKeyToken,
+  hashApiKeyToken,
+  isApiKeyActive,
+  normalizeScopes,
+  parseApiKeyAuthHeader,
+} = require('./api-key-utils');
 
 const app = express();
 
@@ -3424,6 +3433,329 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', req
   }
 });
 
+// ---------------------------------------------------------------------------
+// Tenant Admin: Releases (Roadmap & Changelog)
+//
+// Parallel to the legacy /api/admin/releases endpoints, but tenant-scoped via
+// requireTenantAccess + getTenantId === tenant.id. The legacy endpoints stay
+// untouched (they remain password-gated and locked to the legacy tenant).
+// ---------------------------------------------------------------------------
+
+function toReleaseDate(value) {
+  return value?.toDate?.()
+    ?? (value?._seconds != null ? new Date(value._seconds * 1000) : new Date(0));
+}
+
+// Firestore caps a write batch at 500 ops; stay safely under it when unlinking.
+const RELEASE_UNLINK_BATCH_LIMIT = 400;
+
+const INVALID_RELEASE_DATE = Symbol('invalid-release-date');
+
+function parseReleaseDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return INVALID_RELEASE_DATE;
+  return admin.firestore.Timestamp.fromDate(date);
+}
+
+function sortAdminReleases(releases) {
+  const statusOrder = { 'geplant': 0, 'in Arbeit': 1, 'veröffentlicht': 2 };
+  releases.sort((a, b) => {
+    const aOrder = statusOrder[a.status] ?? 9;
+    const bOrder = statusOrder[b.status] ?? 9;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return toReleaseDate(b.releaseDate) - toReleaseDate(a.releaseDate);
+  });
+  return releases;
+}
+
+async function countSuggestionsByReleaseId(releaseIds, tenantId) {
+  const itemCountMap = {};
+  if (releaseIds.length === 0) return itemCountMap;
+
+  const chunks = [];
+  for (let i = 0; i < releaseIds.length; i += 10) {
+    chunks.push(releaseIds.slice(i, i + 10));
+  }
+
+  const snapshots = await Promise.all(
+    chunks.map(chunk =>
+      db.collection('suggestions')
+        .where('releaseId', 'in', chunk)
+        .get()
+        .catch(() => ({ docs: [] }))
+    )
+  );
+
+  snapshots.forEach(snapshot => {
+    snapshot.docs.forEach(doc => {
+      const data = doc.data() || {};
+      if (getTenantId(data) !== tenantId) return;
+      itemCountMap[data.releaseId] = (itemCountMap[data.releaseId] || 0) + 1;
+    });
+  });
+
+  return itemCountMap;
+}
+
+async function loadReleasesForTenant(tenantId, { appId } = {}) {
+  // Scope the read to the tenant directly instead of pulling the whole
+  // releases collection and filtering in memory. tenantId is a single-field
+  // equality filter (auto-indexed), so no composite index is needed; the
+  // optional appId narrows the already-small per-tenant set in memory.
+  const [releasesSnapshot, appsSnapshot] = await Promise.all([
+    db.collection('releases').where('tenantId', '==', tenantId).get(),
+    db.collection('apps').where('tenantId', '==', tenantId).get(),
+  ]);
+
+  const appsMap = {};
+  appsSnapshot.docs.forEach(doc => {
+    appsMap[doc.id] = { id: doc.id, ...doc.data() };
+  });
+
+  let scopedReleases = releasesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  if (appId) {
+    scopedReleases = scopedReleases.filter(release => release.appId === appId);
+  }
+
+  const itemCountMap = await countSuggestionsByReleaseId(
+    scopedReleases.map(release => release.id),
+    tenantId,
+  );
+
+  const releases = scopedReleases.map(release => ({
+    ...release,
+    app: appsMap[release.appId] || { name: 'Unbekannte App' },
+    itemCount: itemCountMap[release.id] || 0,
+  }));
+
+  return sortAdminReleases(releases);
+}
+
+app.get('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const requestedAppId = req.query.appId;
+    const appId = requestedAppId && /^[a-zA-Z0-9_-]+$/.test(requestedAppId) ? requestedAppId : null;
+
+    const releases = await loadReleasesForTenant(tenant.id, { appId });
+    res.json(releases);
+  } catch (error) {
+    console.error('Error fetching tenant releases:', error);
+    res.status(500).json({ error: 'Failed to fetch releases' });
+  }
+});
+
+app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 20), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { appId, version, title, description, status, releaseDate } = req.body || {};
+
+    if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) {
+      return res.status(400).json({ error: 'Ungültige App-ID' });
+    }
+
+    const appDoc = await db.collection('apps').doc(appId).get();
+    if (!appDoc.exists || getTenantId(appDoc.data() || {}) !== tenant.id) {
+      return res.status(404).json({ error: 'App nicht gefunden' });
+    }
+
+    const validVersion = validateInput(version, 50);
+    if (!validVersion) {
+      return res.status(400).json({ error: 'Version ist erforderlich (max. 50 Zeichen)' });
+    }
+
+    const parsedReleaseDate = parseReleaseDate(releaseDate);
+    if (parsedReleaseDate === INVALID_RELEASE_DATE) {
+      return res.status(400).json({ error: 'Ungültiges Release-Datum' });
+    }
+
+    const validStatus = RELEASE_STATUSES.includes(status) ? status : 'geplant';
+    const release = {
+      tenantId: tenant.id,
+      appId,
+      version: validVersion,
+      title: validateInput(title, 200) || '',
+      description: validateInput(description, 5000) || '',
+      status: validStatus,
+      releaseDate: parsedReleaseDate,
+      publishedAt: validStatus === 'veröffentlicht' ? admin.firestore.FieldValue.serverTimestamp() : null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const docRef = await db.collection('releases').add(release);
+    res.status(201).json({
+      id: docRef.id,
+      ...release,
+      // serverTimestamp() is a write-only sentinel — resolve the timestamps for
+      // the response so the client never sees {"_methodName":"serverTimestamp"}.
+      publishedAt: validStatus === 'veröffentlicht' ? new Date() : null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (error) {
+    console.error('Error creating tenant release:', error);
+    res.status(500).json({ error: 'Failed to create release' });
+  }
+});
+
+app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { releaseId } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return res.status(400).json({ error: 'Invalid release ID format' });
+    }
+
+    const releaseDoc = await db.collection('releases').doc(releaseId).get();
+    if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+      return res.status(404).json({ error: 'Release nicht gefunden' });
+    }
+
+    const { version, title, description, status, releaseDate } = req.body || {};
+    const updateData = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+
+    if (version !== undefined) {
+      const validVersion = validateInput(version, 50);
+      if (!validVersion) {
+        return res.status(400).json({ error: 'Ungültige Version' });
+      }
+      updateData.version = validVersion;
+    }
+
+    if (title !== undefined) {
+      updateData.title = validateInput(title, 200) || '';
+    }
+
+    if (description !== undefined) {
+      updateData.description = validateInput(description, 5000) || '';
+    }
+
+    if (status !== undefined) {
+      if (!RELEASE_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${RELEASE_STATUSES.join(', ')}` });
+      }
+      updateData.status = status;
+
+      const previousStatus = releaseDoc.data().status;
+      if (status === 'veröffentlicht' && previousStatus !== 'veröffentlicht') {
+        updateData.publishedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
+
+    if (releaseDate !== undefined) {
+      const parsedReleaseDate = parseReleaseDate(releaseDate);
+      if (parsedReleaseDate === INVALID_RELEASE_DATE) {
+        return res.status(400).json({ error: 'Ungültiges Release-Datum' });
+      }
+      updateData.releaseDate = parsedReleaseDate;
+    }
+
+    await db.collection('releases').doc(releaseId).update(updateData);
+    res.json({ success: true, message: 'Release erfolgreich aktualisiert' });
+  } catch (error) {
+    console.error('Error updating tenant release:', error);
+    res.status(500).json({ error: 'Failed to update release' });
+  }
+});
+
+app.delete('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { releaseId } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return res.status(400).json({ error: 'Invalid release ID format' });
+    }
+
+    const releaseDoc = await db.collection('releases').doc(releaseId).get();
+    if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+      return res.status(404).json({ error: 'Release nicht gefunden' });
+    }
+
+    const linkedSuggestions = await db.collection('suggestions')
+      .where('releaseId', '==', releaseId)
+      .get();
+
+    const scopedSuggestions = linkedSuggestions.docs
+      .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+
+    // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
+    // one batch — a release on a large tenant can have more linked entries than
+    // that. The release itself is deleted last; the operation is idempotent, so
+    // a retry after a partial failure simply finishes the remaining unlinks.
+    for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
+      const batch = db.batch();
+      scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
+        batch.update(doc.ref, { releaseId: null });
+      });
+      await batch.commit();
+    }
+    await db.collection('releases').doc(releaseId).delete();
+
+    res.json({
+      success: true,
+      message: 'Release gelöscht',
+      unlinkedSuggestions: scopedSuggestions.length,
+    });
+  } catch (error) {
+    console.error('Error deleting tenant release:', error);
+    res.status(500).json({ error: 'Failed to delete release' });
+  }
+});
+
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { suggestionId } = req.params;
+    const { releaseId } = req.body || {};
+    if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
+    }
+
+    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    if (error) {
+      return res.status(errorStatus).json({ error });
+    }
+
+    if (releaseId) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+        return res.status(400).json({ error: 'Invalid release ID format' });
+      }
+      const releaseDoc = await db.collection('releases').doc(releaseId).get();
+      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+    }
+
+    const previousReleaseId = suggestionData.releaseId || null;
+    await db.collection('suggestions').doc(suggestionId).update({ releaseId: releaseId || null });
+
+    await logActivity(suggestionId, 'release_changed', {
+      oldValue: previousReleaseId,
+      newValue: releaseId || null,
+      detail: releaseId ? 'Einem Release zugeordnet' : 'Release-Zuordnung entfernt',
+      tenantId: tenant.id,
+    });
+
+    res.json({ success: true, message: releaseId ? 'Release zugeordnet' : 'Release-Zuordnung entfernt' });
+  } catch (error) {
+    console.error('Error assigning tenant release:', error);
+    res.status(500).json({ error: 'Failed to assign release' });
+  }
+});
+
 // Tenant Admin: get comments
 app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', requireTenantAccess(), async (req, res) => {
   try {
@@ -5150,6 +5482,522 @@ app.put('/api/admin/suggestions/:suggestionId/release', requireAdminAuth, async 
   } catch (error) {
     console.error('Error assigning release:', error);
     res.status(500).json({ error: 'Failed to assign release' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Public API v1 — API-key authenticated, tenant-scoped, agent-friendly
+// ----------------------------------------------------------------------------
+
+const apiKeyRateLimitStore = new Map();
+
+function rateLimitByApiKey(windowMs, maxRequests) {
+  return (req, res, next) => {
+    const keyId = req.apiAuth?.keyId;
+    if (!keyId) return next();
+
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    const requests = (apiKeyRateLimitStore.get(keyId) || []).filter(t => t > windowStart);
+
+    if (requests.length >= maxRequests) {
+      return res.status(429).json({ error: 'API key rate limit exceeded. Please slow down.' });
+    }
+
+    requests.push(now);
+    apiKeyRateLimitStore.set(keyId, requests);
+    next();
+  };
+}
+
+function requireApiKey(requiredScopes = []) {
+  const scopes = Array.isArray(requiredScopes) ? requiredScopes : [requiredScopes];
+
+  return async (req, res, next) => {
+    try {
+      const token = parseApiKeyAuthHeader(req.headers.authorization);
+      if (!token) {
+        return res.status(401).json({ error: 'Missing or malformed API key. Use Authorization: Bearer vt_live_…' });
+      }
+
+      const snapshot = await db.collection('apiKeys')
+        .where('tokenHash', '==', hashApiKeyToken(token))
+        .limit(2)
+        .get();
+
+      if (snapshot.size !== 1) {
+        return res.status(401).json({ error: 'Invalid API key' });
+      }
+
+      const doc = snapshot.docs[0];
+      const data = { id: doc.id, ...doc.data() };
+      if (!isApiKeyActive(data)) {
+        return res.status(401).json({ error: 'API key revoked' });
+      }
+
+      const grantedScopes = Array.isArray(data.scopes) ? data.scopes : [];
+      const missing = scopes.filter(scope => !grantedScopes.includes(scope));
+      if (missing.length > 0) {
+        return res.status(403).json({
+          error: `API key is missing required scope(s): ${missing.join(', ')}`,
+        });
+      }
+
+      const tenantDoc = await db.collection('tenants').doc(data.tenantId).get();
+      if (!tenantDoc.exists || !isActiveTenant(tenantDoc.data() || {})) {
+        return res.status(403).json({ error: 'API key tenant inactive or missing' });
+      }
+
+      req.apiAuth = {
+        keyId: data.id,
+        tenantId: data.tenantId,
+        tenant: { id: tenantDoc.id, ...tenantDoc.data() },
+        scopes: grantedScopes,
+        keyName: data.name,
+      };
+
+      // Fire-and-forget — never block the request on usage tracking.
+      doc.ref.set({ lastUsedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        .catch(err => console.error('Failed to update apiKey lastUsedAt:', err?.message || err));
+
+      next();
+    } catch (error) {
+      console.error('Error validating API key:', error);
+      res.status(500).json({ error: 'Failed to validate API key' });
+    }
+  };
+}
+
+async function loadApiKeySuggestionById(req, suggestionId) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+    return { errorStatus: 400, error: 'Invalid suggestion ID' };
+  }
+  const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+  if (!suggestionDoc.exists) {
+    return { errorStatus: 404, error: 'Suggestion not found' };
+  }
+  const suggestionData = { id: suggestionDoc.id, ...suggestionDoc.data() };
+  if (getTenantId(suggestionData) !== req.apiAuth.tenantId) {
+    return { errorStatus: 404, error: 'Suggestion not found' };
+  }
+  return { suggestionDoc, suggestionData };
+}
+
+function buildApiSuggestionResponse(data) {
+  const type = normalizeSuggestionType(data.type);
+  const createdAt = data.createdAt?.toDate?.() || data.createdAt || null;
+  return {
+    id: data.id,
+    ticketNumber: data.ticketNumber || null,
+    type,
+    title: data.title || '',
+    description: data.description || '',
+    status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+    priority: data.priority || 'mittel',
+    labels: Array.isArray(data.labels) ? data.labels : [],
+    approved: Boolean(data.approved),
+    votes: data.votes || 0,
+    appId: data.appId,
+    tenantId: data.tenantId,
+    severity: data.severity || null,
+    createdAt,
+  };
+}
+
+app.get('/api/v1/me', requireApiKey(), rateLimitByApiKey(60000, 120), async (req, res) => {
+  const { tenant, keyName, scopes } = req.apiAuth;
+  res.json({
+    tenant: {
+      id: tenant.id,
+      slug: tenant.slug,
+      name: tenant.displayName || tenant.name || tenant.slug,
+    },
+    key: { name: keyName, scopes },
+  });
+});
+
+app.get('/api/v1/apps', requireApiKey(['suggestions:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
+  try {
+    const apps = await loadTenantApps(req.apiAuth.tenantId);
+    res.json(apps.map(appData => ({
+      id: appData.id,
+      slug: appData.slug,
+      name: appData.name,
+      description: appData.description || '',
+      ticketPrefix: appData.ticketPrefix || null,
+    })));
+  } catch (error) {
+    console.error('Error fetching apps via API key:', error);
+    res.status(500).json({ error: 'Failed to load apps' });
+  }
+});
+
+app.get('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
+  try {
+    const appSlug = parseSlugParam(req.params.appSlug);
+    if (!appSlug) return res.status(400).json({ error: 'Invalid app slug' });
+
+    const tenantApp = await findTenantAppBySlug(req.apiAuth.tenantId, appSlug);
+    if (!tenantApp) return res.status(404).json({ error: 'App not found' });
+
+    const statusFilter = (req.query.status || '').toString().trim();
+    const typeFilter = (req.query.type || '').toString().trim();
+    const approvedFilter = (req.query.approved || '').toString().trim();
+
+    const snapshot = await db.collection('suggestions')
+      .where('appId', '==', tenantApp.id)
+      .get();
+
+    let suggestions = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(data => getTenantId(data) === req.apiAuth.tenantId);
+
+    if (typeFilter) {
+      suggestions = suggestions.filter(s => normalizeSuggestionType(s.type) === typeFilter);
+    }
+    if (statusFilter) {
+      suggestions = suggestions.filter(s => (s.status || mapLegacyTagToStatus(normalizeSuggestionType(s.type), s.tag, s.approved)) === statusFilter);
+    }
+    if (approvedFilter === 'true') {
+      suggestions = suggestions.filter(s => Boolean(s.approved));
+    } else if (approvedFilter === 'false') {
+      suggestions = suggestions.filter(s => !s.approved);
+    }
+
+    suggestions.sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+      const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+      return bTime - aTime;
+    });
+
+    res.json(suggestions.map(buildApiSuggestionResponse));
+  } catch (error) {
+    console.error('Error listing suggestions via API key:', error);
+    res.status(500).json({ error: 'Failed to load suggestions' });
+  }
+});
+
+app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
+  try {
+    const appSlug = parseSlugParam(req.params.appSlug);
+    if (!appSlug) return res.status(400).json({ error: 'Invalid app slug' });
+
+    const tenantApp = await findTenantAppBySlug(req.apiAuth.tenantId, appSlug);
+    if (!tenantApp) return res.status(404).json({ error: 'App not found' });
+
+    const actor = `api:${req.apiAuth.keyId}`;
+    const { suggestion, error } = buildSuggestionFromRequest(
+      req.body,
+      tenantApp.id,
+      actor,
+      req.apiAuth.tenantId
+    );
+    if (error) return res.status(400).json({ error });
+
+    suggestion.approved = true;
+    suggestion.approvedAt = admin.firestore.FieldValue.serverTimestamp();
+    suggestion.approvedBy = actor;
+    suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, req.apiAuth.tenantId);
+
+    const docRef = await db.collection('suggestions').add(suggestion);
+
+    await logActivity(docRef.id, 'created', {
+      detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" via API erstellt`,
+      actor,
+      tenantId: req.apiAuth.tenantId,
+    });
+
+    res.status(201).json(buildApiSuggestionResponse({ id: docRef.id, ...suggestion, createdAt: new Date() }));
+  } catch (error) {
+    console.error('Error creating suggestion via API key:', error);
+    res.status(500).json({ error: 'Failed to create suggestion' });
+  }
+});
+
+app.get('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
+  try {
+    const { suggestionData, errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+    res.json(buildApiSuggestionResponse(suggestionData));
+  } catch (error) {
+    console.error('Error fetching suggestion via API key:', error);
+    res.status(500).json({ error: 'Failed to load suggestion' });
+  }
+});
+
+app.patch('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:status']), rateLimitByApiKey(60000, 60), async (req, res) => {
+  try {
+    const { suggestionDoc, suggestionData, errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const updates = {};
+    const activityEntries = [];
+    const actor = `api:${req.apiAuth.keyId}`;
+    const type = normalizeSuggestionType(suggestionData.type);
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
+      const status = (req.body.status || '').toString().trim();
+      const validStatuses = getValidStatusesForType(type);
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: `Invalid status. Allowed: ${validStatuses.join(', ')}` });
+      }
+      const previousStatus = suggestionData.status || null;
+      updates.status = status;
+      updates.tag = mapStatusToLegacyTag(type, status);
+      updates.tagUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
+      if (status !== 'neu' && !suggestionData.approved) {
+        updates.approved = true;
+        updates.approvedAt = admin.firestore.FieldValue.serverTimestamp();
+        updates.approvedBy = actor;
+      }
+      if (previousStatus !== status) {
+        activityEntries.push({
+          action: 'status_changed',
+          payload: {
+            oldValue: previousStatus,
+            newValue: status,
+            detail: `Status via API geändert: ${previousStatus || 'keiner'} → ${status}`,
+          },
+        });
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'priority')) {
+      const priority = (req.body.priority || '').toString().trim().toLowerCase();
+      if (!VALID_PRIORITIES.includes(priority)) {
+        return res.status(400).json({ error: `Invalid priority. Allowed: ${VALID_PRIORITIES.join(', ')}` });
+      }
+      const previous = suggestionData.priority || null;
+      updates.priority = priority;
+      if (previous !== priority) {
+        activityEntries.push({
+          action: 'priority_changed',
+          payload: {
+            oldValue: previous,
+            newValue: priority,
+            detail: `Priorität via API geändert: ${previous || 'keine'} → ${priority}`,
+          },
+        });
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'labels')) {
+      if (!Array.isArray(req.body.labels)) {
+        return res.status(400).json({ error: 'labels must be an array of strings' });
+      }
+      const labels = req.body.labels
+        .filter(label => typeof label === 'string')
+        .map(label => label.trim())
+        .filter(Boolean)
+        .slice(0, 20);
+      updates.labels = labels;
+      activityEntries.push({
+        action: 'labels_changed',
+        payload: {
+          oldValue: Array.isArray(suggestionData.labels) ? suggestionData.labels : [],
+          newValue: labels,
+          detail: `Labels via API gesetzt: ${labels.join(', ') || '(leer)'}`,
+        },
+      });
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No supported fields provided (status, priority, labels)' });
+    }
+
+    await suggestionDoc.ref.update(updates);
+
+    for (const entry of activityEntries) {
+      await logActivity(suggestionDoc.id, entry.action, {
+        ...entry.payload,
+        actor,
+        tenantId: req.apiAuth.tenantId,
+      });
+    }
+
+    const refreshed = await suggestionDoc.ref.get();
+    res.json(buildApiSuggestionResponse({ id: refreshed.id, ...refreshed.data() }));
+  } catch (error) {
+    console.error('Error updating suggestion via API key:', error);
+    res.status(500).json({ error: 'Failed to update suggestion' });
+  }
+});
+
+app.get('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
+  try {
+    const { errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const snapshot = await db.collection('comments')
+      .where('suggestionId', '==', req.params.suggestionId)
+      .get();
+
+    const comments = snapshot.docs
+      .filter(doc => getTenantId(doc.data() || {}) === req.apiAuth.tenantId)
+      .map(buildAdminCommentResponse);
+
+    comments.sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+      const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+      return bTime - aTime;
+    });
+
+    res.json(comments);
+  } catch (error) {
+    console.error('Error listing comments via API key:', error);
+    res.status(500).json({ error: 'Failed to load comments' });
+  }
+});
+
+app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
+  try {
+    const { suggestionData, errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const validText = validateInput(req.body?.text, 2000);
+    if (!validText) return res.status(400).json({ error: 'Invalid comment text' });
+
+    const screenshotValidation = validateCommentScreenshots(req.body?.screenshots);
+    if (screenshotValidation.error) return res.status(400).json({ error: screenshotValidation.error });
+
+    const actor = `api:${req.apiAuth.keyId}`;
+    const comment = {
+      tenantId: req.apiAuth.tenantId,
+      suggestionId: req.params.suggestionId,
+      text: validText,
+      screenshots: screenshotValidation.screenshots,
+      authorType: 'admin',
+      approvalStatus: 'approved',
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      approvedBy: actor,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const commentRef = await db.collection('comments').add(comment);
+
+    await logActivity(req.params.suggestionId, 'commented', {
+      detail: `Kommentar via API hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
+      actor,
+      tenantId: req.apiAuth.tenantId,
+    });
+
+    res.status(201).json({
+      id: commentRef.id,
+      ...normalizeCommentData(comment),
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    console.error('Error creating comment via API key:', error);
+    res.status(500).json({ error: 'Failed to create comment' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Tenant admin endpoints for managing API keys (owner/admin only)
+// ----------------------------------------------------------------------------
+
+function buildApiKeyAdminResponse(data) {
+  return {
+    id: data.id,
+    name: data.name,
+    scopes: Array.isArray(data.scopes) ? data.scopes : [],
+    tokenPrefix: data.tokenPrefix || null,
+    createdAt: data.createdAt?.toDate?.() || data.createdAt || null,
+    createdBy: data.createdBy || null,
+    lastUsedAt: data.lastUsedAt?.toDate?.() || data.lastUsedAt || null,
+    revokedAt: data.revokedAt?.toDate?.() || data.revokedAt || null,
+  };
+}
+
+app.get('/api/admin/tenants/:tenantSlug/api-keys', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const snapshot = await db.collection('apiKeys')
+      .where('tenantId', '==', tenant.id)
+      .get();
+
+    const keys = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => {
+        const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+        const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+        return bTime - aTime;
+      })
+      .map(buildApiKeyAdminResponse);
+
+    res.json(keys);
+  } catch (error) {
+    console.error('Error listing API keys:', error);
+    res.status(500).json({ error: 'Failed to list API keys' });
+  }
+});
+
+app.post('/api/admin/tenants/:tenantSlug/api-keys', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const name = (req.body?.name || '').toString().trim();
+    if (!name) return res.status(400).json({ error: 'Name ist erforderlich' });
+
+    const scopes = normalizeScopes(req.body?.scopes);
+    if (scopes.length === 0) {
+      return res.status(400).json({
+        error: `Mindestens ein Scope erforderlich. Erlaubt: ${API_KEY_SCOPES.join(', ')}`,
+      });
+    }
+
+    const token = generateApiKeyToken();
+    const createdBy = req.tenantAuth?.user?.email
+      || (req.tenantAuth?.type === 'admin' ? 'platform-admin' : null);
+
+    const data = buildApiKeyData({
+      tenantId: tenant.id,
+      name,
+      scopes,
+      token,
+      createdBy,
+    });
+
+    const docRef = await db.collection('apiKeys').add(data);
+
+    res.status(201).json({
+      ...buildApiKeyAdminResponse({ id: docRef.id, ...data }),
+      token,
+      message: 'Token wird nur einmal angezeigt. Bitte sicher aufbewahren.',
+    });
+  } catch (error) {
+    console.error('Error creating API key:', error);
+    res.status(500).json({ error: error.message || 'Failed to create API key' });
+  }
+});
+
+app.delete('/api/admin/tenants/:tenantSlug/api-keys/:keyId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { keyId } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(keyId)) {
+      return res.status(400).json({ error: 'Invalid key id' });
+    }
+
+    const keyRef = db.collection('apiKeys').doc(keyId);
+    const keyDoc = await keyRef.get();
+    if (!keyDoc.exists || (keyDoc.data() || {}).tenantId !== tenant.id) {
+      return res.status(404).json({ error: 'API key not found' });
+    }
+
+    await keyRef.update({
+      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    res.json({ success: true, message: 'API-Schlüssel widerrufen' });
+  } catch (error) {
+    console.error('Error revoking API key:', error);
+    res.status(500).json({ error: 'Failed to revoke API key' });
   }
 });
 

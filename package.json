@@ -5,6 +5,7 @@
   "main": "api/index.js",
   "scripts": {
     "init-firebase": "node init-firebase.js",
+    "diagnose-credentials": "node scripts/diagnose-firebase-credentials.js",
     "bootstrap-tenancy": "node scripts/bootstrap-tenancy.js",
     "bootstrap-tenancy:dry-run": "node scripts/bootstrap-tenancy.js --dry-run",
     "test-tenant:create": "node scripts/manage-test-tenant.js create",

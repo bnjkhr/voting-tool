@@ -158,6 +158,38 @@ test('tenant admin renders the workspace console shell with role context', () =>
   assert.ok(tenantAdminScript.includes('canManageWorkspace'));
 });
 
+test('tenant-admin.js does not emit inline event-handler attributes', () => {
+  // Inline on*= handlers re-open the HTML/JS injection surface that the
+  // click/change delegation refactor was meant to close (CSP-driven). Match
+  // the *attribute* form specifically — `=` followed by a quote — so that
+  // legitimate JS property assignments would not trigger a false positive.
+  const inlineHandler = /\bon[a-z]+\s*=\s*["']/i;
+  const match = tenantAdminScript.match(inlineHandler);
+  assert.equal(
+    match,
+    null,
+    `expected no inline on*= handlers in public/tenant-admin.js — use data-action / data-change-action delegation instead. Found: ${match?.[0]}`
+  );
+});
+
+test('tenant admin wires suggestion and team actions through delegation', () => {
+  [
+    "data-change-action=\"update-status\"",
+    "data-change-action=\"update-priority\"",
+    "data-action=\"approve-suggestion\"",
+    "data-action=\"toggle-comments\"",
+    "data-action=\"add-comment\"",
+    "data-action=\"moderate-comment\"",
+    "data-change-action=\"update-member-role\"",
+    "data-action=\"enable-member\"",
+    "data-action=\"disable-member\"",
+    "data-action=\"resend-invite\"",
+    "data-action=\"revoke-invite\"",
+  ].forEach(fragment => {
+    assert.ok(tenantAdminScript.includes(fragment), `expected ${fragment}`);
+  });
+});
+
 test('tenant admin shows dismissible onboarding for signup redirects', () => {
   assert.ok(tenantAdminHtml.includes('id="workspaceOnboarding"'));
   assert.ok(tenantAdminHtml.includes('id="dismissOnboardingBtn"'));

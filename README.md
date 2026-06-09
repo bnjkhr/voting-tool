@@ -62,6 +62,40 @@ npm run dev
 3. Deploy: `vercel --prod`
 4. Setze Environment Variables in Vercel Dashboard
 
+## Firebase-Credentials lokal prüfen
+
+Vor jedem Skript, das die Firebase Admin SDK braucht (Bootstrap, Tenant-Provisioning,
+Migrationen), den Credential-Healthcheck laufen lassen. Er liest die `.env`, prüft
+strukturell auf gültiges PEM und versucht den Schlüssel via `crypto.createPrivateKey`
+zu laden — gibt aber **niemals** den Schlüssel selbst aus.
+
+```bash
+npm run diagnose-credentials
+```
+
+Bei `BROKEN` zeigt das Tool exakt, an welcher Stelle (`-----BEGIN`-Header fehlt,
+`\n`-Escapes übrig, Base64-Body unplausibel, etc.) — plus konkrete Aktion zum
+Fixen. Alternativ kann `GOOGLE_APPLICATION_CREDENTIALS` auf eine
+Service-Account-JSON zeigen, dann werden die `FIREBASE_*`-Env-Vars ignoriert.
+
+## Firestore Rules und Indexes deployen
+
+Die App liefert `firestore.rules` und `firestore.indexes.json` mit. Beide werden
+über die mitgelieferte `firebase.json` gemeinsam deployed:
+
+```bash
+firebase deploy --only firestore
+```
+
+Die Rules sind defense-in-depth: das Express-Backend nutzt ausschließlich die
+Admin SDK (und umgeht damit die Rules), aber sobald ein Browser-Client direkt
+auf Firestore zugreifen würde, sind nur noch Legacy-Tenant-Daten lesbar. Alle
+SaaS-Tenant-Collections (`tenants`, `memberships`, `apiKeys`, `votes`,
+`comments`, …) bleiben über die Public-Web-SDK unsichtbar.
+
+Die Indexes decken die Hot-Path-Queries ab (Vote-Duplikat-Check tenant-scoped,
+Membership-Resolve, Invite-Listing, Release-Filter, Suggestion-Public-Feed).
+
 ## Isolierter Test-Tenant auf geteilter Datenbank
 
 Wenn nur eine Firestore-Datenbank vorhanden ist, kann ein sicher isolierter Test-Tenant

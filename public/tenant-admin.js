@@ -7,10 +7,12 @@ class TenantAdminApp {
         this.tenantSlug = '';
         this.apps = [];
         this.suggestions = [];
+        this.releases = [];
         this.team = { members: [], invites: [] };
+        this.apiKeys = [];
         this.stats = null;
         this.settings = null;
-        this.filters = { app: '', type: '', status: '', approval: '' };
+        this.filters = { app: '', type: '', status: '', approval: '', release: '' };
         this.session = null;
         this.currentMembership = null;
         this.currentRole = 'viewer';
@@ -36,7 +38,9 @@ class TenantAdminApp {
         document.getElementById('workspaceTenantLabel').textContent = this.tenantSlug;
 
         this.bindEvents();
-        window.adminAuth.requireTenantAuth(`${window.location.pathname}${window.location.search}`).then(async () => {
+        this.switchView((window.location.hash || '').replace('#', '') || 'entries');
+        // Include the hash so the selected tab (e.g. #releases) survives a login redirect.
+        window.adminAuth.requireTenantAuth(`${window.location.pathname}${window.location.search}${window.location.hash}`).then(async () => {
             await this.loadSession();
             await this.loadData();
         });
@@ -49,6 +53,7 @@ class TenantAdminApp {
         document.getElementById('typeFilter').addEventListener('change', () => this.applyFilters());
         document.getElementById('statusFilter').addEventListener('change', () => this.applyFilters());
         document.getElementById('approvalFilter').addEventListener('change', () => this.applyFilters());
+        document.getElementById('releaseFilter').addEventListener('change', () => this.applyFilters());
         document.getElementById('teamInviteForm').addEventListener('submit', event => {
             event.preventDefault();
             this.sendInvite();
@@ -62,6 +67,92 @@ class TenantAdminApp {
             this.createBoard();
         });
         document.getElementById('dismissOnboardingBtn').addEventListener('click', () => this.dismissOnboarding());
+        document.getElementById('apiKeyForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.createApiKey();
+        });
+        document.getElementById('apiKeysList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="revoke-api-key"]');
+            if (!trigger) return;
+            this.revokeApiKey(trigger.dataset.keyId);
+        });
+        document.getElementById('apiKeyReveal').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="copy-api-key"]');
+            if (!trigger) return;
+            this.copyApiKeyToClipboard(trigger.dataset.token, trigger);
+        });
+        document.getElementById('tenantTabs').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="switch-view"]');
+            if (!trigger) return;
+            this.switchView(trigger.dataset.view);
+        });
+        document.getElementById('releaseForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.saveRelease();
+        });
+        document.getElementById('releaseForm').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="reset-release-form"]');
+            if (!trigger) return;
+            this.resetReleaseForm();
+        });
+        document.getElementById('releasesList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            if (trigger.dataset.action === 'edit-release') this.editRelease(trigger.dataset.releaseId);
+            else if (trigger.dataset.action === 'delete-release') this.deleteRelease(trigger.dataset.releaseId);
+        });
+        document.getElementById('suggestionsList').addEventListener('change', event => {
+            const trigger = event.target.closest('[data-change-action]');
+            if (!trigger) return;
+            const { changeAction, id } = trigger.dataset;
+            if (changeAction === 'assign-release') this.updateSuggestionRelease(id, trigger.value);
+            else if (changeAction === 'update-status') this.updateStatus(id, trigger.value);
+            else if (changeAction === 'update-priority') this.updatePriority(id, trigger.value);
+        });
+        document.getElementById('suggestionsList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const { action, id, commentId, moderation } = trigger.dataset;
+            if (action === 'approve-suggestion') this.approveSuggestion(id);
+            else if (action === 'toggle-comments') this.toggleComments(id);
+            else if (action === 'add-comment') this.addComment(id);
+            else if (action === 'moderate-comment') this.moderateComment(id, commentId, moderation);
+        });
+        document.getElementById('teamMembersList').addEventListener('change', event => {
+            const trigger = event.target.closest('[data-change-action="update-member-role"]');
+            if (!trigger) return;
+            this.updateMemberRole(trigger.dataset.memberId, trigger.value);
+        });
+        document.getElementById('teamMembersList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const { action, memberId } = trigger.dataset;
+            if (action === 'enable-member') this.enableMember(memberId);
+            else if (action === 'disable-member') this.disableMember(memberId);
+        });
+        document.getElementById('teamInvitesList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const { action, inviteId } = trigger.dataset;
+            if (action === 'resend-invite') this.resendInvite(inviteId);
+            else if (action === 'revoke-invite') this.revokeInvite(inviteId);
+        });
+    }
+
+    switchView(view) {
+        const views = ['entries', 'releases', 'boards', 'team', 'settings'];
+        const target = views.includes(view) ? view : 'entries';
+
+        document.querySelectorAll('.tenant-view').forEach(section => {
+            section.classList.toggle('is-active', section.dataset.view === target);
+        });
+        document.querySelectorAll('#tenantTabs [data-action="switch-view"]').forEach(tab => {
+            tab.classList.toggle('is-active', tab.dataset.view === target);
+        });
+
+        if (window.location.hash !== `#${target}`) {
+            history.replaceState(null, '', `#${target}`);
+        }
     }
 
     async loadData() {
@@ -71,7 +162,9 @@ class TenantAdminApp {
                 this.loadApps(),
                 this.loadStats(),
                 this.loadSuggestions(),
+                this.loadReleases(),
                 this.loadTeam(),
+                this.loadApiKeys(),
             ]);
         } catch (error) {
             console.error('Error loading tenant admin data:', error);
@@ -121,6 +214,11 @@ class TenantAdminApp {
 
         const settingsReadonly = document.getElementById('workspaceSettingsReadonly');
         settingsReadonly.classList.toggle('is-hidden', this.canManageWorkspace());
+
+        const releaseReadonly = document.getElementById('releaseReadonly');
+        if (releaseReadonly) {
+            releaseReadonly.classList.toggle('is-hidden', this.canManageWorkspace());
+        }
     }
 
     canManageWorkspace() {
@@ -151,6 +249,7 @@ class TenantAdminApp {
         this.apps = apps;
         this.renderAppFilter();
         this.renderBoards();
+        this.renderReleaseAppOptions();
 
         const firstApp = apps[0];
         if (firstApp) {
@@ -374,6 +473,21 @@ class TenantAdminApp {
         `).join('');
     }
 
+    renderReleaseFilter() {
+        const select = document.getElementById('releaseFilter');
+        if (!select) return;
+
+        const currentValue = this.filters.release;
+        const options = this.releases.map(release => {
+            const label = `v${release.version || ''}${release.title ? ` · ${release.title}` : ''}`;
+            return `<option value="${this.escapeHtml(release.id)}" ${currentValue === release.id ? 'selected' : ''}>${this.escapeHtml(label)}</option>`;
+        }).join('');
+
+        select.innerHTML = '<option value="">Alle Releases</option>'
+            + `<option value="__none__" ${currentValue === '__none__' ? 'selected' : ''}>Ohne Release</option>`
+            + options;
+    }
+
     renderStats() {
         const stats = this.stats || {};
         document.getElementById('tenantStats').innerHTML = [
@@ -399,6 +513,7 @@ class TenantAdminApp {
             type: document.getElementById('typeFilter').value,
             status: document.getElementById('statusFilter').value,
             approval: document.getElementById('approvalFilter').value,
+            release: document.getElementById('releaseFilter').value,
         };
         this.renderSuggestions();
     }
@@ -410,6 +525,8 @@ class TenantAdminApp {
             if (this.filters.status && item.status !== this.filters.status) return false;
             if (this.filters.approval === 'pending' && item.approved) return false;
             if (this.filters.approval === 'approved' && !item.approved) return false;
+            if (this.filters.release === '__none__' && item.releaseId) return false;
+            if (this.filters.release && this.filters.release !== '__none__' && item.releaseId !== this.filters.release) return false;
             return true;
         });
     }
@@ -424,6 +541,198 @@ class TenantAdminApp {
         }
 
         host.innerHTML = suggestions.map(item => this.renderSuggestionCard(item)).join('');
+    }
+
+    async loadReleases() {
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/releases'));
+            const releases = await response.json();
+            if (!response.ok) throw new Error(releases.error || 'Releases konnten nicht geladen werden');
+
+            this.releases = Array.isArray(releases) ? releases : [];
+            this.renderReleases();
+            this.renderReleaseFilter();
+            if (this.suggestions.length) this.renderSuggestions();
+        } catch (error) {
+            console.error('Error loading tenant releases:', error);
+            this.releases = [];
+            const host = document.getElementById('releasesList');
+            if (host) host.innerHTML = '<div class="tenant-empty">Fehler beim Laden der Releases.</div>';
+        }
+    }
+
+    renderReleaseAppOptions() {
+        const select = document.querySelector('#releaseForm select[name="releaseAppId"]');
+        if (!select) return;
+
+        const current = select.value;
+        select.innerHTML = '<option value="">App wählen</option>' + this.apps.map(app => `
+            <option value="${this.escapeHtml(app.id)}">${this.escapeHtml(app.name || app.slug || app.id)}</option>
+        `).join('');
+        if (current) select.value = current;
+    }
+
+    renderReleases() {
+        const host = document.getElementById('releasesList');
+        if (!host) return;
+
+        if (!this.releases.length) {
+            host.innerHTML = '<div class="tenant-empty">Noch keine Releases angelegt.</div>';
+            return;
+        }
+
+        const statusClass = { 'geplant': '', 'in Arbeit': 'is-warning', 'veröffentlicht': 'is-success' };
+        const canManage = this.canManageWorkspace();
+
+        host.innerHTML = this.releases.map(release => `
+            <article class="tenant-release-item">
+                <div class="tenant-suggestion-top">
+                    <div>
+                        <div class="tenant-badges">
+                            <span class="tenant-badge">${this.escapeHtml(release.app?.name || 'Unbekannte App')}</span>
+                            <span class="tenant-badge ${statusClass[release.status] || ''}">${this.escapeHtml(release.status || 'geplant')}</span>
+                            <span class="tenant-badge">${this.escapeHtml(String(release.itemCount || 0))} Einträge</span>
+                        </div>
+                        <h3 class="tenant-suggestion-title">v${this.escapeHtml(release.version || '')}${release.title ? ` · ${this.escapeHtml(release.title)}` : ''}</h3>
+                        ${release.releaseDate ? `<p class="tenant-release-date">${this.formatDate(release.releaseDate)}</p>` : ''}
+                        ${release.description ? `<p class="tenant-suggestion-description">${this.escapeHtml(release.description)}</p>` : ''}
+                    </div>
+                    ${canManage ? `
+                    <div class="tenant-team-actions">
+                        <button class="secondary-btn btn-small" type="button" data-action="edit-release" data-release-id="${this.escapeHtml(release.id)}">Bearbeiten</button>
+                        <button class="secondary-btn btn-small" type="button" data-action="delete-release" data-release-id="${this.escapeHtml(release.id)}">Löschen</button>
+                    </div>
+                    ` : ''}
+                </div>
+            </article>
+        `).join('');
+    }
+
+    async saveRelease() {
+        if (!this.canManageWorkspace()) {
+            this.showToast('Keine Berechtigung für Releases', 'error');
+            return;
+        }
+
+        const form = document.getElementById('releaseForm');
+        const submitButton = document.getElementById('saveReleaseBtn');
+        const formData = new FormData(form);
+        const releaseId = (formData.get('releaseId') || '').toString().trim();
+        const releaseDate = (formData.get('releaseDate') || '').toString().trim() || null;
+        const fields = {
+            version: (formData.get('releaseVersion') || '').toString().trim(),
+            title: (formData.get('releaseTitle') || '').toString().trim(),
+            description: (formData.get('releaseDescription') || '').toString().trim(),
+            status: (formData.get('releaseStatus') || 'geplant').toString(),
+            releaseDate,
+        };
+        const appId = (formData.get('releaseAppId') || '').toString().trim();
+
+        if (!releaseId && !appId) {
+            this.showToast('Bitte eine App wählen', 'error');
+            return;
+        }
+        if (!fields.version) {
+            this.showToast('Version ist erforderlich', 'error');
+            return;
+        }
+
+        const url = releaseId
+            ? this.tenantAdminPath(`/releases/${encodeURIComponent(releaseId)}`)
+            : this.tenantAdminPath('/releases');
+        const method = releaseId ? 'PUT' : 'POST';
+        const body = releaseId ? fields : { appId, ...fields };
+
+        submitButton.disabled = true;
+        try {
+            const response = await this.adminFetch(url, { method, body: JSON.stringify(body) });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Release konnte nicht gespeichert werden');
+
+            this.showToast(releaseId ? 'Release aktualisiert' : 'Release erstellt', 'success');
+            this.resetReleaseForm();
+            await this.loadReleases();
+        } catch (error) {
+            console.error('Error saving release:', error);
+            this.showToast(error.message || 'Release konnte nicht gespeichert werden', 'error');
+        } finally {
+            submitButton.disabled = false;
+        }
+    }
+
+    editRelease(releaseId) {
+        const release = this.releases.find(item => item.id === releaseId);
+        if (!release) return;
+
+        const form = document.getElementById('releaseForm');
+        form.elements.releaseId.value = release.id;
+        form.elements.releaseAppId.value = release.appId || '';
+        form.elements.releaseVersion.value = release.version || '';
+        form.elements.releaseTitle.value = release.title || '';
+        form.elements.releaseStatus.value = release.status || 'geplant';
+        form.elements.releaseDescription.value = release.description || '';
+        form.elements.releaseDate.value = this.toDateInputValue(release.releaseDate);
+        form.elements.releaseAppId.disabled = true;
+        document.getElementById('saveReleaseBtn').textContent = 'Release aktualisieren';
+
+        this.switchView('releases');
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    resetReleaseForm() {
+        const form = document.getElementById('releaseForm');
+        form.reset();
+        form.elements.releaseId.value = '';
+        form.elements.releaseAppId.disabled = false;
+        document.getElementById('saveReleaseBtn').textContent = 'Release speichern';
+    }
+
+    async deleteRelease(releaseId) {
+        if (!this.canManageWorkspace()) {
+            this.showToast('Keine Berechtigung für Releases', 'error');
+            return;
+        }
+        if (!confirm('Release löschen? Verknüpfte Einträge bleiben erhalten, verlieren aber die Release-Zuordnung.')) return;
+
+        try {
+            const response = await this.adminFetch(
+                this.tenantAdminPath(`/releases/${encodeURIComponent(releaseId)}`),
+                { method: 'DELETE' }
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Release konnte nicht gelöscht werden');
+
+            this.showToast('Release gelöscht', 'success');
+            this.resetReleaseForm();
+            await Promise.all([this.loadReleases(), this.loadSuggestions()]);
+        } catch (error) {
+            console.error('Error deleting release:', error);
+            this.showToast(error.message || 'Release konnte nicht gelöscht werden', 'error');
+        }
+    }
+
+    async updateSuggestionRelease(suggestionId, releaseId) {
+        try {
+            const response = await this.adminFetch(
+                this.tenantAdminPath(`/suggestions/${encodeURIComponent(suggestionId)}/release`),
+                { method: 'PUT', body: JSON.stringify({ releaseId: releaseId || null }) }
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Aktion fehlgeschlagen');
+
+            this.showToast('Release-Zuordnung aktualisiert', 'success');
+            // Stats are unaffected by a release reassignment — only refresh the
+            // suggestion cards and the per-release item counts.
+            await Promise.all([this.loadSuggestions(), this.loadReleases()]);
+        } catch (error) {
+            console.error('Error updating suggestion release:', error);
+            this.showToast(error.message || 'Aktion fehlgeschlagen', 'error');
+        }
+    }
+
+    toDateInputValue(timestamp) {
+        const date = this.toDate(timestamp);
+        return date ? date.toISOString().slice(0, 10) : '';
     }
 
     renderTeam() {
@@ -457,16 +766,16 @@ class TenantAdminApp {
                 <div class="tenant-team-actions">
                     <label>
                         Rolle
-                        <select ${disabled ? 'disabled' : ''} onchange="tenantAdmin.updateMemberRole('${this.escapeHtml(member.id)}', this.value)">
+                        <select ${disabled ? 'disabled' : ''} data-change-action="update-member-role" data-member-id="${this.escapeHtml(member.id)}">
                             <option value="viewer" ${role === 'viewer' ? 'selected' : ''}>Viewer</option>
                             <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
                             ${this.canManageOwnerRoles() ? `<option value="owner" ${role === 'owner' ? 'selected' : ''}>Owner</option>` : ''}
                         </select>
                     </label>
                     ${status === 'disabled' ? `
-                        <button class="secondary-btn btn-small" ${disabled ? 'disabled' : ''} type="button" onclick="tenantAdmin.enableMember('${this.escapeHtml(member.id)}')">Aktivieren</button>
+                        <button class="secondary-btn btn-small" ${disabled ? 'disabled' : ''} type="button" data-action="enable-member" data-member-id="${this.escapeHtml(member.id)}">Aktivieren</button>
                     ` : `
-                        <button class="secondary-btn btn-small" ${disabled ? 'disabled' : ''} type="button" onclick="tenantAdmin.disableMember('${this.escapeHtml(member.id)}')">Deaktivieren</button>
+                        <button class="secondary-btn btn-small" ${disabled ? 'disabled' : ''} type="button" data-action="disable-member" data-member-id="${this.escapeHtml(member.id)}">Deaktivieren</button>
                     `}
                 </div>
                 ` : ''}
@@ -484,8 +793,8 @@ class TenantAdminApp {
                 </div>
                 ${this.canManageWorkspace() ? `
                 <div class="tenant-team-actions">
-                    <button class="secondary-btn btn-small" type="button" onclick="tenantAdmin.resendInvite('${this.escapeHtml(invite.id)}')">Erneut senden</button>
-                    <button class="secondary-btn btn-small" type="button" onclick="tenantAdmin.revokeInvite('${this.escapeHtml(invite.id)}')">Widerrufen</button>
+                    <button class="secondary-btn btn-small" type="button" data-action="resend-invite" data-invite-id="${this.escapeHtml(invite.id)}">Erneut senden</button>
+                    <button class="secondary-btn btn-small" type="button" data-action="revoke-invite" data-invite-id="${this.escapeHtml(invite.id)}">Widerrufen</button>
                 </div>
                 ` : ''}
             </div>
@@ -621,7 +930,7 @@ class TenantAdminApp {
                     ${canManage ? `
                     <label>
                         Status
-                        <select onchange="tenantAdmin.updateStatus('${this.escapeHtml(item.id)}', this.value)">
+                        <select data-change-action="update-status" data-id="${this.escapeHtml(item.id)}">
                             ${statuses.map(status => `
                                 <option value="${this.escapeHtml(status)}" ${item.status === status ? 'selected' : ''}>
                                     ${this.escapeHtml(status)}
@@ -633,7 +942,7 @@ class TenantAdminApp {
                     ${canManage ? `
                     <label>
                         Priorität
-                        <select onchange="tenantAdmin.updatePriority('${this.escapeHtml(item.id)}', this.value)">
+                        <select data-change-action="update-priority" data-id="${this.escapeHtml(item.id)}">
                             ${TenantAdminApp.PRIORITIES.map(priority => `
                                 <option value="${this.escapeHtml(priority)}" ${item.priority === priority ? 'selected' : ''}>
                                     ${this.escapeHtml(priority)}
@@ -642,12 +951,25 @@ class TenantAdminApp {
                         </select>
                     </label>
                     ` : ''}
+                    ${canManage ? `
+                    <label>
+                        Release
+                        <select data-change-action="assign-release" data-id="${this.escapeHtml(item.id)}">
+                            <option value="">Kein Release</option>
+                            ${this.releases.map(release => `
+                                <option value="${this.escapeHtml(release.id)}" ${item.releaseId === release.id ? 'selected' : ''}>
+                                    v${this.escapeHtml(release.version || '')}${release.title ? ` · ${this.escapeHtml(release.title)}` : ''}
+                                </option>
+                            `).join('')}
+                        </select>
+                    </label>
+                    ` : ''}
                     ${canManage && !item.approved ? `
-                        <button class="primary-btn" type="button" onclick="tenantAdmin.approveSuggestion('${this.escapeHtml(item.id)}')">
+                        <button class="primary-btn" type="button" data-action="approve-suggestion" data-id="${this.escapeHtml(item.id)}">
                             Freigeben
                         </button>
                     ` : ''}
-                    <button class="secondary-btn" type="button" onclick="tenantAdmin.toggleComments('${this.escapeHtml(item.id)}')">
+                    <button class="secondary-btn" type="button" data-action="toggle-comments" data-id="${this.escapeHtml(item.id)}">
                         Kommentare (${item.commentCount || 0})
                     </button>
                 </div>
@@ -736,7 +1058,7 @@ class TenantAdminApp {
                     <textarea id="new-comment-${this.escapeHtml(suggestionId)}" placeholder="Kommentar schreiben..."></textarea>
                 </label>
                 <div class="admin-actions" style="margin: 8px 0 0;">
-                    <button class="primary-btn btn-small" type="button" onclick="tenantAdmin.addComment('${this.escapeHtml(suggestionId)}')">
+                    <button class="primary-btn btn-small" type="button" data-action="add-comment" data-id="${this.escapeHtml(suggestionId)}">
                         Kommentar speichern
                     </button>
                 </div>
@@ -766,12 +1088,12 @@ class TenantAdminApp {
                 ${comment.authorType === 'user' && this.canManageWorkspace() ? `
                     <div class="admin-actions" style="margin: 0;">
                         ${comment.approvalStatus !== 'approved' ? `
-                            <button class="primary-btn btn-small" type="button" onclick="tenantAdmin.moderateComment('${this.escapeHtml(suggestionId)}', '${this.escapeHtml(comment.id)}', 'approve')">
+                            <button class="primary-btn btn-small" type="button" data-action="moderate-comment" data-id="${this.escapeHtml(suggestionId)}" data-comment-id="${this.escapeHtml(comment.id)}" data-moderation="approve">
                                 Freigeben
                             </button>
                         ` : ''}
                         ${comment.approvalStatus !== 'rejected' ? `
-                            <button class="secondary-btn btn-small" type="button" onclick="tenantAdmin.moderateComment('${this.escapeHtml(suggestionId)}', '${this.escapeHtml(comment.id)}', 'reject')">
+                            <button class="secondary-btn btn-small" type="button" data-action="moderate-comment" data-id="${this.escapeHtml(suggestionId)}" data-comment-id="${this.escapeHtml(comment.id)}" data-moderation="reject">
                                 Ablehnen
                             </button>
                         ` : ''}
@@ -824,20 +1146,179 @@ class TenantAdminApp {
         }
     }
 
+    async loadApiKeys() {
+        if (!this.canManageWorkspace()) {
+            this.apiKeys = [];
+            this.renderApiKeys();
+            return;
+        }
+
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/api-keys'));
+            const keys = await response.json();
+            if (!response.ok) throw new Error(keys.error || 'API-Schlüssel konnten nicht geladen werden');
+
+            this.apiKeys = Array.isArray(keys) ? keys.filter(key => !key.revokedAt) : [];
+        } catch (error) {
+            console.error('Error loading API keys:', error);
+            this.apiKeys = [];
+        }
+        this.renderApiKeys();
+    }
+
+    renderApiKeys() {
+        const host = document.getElementById('apiKeysList');
+        if (!host) return;
+
+        if (!this.canManageWorkspace()) {
+            host.innerHTML = '<div class="tenant-empty">API-Schlüssel sind nur für Admins sichtbar.</div>';
+            return;
+        }
+
+        if (this.apiKeys.length === 0) {
+            host.innerHTML = '<div class="tenant-empty">Noch keine API-Schlüssel erstellt.</div>';
+            return;
+        }
+
+        host.innerHTML = this.apiKeys.map(key => `
+            <div class="tenant-api-key-item">
+                <strong>${this.escapeHtml(key.name || 'Unbenannt')}</strong>
+                <code>${this.escapeHtml(key.tokenPrefix || 'vt_live_…')}…</code>
+                <div class="tenant-badges">
+                    ${(key.scopes || []).map(scope => `<span class="tenant-badge">${this.escapeHtml(scope)}</span>`).join('')}
+                </div>
+                <div class="tenant-badges">
+                    <span class="tenant-badge">Erstellt: ${this.formatDate(key.createdAt)}</span>
+                    <span class="tenant-badge">Zuletzt benutzt: ${key.lastUsedAt ? this.formatDate(key.lastUsedAt) : 'noch nie'}</span>
+                </div>
+                <div class="tenant-team-actions">
+                    <span></span>
+                    <button class="secondary-btn btn-small" type="button"
+                            data-action="revoke-api-key"
+                            data-key-id="${this.escapeHtml(key.id)}">Widerrufen</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async createApiKey() {
+        if (!this.canManageWorkspace()) {
+            this.showToast('Keine Berechtigung für API-Schlüssel', 'error');
+            return;
+        }
+
+        const form = document.getElementById('apiKeyForm');
+        const formData = new FormData(form);
+        const name = (formData.get('apiKeyName') || '').toString().trim();
+        const scopes = formData.getAll('apiKeyScope').map(value => value.toString());
+
+        if (!name) {
+            this.showToast('Name fehlt', 'error');
+            return;
+        }
+        if (scopes.length === 0) {
+            this.showToast('Mindestens einen Scope auswählen', 'error');
+            return;
+        }
+
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/api-keys'), {
+                method: 'POST',
+                body: JSON.stringify({ name, scopes }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Schlüssel konnte nicht erstellt werden');
+
+            form.reset();
+            form.querySelectorAll('input[name="apiKeyScope"]').forEach(input => {
+                input.checked = ['suggestions:read', 'suggestions:write'].includes(input.value);
+            });
+
+            this.revealApiKey(result);
+            await this.loadApiKeys();
+            this.showToast('API-Schlüssel erstellt', 'success');
+        } catch (error) {
+            console.error('Error creating API key:', error);
+            this.showToast(error.message || 'Schlüssel konnte nicht erstellt werden', 'error');
+        }
+    }
+
+    revealApiKey(payload) {
+        const host = document.getElementById('apiKeyReveal');
+        if (!host || !payload?.token) return;
+
+        host.classList.remove('is-hidden');
+        host.innerHTML = `
+            <strong>${this.escapeHtml(payload.name || 'Neuer Schlüssel')}</strong>
+            <p style="margin: 0; color: var(--text-secondary); font-size: 0.85rem;">Token nur einmal angezeigt. Bitte sicher kopieren und speichern.</p>
+            <code>${this.escapeHtml(payload.token)}</code>
+            <div class="tenant-api-key-reveal-actions">
+                <button class="primary-btn btn-small" type="button"
+                        data-action="copy-api-key"
+                        data-token="${this.escapeHtml(payload.token)}">Kopieren</button>
+            </div>
+        `;
+    }
+
+    async copyApiKeyToClipboard(token, button) {
+        if (!token) return;
+        try {
+            await navigator.clipboard.writeText(token);
+            if (button) {
+                const original = button.textContent;
+                button.textContent = 'Kopiert';
+                setTimeout(() => { button.textContent = original; }, 1500);
+            }
+            this.showToast('Token in die Zwischenablage kopiert', 'success');
+        } catch (error) {
+            console.error('Clipboard copy failed:', error);
+            this.showToast('Konnte nicht kopieren — bitte manuell auswählen', 'error');
+        }
+    }
+
+    async revokeApiKey(keyId) {
+        if (!keyId) return;
+        if (!confirm('API-Schlüssel wirklich widerrufen? Tools, die ihn nutzen, verlieren sofort den Zugriff.')) return;
+
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath(`/api-keys/${encodeURIComponent(keyId)}`), {
+                method: 'DELETE',
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Schlüssel konnte nicht widerrufen werden');
+
+            this.showToast('API-Schlüssel widerrufen', 'success');
+            const reveal = document.getElementById('apiKeyReveal');
+            if (reveal) {
+                reveal.classList.add('is-hidden');
+                reveal.innerHTML = '';
+            }
+            await this.loadApiKeys();
+        } catch (error) {
+            console.error('Error revoking API key:', error);
+            this.showToast(error.message || 'Schlüssel konnte nicht widerrufen werden', 'error');
+        }
+    }
+
     escapeHtml(value) {
         const div = document.createElement('div');
         div.textContent = value == null ? '' : String(value);
         return div.innerHTML;
     }
 
-    formatDate(timestamp) {
-        if (!timestamp) return 'Unbekannt';
+    toDate(timestamp) {
+        if (!timestamp) return null;
         let date = null;
         if (timestamp._seconds !== undefined) date = new Date(timestamp._seconds * 1000);
         else if (timestamp.seconds !== undefined) date = new Date(timestamp.seconds * 1000);
         else if (typeof timestamp === 'string' || typeof timestamp === 'number') date = new Date(timestamp);
 
-        if (!date || Number.isNaN(date.getTime())) return 'Unbekannt';
+        return date && !Number.isNaN(date.getTime()) ? date : null;
+    }
+
+    formatDate(timestamp) {
+        const date = this.toDate(timestamp);
+        if (!date) return 'Unbekannt';
         return date.toLocaleDateString('de-DE', {
             year: 'numeric',
             month: 'short',
