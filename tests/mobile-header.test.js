@@ -82,3 +82,42 @@ test('mobile suggestions view uses an inline sticky topbar instead of a fixed ov
         'expected mobile header spacing that keeps the theme toggle out of the hero title'
     );
 });
+
+test('mobile filters collapse behind a Filter toggle with active-filter chips', () => {
+    assert.ok(html.includes('id="filterControl"'), 'expected a dedicated filter control host');
+    assert.ok(
+        script.includes('renderFilterControl'),
+        'expected the filter control (toggle + active chips) to be rendered'
+    );
+    assert.ok(
+        script.includes("'toggle-filters'") && script.includes("'clear-filter'"),
+        'expected delegated actions to expand filters and clear an active filter'
+    );
+    assert.ok(
+        script.includes("classList.toggle('filters-expanded'"),
+        'expected the topbar to track an expanded/collapsed state'
+    );
+    assert.ok(
+        css.includes('.suggestions-topbar:not(.filters-expanded) .filter-groups'),
+        'expected the full filter groups to stay collapsed until expanded on mobile'
+    );
+    assert.ok(
+        /\.filter-control \{\s*display: none;/.test(css),
+        'expected the filter control to be hidden on desktop (full filters stay visible there)'
+    );
+});
+
+test('mobile "Neuer Eintrag" is a floating action button', () => {
+    assert.ok(
+        html.includes('class="mobile-new-label"') && html.includes('class="mobile-new-plus"'),
+        'expected the mobile new-entry button to expose a hideable label and a plus glyph'
+    );
+    assert.ok(
+        html.includes('id="mobileNewBtn"') && html.includes('aria-label="Neuer Eintrag"'),
+        'expected the FAB to keep an accessible label when the text is hidden'
+    );
+    assert.ok(
+        /\.mobile-inline-action-btn \{[^}]*position: fixed;/.test(css),
+        'expected the mobile new-entry button to float as a fixed FAB'
+    );
+});

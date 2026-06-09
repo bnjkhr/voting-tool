@@ -1594,6 +1594,17 @@ body {
     box-shadow: var(--shadow-md);
 }
 
+/* Mobile filter control (collapsible) + FAB — hidden on desktop, the full
+   filter groups stay visible there. The mobile overrides live in the
+   max-width:768px block below. */
+.filter-control {
+    display: none;
+}
+
+.mobile-new-plus {
+    display: none;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .container {
@@ -1709,12 +1720,123 @@ body {
         min-width: 0;
     }
 
+    /* "Neuer Eintrag" becomes a floating action button, freeing a full row. */
     .mobile-inline-action-btn {
         display: inline-flex;
+        position: fixed;
+        right: var(--spacing-md);
+        bottom: calc(env(safe-area-inset-bottom) + var(--spacing-md));
+        width: 56px;
+        height: 56px;
+        min-height: 56px;
+        padding: 0;
+        border-radius: 50%;
+        align-items: center;
+        justify-content: center;
+        z-index: 45;
+        box-shadow: var(--shadow-lg);
+    }
+
+    .mobile-inline-action-btn .mobile-new-label {
+        display: none;
+    }
+
+    .mobile-inline-action-btn .mobile-new-plus {
+        display: block;
+        font-size: 1.9rem;
+        font-weight: 400;
+        line-height: 1;
     }
 
     .header-action-btn {
         display: none !important;
+    }
+
+    /* Filters collapse behind a "Filter" button + active-filter chips. */
+    .filter-control {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        margin-top: var(--spacing-xs);
+    }
+
+    .filter-control::-webkit-scrollbar {
+        display: none;
+    }
+
+    .filter-toggle {
+        appearance: none;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 14px;
+        border: var(--glass-border);
+        background: var(--surface);
+        color: var(--text-primary);
+        border-radius: var(--radius-full);
+        font-size: 0.8125rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .filter-toggle.has-active {
+        border-color: var(--primary-color);
+        color: var(--primary-color);
+    }
+
+    .filter-toggle-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: var(--radius-full);
+        background: var(--primary-color);
+        color: #fff;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+
+    .active-filter-chips {
+        display: flex;
+        gap: 6px;
+    }
+
+    .active-filter-chip {
+        appearance: none;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border: var(--glass-border);
+        background: var(--surface-solid);
+        color: var(--text-primary);
+        border-radius: var(--radius-full);
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .active-filter-chip-x {
+        color: var(--text-muted);
+        font-size: 1rem;
+        line-height: 1;
+    }
+
+    /* Filter groups stay hidden until the user expands them. */
+    .suggestions-topbar:not(.filters-expanded) .filter-groups {
+        display: none;
+    }
+
+    .suggestions-topbar.filters-expanded #suggestionsFilters {
+        margin-top: var(--spacing-sm);
     }
 
     .toast {
