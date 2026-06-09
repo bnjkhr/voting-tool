@@ -45,8 +45,6 @@
                         <h2 id="currentAppName">App Name</h2>
                         <button class="primary-btn header-action-btn" id="fabBtn">+ Neuer Eintrag</button>
                     </div>
-                    <button class="primary-btn mobile-inline-action-btn" id="mobileNewBtn">+ Neuer Eintrag</button>
-
                     <!-- View Tabs -->
                     <div class="view-tabs" id="viewTabs">
                         <button class="view-tab active" data-view="suggestions">Einträge</button>
@@ -54,6 +52,7 @@
                         <button class="view-tab" data-view="changelog">Changelog</button>
                     </div>
 
+                    <div class="filter-control" id="filterControl"></div>
                     <div class="filter-bar-host" id="suggestionsFilters"></div>
                 </div>
 
@@ -70,6 +69,13 @@
                 <div class="release-view hidden" id="changelogView">
                     <div class="loading">Changelog wird geladen...</div>
                 </div>
+
+                <!-- Floating action button (mobile) — outside the blurred topbar so
+                     position:fixed is relative to the viewport, not the topbar. -->
+                <button class="primary-btn mobile-inline-action-btn" id="mobileNewBtn" aria-label="Neuer Eintrag">
+                    <span class="mobile-new-plus" aria-hidden="true">+</span>
+                    <span class="mobile-new-label">Neuer Eintrag</span>
+                </button>
             </section>
 
             <!-- New Suggestion Form -->

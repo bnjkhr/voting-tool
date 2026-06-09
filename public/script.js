@@ -43,6 +43,7 @@ class VotingApp {
         this.currentApp = null;
         this.votedSuggestions = new Set(this.getVotedSuggestions());
         this.currentFilters = { status: 'all', type: 'all' };
+        this.filtersExpanded = false;
         this.currentView = 'suggestions';
         this.allSuggestions = [];
         this.tenantSlug = null;
@@ -58,6 +59,16 @@ class VotingApp {
         this.clickActions = {
             'set-filter': (el) => {
                 this.setFilter(el.dataset.filterGroup, decodeURIComponent(el.dataset.filterId));
+            },
+            'toggle-filters': () => {
+                this.filtersExpanded = !this.filtersExpanded;
+                const topbar = document.getElementById('suggestionsTopbar');
+                if (topbar) topbar.classList.toggle('filters-expanded', this.filtersExpanded);
+                const toggle = document.querySelector('[data-action="toggle-filters"]');
+                if (toggle) toggle.setAttribute('aria-expanded', String(this.filtersExpanded));
+            },
+            'clear-filter': (el) => {
+                this.setFilter(el.dataset.filterGroup, 'all');
             },
             'select-app': (el) => {
                 this.selectApp(el.dataset.appId, el.dataset.appName, { appSlug: el.dataset.appSlug || '' });
@@ -217,7 +228,10 @@ class VotingApp {
         this.currentView = 'suggestions';
         this.allSuggestions = [];
         this.currentFilters = { status: 'all', type: 'all' };
+        this.filtersExpanded = false;
+        document.getElementById('suggestionsTopbar')?.classList.remove('filters-expanded');
         document.getElementById('currentAppName').textContent = 'App Name';
+        document.getElementById('filterControl').innerHTML = '';
         document.getElementById('suggestionsFilters').innerHTML = '';
         document.getElementById('suggestionsList').innerHTML = '<div class="loading">Einträge werden geladen...</div>';
 
@@ -462,6 +476,8 @@ class VotingApp {
 
         suggestionsList.classList.toggle('hidden', this.currentView !== 'suggestions');
         suggestionsFilters.classList.toggle('hidden', this.currentView !== 'suggestions');
+        const filterControl = document.getElementById('filterControl');
+        if (filterControl) filterControl.classList.toggle('hidden', this.currentView !== 'suggestions');
         roadmapView.classList.toggle('hidden', this.currentView !== 'roadmap');
         changelogView.classList.toggle('hidden', this.currentView !== 'changelog');
 
@@ -710,22 +726,28 @@ class VotingApp {
         return this.normalizeSuggestionType(suggestion.type) === typeFilter;
     }
 
+    static STATUS_META = {
+        all: { label: 'Alle', color: '#6366F1' },
+        'neu': { label: 'Neu', color: '#ef4444' },
+        'wird geprüft': { label: 'Wird geprüft', color: '#f59e0b' },
+        'wird umgesetzt': { label: 'Wird umgesetzt', color: '#3b82f6' },
+        'ist umgesetzt': { label: 'Umgesetzt', color: '#059669' },
+        'wird nicht umgesetzt': { label: 'Abgelehnt', color: '#ef4444' },
+        'offen': { label: 'Offen', color: '#3b82f6' },
+        'in Bearbeitung': { label: 'In Bearbeitung', color: '#f59e0b' },
+        'im Test': { label: 'Im Test', color: '#06b6d4' },
+        'wartend': { label: 'Wartend', color: '#a855f7' },
+        'gelöst': { label: 'Gelöst', color: '#10b981' },
+        'geschlossen': { label: 'Geschlossen', color: '#64748b' },
+        'keine': { label: 'Ohne Status', color: '#64748b' },
+    };
+
+    getStatusFilterMeta(id) {
+        return VotingApp.STATUS_META[id] || { label: id, color: '#64748b' };
+    }
+
     buildStatusFilters(suggestions) {
-        const statusMeta = {
-            all: { label: 'Alle', color: '#6366F1' },
-            'neu': { label: 'Neu', color: '#ef4444' },
-            'wird geprüft': { label: 'Wird geprüft', color: '#f59e0b' },
-            'wird umgesetzt': { label: 'Wird umgesetzt', color: '#3b82f6' },
-            'ist umgesetzt': { label: 'Umgesetzt', color: '#059669' },
-            'wird nicht umgesetzt': { label: 'Abgelehnt', color: '#ef4444' },
-            'offen': { label: 'Offen', color: '#3b82f6' },
-            'in Bearbeitung': { label: 'In Bearbeitung', color: '#f59e0b' },
-            'im Test': { label: 'Im Test', color: '#06b6d4' },
-            'wartend': { label: 'Wartend', color: '#a855f7' },
-            'gelöst': { label: 'Gelöst', color: '#10b981' },
-            'geschlossen': { label: 'Geschlossen', color: '#64748b' },
-            'keine': { label: 'Ohne Status', color: '#64748b' },
-        };
+        const statusMeta = VotingApp.STATUS_META;
 
         const counts = { all: suggestions.length };
         suggestions.forEach(suggestion => {
@@ -797,14 +819,51 @@ class VotingApp {
         `;
     }
 
+    renderFilterControl() {
+        const host = document.getElementById('filterControl');
+        if (!host) return;
+
+        const summary = [];
+        if (this.currentFilters.status !== 'all') {
+            summary.push({ group: 'status', label: this.getStatusFilterMeta(this.currentFilters.status).label });
+        }
+        if (this.currentFilters.type !== 'all') {
+            summary.push({ group: 'type', label: this.getTypeFilterMeta(this.currentFilters.type).label });
+        }
+
+        const countBadge = summary.length > 0
+            ? `<span class="filter-toggle-count">${summary.length}</span>`
+            : '';
+
+        const chips = summary.map(item => `
+            <button class="active-filter-chip" data-action="clear-filter" data-filter-group="${this.escapeHtml(item.group)}" type="button" aria-label="Filter ${this.escapeHtml(item.label)} entfernen">
+                <span>${this.escapeHtml(item.label)}</span>
+                <span class="active-filter-chip-x" aria-hidden="true">×</span>
+            </button>
+        `).join('');
+
+        host.innerHTML = `
+            <button class="filter-toggle ${summary.length ? 'has-active' : ''}" data-action="toggle-filters" type="button" aria-expanded="${this.filtersExpanded}" aria-label="Filter ein- oder ausklappen">
+                <svg class="filter-toggle-icon" viewBox="0 0 20 20" aria-hidden="true" width="16" height="16"><path fill="currentColor" d="M3 4h14l-5.2 6.3v4.2l-3.6 1.8v-6L3 4z"/></svg>
+                <span>Filter</span>
+                ${countBadge}
+            </button>
+            <div class="active-filter-chips">${chips}</div>
+        `;
+    }
+
     renderFilterBar() {
         const filterHost = document.getElementById('suggestionsFilters');
         if (!filterHost) return;
 
         if (this.allSuggestions.length === 0) {
             filterHost.innerHTML = '';
+            const control = document.getElementById('filterControl');
+            if (control) control.innerHTML = '';
             return;
         }
+
+        this.renderFilterControl();
 
         const suggestionsForStatusCounts = this.allSuggestions.filter(suggestion =>
             this.matchesTypeFilter(suggestion, this.currentFilters.type)
