@@ -244,13 +244,15 @@
         }
 
         .tenant-api-key-scopes {
-            display: grid;
+            display: flex;
+            flex-direction: column;
             gap: 6px;
-            padding: var(--spacing-sm);
+            padding: var(--spacing-sm) var(--spacing-md);
             border: 1px solid var(--border);
             border-radius: var(--radius-sm);
             background: var(--background-alt);
             margin: 0;
+            min-width: 0;
         }
 
         .tenant-api-key-scopes legend {
@@ -260,13 +262,36 @@
             padding: 0 4px;
         }
 
+        .tenant-team-form .tenant-api-key-scopes label,
         .tenant-api-key-scopes label {
             display: flex;
+            flex-direction: row;
             align-items: center;
-            gap: 8px;
-            font-size: 0.85rem;
+            gap: 10px;
+            margin: 0;
+            padding: 0;
+            font-size: 0.88rem;
             color: var(--text-primary);
             font-weight: 500;
+            cursor: pointer;
+            min-height: 0;
+        }
+
+        .tenant-team-form .tenant-api-key-scopes input[type="checkbox"],
+        .tenant-api-key-scopes input[type="checkbox"] {
+            flex: 0 0 auto;
+            width: 18px;
+            height: 18px;
+            min-height: 0;
+            margin: 0;
+            padding: 0;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+
+        .tenant-api-key-scopes label > span {
+            flex: 1 1 auto;
+            line-height: 1.35;
         }
 
         .tenant-api-key-reveal {
@@ -957,11 +982,11 @@
                             </label>
                             <fieldset class="tenant-api-key-scopes">
                                 <legend>Scopes</legend>
-                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:read" checked> Einträge lesen</label>
-                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:write" checked> Einträge erstellen (auto-freigegeben)</label>
-                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:status"> Status / Priorität ändern</label>
-                                <label><input type="checkbox" name="apiKeyScope" value="comments:read"> Kommentare lesen</label>
-                                <label><input type="checkbox" name="apiKeyScope" value="comments:write"> Kommentare schreiben</label>
+                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:read" checked><span>Einträge lesen</span></label>
+                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:write" checked><span>Einträge erstellen (auto-freigegeben)</span></label>
+                                <label><input type="checkbox" name="apiKeyScope" value="suggestions:status"><span>Status / Priorität ändern</span></label>
+                                <label><input type="checkbox" name="apiKeyScope" value="comments:read"><span>Kommentare lesen</span></label>
+                                <label><input type="checkbox" name="apiKeyScope" value="comments:write"><span>Kommentare schreiben</span></label>
                             </fieldset>
                             <button class="primary-btn" type="submit">Schlüssel erstellen</button>
                         </form>
