@@ -3014,6 +3014,36 @@ async function loadAdminTenants() {
 }
 
 async function loadTenantAdminSuggestions(tenantId) {
+  if (usePostgres()) {
+    const [rawSuggestions, apps] = await Promise.all([
+      repos.suggestions.listByTenant(tenantId),
+      loadTenantApps(tenantId),
+    ]);
+    const appsMap = {};
+    apps.forEach((appData) => { appsMap[appData.id] = appData; });
+    const suggestionIds = rawSuggestions.map((s) => s.id);
+    const commentStatsMap = suggestionIds.length > 0
+      ? await repos.comments.statsForSuggestions(suggestionIds, tenantId)
+      : {};
+    const suggestions = rawSuggestions.map((data) => {
+      const type = normalizeSuggestionType(data.type);
+      return {
+        id: data.id,
+        ...data,
+        type,
+        status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+        priority: data.priority || 'mittel',
+        labels: data.labels || [],
+        ticketNumber: data.ticketNumber || null,
+        app: appsMap[data.appId] || { name: 'Unknown App' },
+        commentCount: commentStatsMap[data.id]?.totalCount || 0,
+        pendingCommentCount: commentStatsMap[data.id]?.pendingCount || 0,
+      };
+    });
+    suggestions.sort(compareAdminSuggestions);
+    return { suggestions, apps };
+  }
+
   const [suggestionsSnapshot, apps] = await Promise.all([
     db.collection('suggestions').where('tenantId', '==', tenantId).get(),
     loadTenantApps(tenantId),
@@ -3602,12 +3632,18 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/approve', req
     const newStatus = suggestionType === 'feature' ? 'wird geprüft' : 'offen';
     const legacyTag = mapStatusToLegacyTag(suggestionType, newStatus);
 
-    await db.collection('suggestions').doc(suggestionId).update({
-      approved: true,
-      status: newStatus,
-      tag: legacyTag,
-      approvedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+    if (usePostgres()) {
+      await repos.suggestions.update(suggestionId, {
+        approved: true, status: newStatus, tag: legacyTag, approvedAt: new Date(),
+      });
+    } else {
+      await db.collection('suggestions').doc(suggestionId).update({
+        approved: true,
+        status: newStatus,
+        tag: legacyTag,
+        approvedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
 
     await logActivity(suggestionId, 'approved', {
       oldValue: 'neu',
@@ -3657,7 +3693,13 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/status', requi
       updateData.approvedAt = admin.firestore.FieldValue.serverTimestamp();
     }
 
-    await db.collection('suggestions').doc(suggestionId).update(updateData);
+    if (usePostgres()) {
+      const pgUpdate = { ...updateData, tagUpdatedAt: new Date() };
+      if (pgUpdate.approvedAt) pgUpdate.approvedAt = new Date();
+      await repos.suggestions.update(suggestionId, pgUpdate);
+    } else {
+      await db.collection('suggestions').doc(suggestionId).update(updateData);
+    }
 
     if (previousStatus !== normalizedStatus) {
       await logActivity(suggestionId, 'status_changed', {
@@ -3695,7 +3737,11 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', req
       return res.status(400).json({ error: `Ungültige Priorität. Erlaubt: ${VALID_PRIORITIES.join(', ')}` });
     }
 
-    await db.collection('suggestions').doc(suggestionId).update({ priority: normalizedPriority });
+    if (usePostgres()) {
+      await repos.suggestions.update(suggestionId, { priority: normalizedPriority });
+    } else {
+      await db.collection('suggestions').doc(suggestionId).update({ priority: normalizedPriority });
+    }
 
     await logActivity(suggestionId, 'priority_changed', {
       oldValue: suggestionData.priority || null,
