@@ -356,7 +356,7 @@ async function loadPublicSuggestionsForApp(appId, tenantId, userFingerprint) {
     if (suggestions.length === 0) return [];
     const suggestionIds = suggestions.map((s) => s.id);
     const [commentStatsMap, votedIds] = await Promise.all([
-      repos.comments.statsForSuggestions(suggestionIds),
+      repos.comments.statsForSuggestions(suggestionIds, tenantId),
       repos.votes.votedSuggestionIds(userFingerprint, suggestionIds),
     ]);
     const userVotesSet = new Set(votedIds);

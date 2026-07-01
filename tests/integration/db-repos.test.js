@@ -71,7 +71,7 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.equal((await comments.listApprovedForSuggestion('test_r_s1')).length, 1);
   assert.equal((await comments.listPendingByTenant(T)).length, 1);
   // statsForSuggestions: 1 approved + 1 pending
-  const stats = await comments.statsForSuggestions(['test_r_s1']);
+  const stats = await comments.statsForSuggestions(['test_r_s1'], T);
   assert.deepEqual(stats['test_r_s1'], { totalCount: 2, pendingCount: 1, publicCount: 1 });
   await comments.approve('test_r_c2', 'admin');
   assert.equal((await comments.listApprovedForSuggestion('test_r_s1')).length, 2);
