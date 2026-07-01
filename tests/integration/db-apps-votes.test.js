@@ -71,4 +71,12 @@ suite('apps + votes repositories', async (t) => {
 
   const voted = await votes.votedSuggestionIds('fp-a', [S, 'other']);
   assert.deepEqual(voted, [S]);
+
+  // uncast: entfernt + dekrementiert; zweites uncast tut nichts
+  const un1 = await votes.uncast({ tenantId: T, suggestionId: S, userFingerprint: 'fp-a' });
+  assert.equal(un1.removed, true);
+  assert.equal(un1.votes, 1);
+  const un2 = await votes.uncast({ tenantId: T, suggestionId: S, userFingerprint: 'fp-a' });
+  assert.equal(un2.removed, false);
+  assert.equal(await votes.hasVoted(S, 'fp-a'), false);
 });

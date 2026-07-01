@@ -57,4 +57,25 @@ async function cast({ id, tenantId, suggestionId, userFingerprint }) {
   });
 }
 
-module.exports = { hasVoted, votedSuggestionIds, cast };
+// Entfernt einen Vote und dekrementiert den Zähler — atomar. Rückgabe:
+// { removed, votes }.
+async function uncast({ tenantId, suggestionId, userFingerprint }) {
+  return withTransaction(async (client) => {
+    const del = await client.query(
+      `delete from votes
+       where tenant_id = $1 and suggestion_id = $2 and user_fingerprint = $3
+       returning id`,
+      [tenantId, suggestionId, userFingerprint]
+    );
+    if (del.rowCount === 0) {
+      return { removed: false, votes: null };
+    }
+    const upd = await client.query(
+      'update suggestions set votes = greatest(votes - 1, 0) where id = $1 returning votes',
+      [suggestionId]
+    );
+    return { removed: true, votes: upd.rows[0] ? upd.rows[0].votes : null };
+  });
+}
+
+module.exports = { hasVoted, votedSuggestionIds, cast, uncast };
