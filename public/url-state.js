@@ -59,7 +59,9 @@
             .split('/')
             .filter(Boolean);
 
-        if (segments.length === 0) {
+        // "/" und "/index.html" verhalten sich gleich: kein Board-Pfad, sondern
+        // Root -> alte Query-Deep-Links (?tenant/?app/?appId) auswerten.
+        if (segments.length === 0 || (segments.length === 1 && segments[0] === 'index.html')) {
             return parseQueryState(search);
         }
 

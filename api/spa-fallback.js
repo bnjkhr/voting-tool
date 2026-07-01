@@ -46,7 +46,16 @@ function shouldServeAppShell(method, pathname) {
     // versucht hat); nicht auf die Shell umbiegen, sondern 404 durchreichen.
     if (segments.some((segment) => segment.includes('.'))) return false;
 
-    return true;
+    // Nur die dokumentierten Board-Formen bekommen die Shell; alles andere
+    // (z.B. tiefere oder unbekannte Pfade) fällt durch zu 404.
+    //   /{tenant}                          -> 1 Segment
+    //   /{tenant}/{board}                  -> 2 Segmente
+    //   /{tenant}/{board}/roadmap|changelog-> 3 Segmente
+    //   /{tenant}/{board}/t/{id}           -> 4 Segmente (Marker "t")
+    if (segments.length === 1 || segments.length === 2) return true;
+    if (segments.length === 3) return segments[2] === 'roadmap' || segments[2] === 'changelog';
+    if (segments.length === 4) return segments[2] === 't';
+    return false;
 }
 
 module.exports = { shouldServeAppShell, buildReservedSegments, RESERVED_FIRST_SEGMENTS };

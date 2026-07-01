@@ -28,6 +28,19 @@ test('root is left to express.static (index.html)', () => {
     assert.equal(shouldServeAppShell('GET', '/'), false);
 });
 
+test('only canonical board shapes get the shell; unknown/deeper paths fall through to 404', () => {
+    // Nicht-kanonische 3. Segmente
+    assert.equal(shouldServeAppShell('GET', '/acme/feedback/xyz'), false);
+    assert.equal(shouldServeAppShell('GET', '/acme/feedback/suggestions'), false);
+    // Zu tief
+    assert.equal(shouldServeAppShell('GET', '/acme/feedback/roadmap/extra'), false);
+    assert.equal(shouldServeAppShell('GET', '/acme/feedback/t/1234/more'), false);
+    // t-Marker an falscher Stelle
+    assert.equal(shouldServeAppShell('GET', '/acme/feedback/x/1234'), false);
+    // Kanonisch -> weiterhin Shell
+    assert.equal(shouldServeAppShell('GET', '/acme/feedback/t/1234'), true);
+});
+
 test('only GET/HEAD are eligible', () => {
     assert.equal(shouldServeAppShell('POST', '/acme/feedback'), false);
     assert.equal(shouldServeAppShell('PUT', '/acme'), false);

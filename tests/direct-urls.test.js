@@ -81,6 +81,11 @@ test('back-compat: old query-param deep links still parse', () => {
     assert.deepEqual(parseUrlState('/', '?appId=family123&view=roadmap'), {
         appId: 'family123', tenantSlug: null, appSlug: null, view: 'roadmap', suggestionId: null,
     });
+
+    // /index.html verhält sich wie Root, nicht wie ein Tenant-Pfad
+    assert.deepEqual(parseUrlState('/index.html', '?tenant=acme&app=feedback&view=changelog'), {
+        appId: null, tenantSlug: 'acme', appSlug: 'feedback', view: 'changelog', suggestionId: null,
+    });
 });
 
 test('legacy appId state builds root query url (unchanged legacy behaviour)', () => {
