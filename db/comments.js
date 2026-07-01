@@ -48,13 +48,17 @@ async function listPendingByTenant(tenantId) {
 async function create(data) {
   const {
     id, tenantId, suggestionId, text, authorType,
-    authorFingerprint = null, approvalStatus = 'pending',
+    authorFingerprint = null, approvalStatus = 'pending', approvedBy = null,
   } = data;
+  // Direkt-approved (z.B. Admin-Kommentar) -> approved_at/by setzen.
+  const approvedAt = approvalStatus === 'approved' ? new Date() : null;
+  const resolvedApprovedBy = approvalStatus === 'approved' ? approvedBy : null;
   const { rows } = await query(
     `insert into comments (
-       id, tenant_id, suggestion_id, text, author_type, author_fingerprint, approval_status
-     ) values ($1,$2,$3,$4,$5,$6,$7) returning ${COLUMNS}`,
-    [id, tenantId, suggestionId, text, authorType, authorFingerprint, approvalStatus]
+       id, tenant_id, suggestion_id, text, author_type, author_fingerprint,
+       approval_status, approved_at, approved_by
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning ${COLUMNS}`,
+    [id, tenantId, suggestionId, text, authorType, authorFingerprint, approvalStatus, approvedAt, resolvedApprovedBy]
   );
   return mapRow(rows[0]);
 }
