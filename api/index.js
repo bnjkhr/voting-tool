@@ -568,7 +568,11 @@ async function logActivity(ticketId, action, {
 // Normalisiert eine Empfängerliste (String oder Array) zu eindeutigen, gültigen Adressen.
 function normalizeRecipientList(to) {
   const list = Array.isArray(to) ? to : (to ? [to] : []);
-  return [...new Set(list.filter((email) => isValidEmail(email)))];
+  return [...new Set(
+    list
+      .map((email) => (typeof email === 'string' ? email.trim().toLowerCase() : ''))
+      .filter((email) => isValidEmail(email))
+  )];
 }
 
 // Ermittelt die Benachrichtigungs-Empfänger für einen Tenant (aktive Owner/Admins).
@@ -592,7 +596,10 @@ async function resolveNotificationRecipients(tenantId) {
       [...new Set(admins.map((member) => member.userId).filter(Boolean))]
         .map((userId) => db.collection('users').doc(userId).get())
     );
-    const recipients = userDocs.map((doc) => (doc.exists ? doc.data().email : null));
+    const recipients = userDocs
+      .map((doc) => (doc.exists ? doc.data() : null))
+      .filter((user) => user && (!user.status || user.status === 'active'))
+      .map((user) => user.email);
     return normalizeRecipientList(recipients);
   } catch (error) {
     console.error('Failed to resolve tenant notification recipients:', error);
@@ -2403,12 +2410,13 @@ function hasValidAdminPassword(req) {
 }
 
 // Konstantzeitiger Vergleich, um Timing-Angriffe auf das Admin-Passwort zu verhindern.
+// Über SHA-256-Digests verglichen, damit auch falsch-lange Tokens denselben Pfad
+// nehmen und die Passwortlänge nicht übers Timing durchsickert.
 function safeCompareSecret(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
+  const digestA = crypto.createHash('sha256').update(a, 'utf8').digest();
+  const digestB = crypto.createHash('sha256').update(b, 'utf8').digest();
+  return crypto.timingSafeEqual(digestA, digestB);
 }
 
 async function resolveSessionAuth(req) {

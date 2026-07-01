@@ -30,7 +30,10 @@ test('every admin notification call site resolves recipients dynamically', () =>
 test('notification recipients are scoped to the tenant, legacy data goes to the operator only', () => {
   const fnStart = apiSource.indexOf('async function resolveNotificationRecipients');
   assert.ok(fnStart !== -1, 'resolveNotificationRecipients must exist');
-  const fnBody = apiSource.slice(fnStart, apiSource.indexOf('\n}\n', fnStart));
+  // Bis zur nächsten Top-Level-Funktionsdeklaration schneiden (robuster als '\n}\n').
+  const afterStart = apiSource.slice(fnStart + 1);
+  const nextFn = afterStart.search(/\n(?:async function|function) /);
+  const fnBody = afterStart.slice(0, nextFn === -1 ? undefined : nextFn);
 
   // Legacy/leerer Tenant -> Betreiber-Adresse.
   assert.ok(fnBody.includes('LEGACY_TENANT_ID'), 'legacy tenants must route to the operator');
