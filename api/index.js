@@ -2510,17 +2510,18 @@ function requireTenantAccess(allowedRoles = MEMBERSHIP_ROLES) {
 }
 
 async function loadTenantApps(tenantId) {
+  let apps;
   if (usePostgres()) {
-    return repos.apps.listByTenant(tenantId);
+    apps = await repos.apps.listByTenant(tenantId);
+  } else {
+    const appsSnapshot = await db.collection('apps')
+      .where('tenantId', '==', tenantId)
+      .get();
+    apps = appsSnapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(appData => getTenantId(appData) === tenantId);
   }
-  const appsSnapshot = await db.collection('apps')
-    .where('tenantId', '==', tenantId)
-    .get();
-
-  const apps = appsSnapshot.docs
-    .map(doc => ({ id: doc.id, ...doc.data() }))
-    .filter(appData => getTenantId(appData) === tenantId);
-
+  // Einheitliche, locale-aware Sortierung für beide Backends (konsistente Reihenfolge).
   apps.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   return apps;
 }
