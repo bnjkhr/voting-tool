@@ -44,8 +44,16 @@ test('public-facing pages link to Impressum and Datenschutz', () => {
   }
 });
 
-test('signup links the privacy policy as a consent reference', () => {
+test('signup links the privacy policy as a consent reference near the submit action', () => {
   const html = read('signup.html');
-  const consentIdx = html.indexOf('Datenschutzerkl');
-  assert.ok(consentIdx !== -1, 'signup must reference the privacy policy near the submit action');
+  const btnIdx = html.indexOf('id="signupBtn"');
+  assert.ok(btnIdx !== -1, 'signup submit button must exist');
+
+  // Der Consent-Hinweis muss eine echte Verlinkung zur Datenschutzerklärung sein
+  // und in unmittelbarer Nähe der Absende-Aktion stehen (nicht irgendwo auf der Seite).
+  const linkIdx = html.indexOf('href="/datenschutz.html"', btnIdx);
+  assert.ok(linkIdx !== -1 && linkIdx - btnIdx < 600, 'privacy policy must be linked near the submit button');
+
+  const consentIdx = html.indexOf('Datenschutzerkl', btnIdx);
+  assert.ok(consentIdx !== -1 && consentIdx - btnIdx < 600, 'consent wording must sit near the submit button');
 });
