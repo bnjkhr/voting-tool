@@ -71,9 +71,15 @@ test('tenant release writes verify the release belongs to the tenant', () => {
 });
 
 test('tenant release creation verifies the target app belongs to the tenant', () => {
+  // Both backends must scope the target app to the resolved tenant before
+  // creating a release, so an appId from tenant A cannot be used by tenant B.
   assert.ok(
-    apiSource.includes("getTenantId(appDoc.data() || {}) !== tenant.id"),
-    'expected POST release to reject apps from other tenants',
+    apiSource.includes("appRow && appRow.tenantId === tenant.id"),
+    'expected the Postgres branch to reject apps from other tenants',
+  );
+  assert.ok(
+    apiSource.includes("getTenantId(appDoc.data() || {}) === tenant.id"),
+    'expected the Firestore branch to reject apps from other tenants',
   );
 });
 

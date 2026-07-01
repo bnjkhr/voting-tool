@@ -117,6 +117,7 @@ async function adminEmails(tenantId) {
 
 module.exports = {
   findByTenantAndUser,
+  findById,
   listByTenant,
   listActiveAdmins,
   listByUser,

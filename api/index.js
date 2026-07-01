@@ -2782,6 +2782,14 @@ async function resolveTenantMembershipById(tenantId, membershipId) {
     return { errorStatus: 400, error: 'Invalid membership ID' };
   }
 
+  if (usePostgres()) {
+    const membership = await repos.memberships.findById(membershipId);
+    if (!membership || membership.tenantId !== tenantId) {
+      return { errorStatus: 404, error: 'Member not found' };
+    }
+    return { membership, membershipId };
+  }
+
   const membershipDoc = await db.collection('memberships').doc(membershipId).get();
   if (!membershipDoc.exists) {
     return { errorStatus: 404, error: 'Member not found' };
@@ -2792,12 +2800,20 @@ async function resolveTenantMembershipById(tenantId, membershipId) {
     return { errorStatus: 404, error: 'Member not found' };
   }
 
-  return { membershipDoc, membership };
+  return { membershipDoc, membership, membershipId };
 }
 
 async function resolveTenantInviteById(tenantId, inviteId) {
   if (!/^[a-zA-Z0-9_-]+$/.test(inviteId || '')) {
     return { errorStatus: 400, error: 'Invalid invite ID' };
+  }
+
+  if (usePostgres()) {
+    const invite = await repos.invites.findById(inviteId);
+    if (!invite || invite.tenantId !== tenantId) {
+      return { errorStatus: 404, error: 'Invite not found' };
+    }
+    return { invite, inviteId };
   }
 
   const inviteDoc = await db.collection('invites').doc(inviteId).get();
@@ -2810,10 +2826,13 @@ async function resolveTenantInviteById(tenantId, inviteId) {
     return { errorStatus: 404, error: 'Invite not found' };
   }
 
-  return { inviteDoc, invite };
+  return { inviteDoc, invite, inviteId };
 }
 
 async function countActiveTenantOwners(tenantId) {
+  if (usePostgres()) {
+    return repos.memberships.countActiveOwners(tenantId);
+  }
   const ownersSnapshot = await db.collection('memberships')
     .where('tenantId', '==', tenantId)
     .where('role', '==', 'owner')
@@ -3263,13 +3282,18 @@ app.get('/api/admin/tenants/:tenantSlug/stats', requireTenantAccess(), async (re
     if (!tenant) return;
 
     const { suggestions, apps } = await loadTenantAdminSuggestions(tenant.id);
-    const votesSnapshot = await db.collection('votes').where('tenantId', '==', tenant.id).get();
-    const tenantVotes = votesSnapshot.docs.filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+    let totalVotes;
+    if (usePostgres()) {
+      totalVotes = await repos.votes.countByTenant(tenant.id);
+    } else {
+      const votesSnapshot = await db.collection('votes').where('tenantId', '==', tenant.id).get();
+      totalVotes = votesSnapshot.docs.filter(doc => getTenantId(doc.data() || {}) === tenant.id).length;
+    }
 
     res.json({
       totalApps: apps.length,
       totalSuggestions: suggestions.length,
-      totalVotes: tenantVotes.length,
+      totalVotes,
       totalBugs: suggestions.filter(item => item.type === 'bug').length,
       totalTickets: suggestions.filter(item => item.type === 'ticket').length,
       totalFeatures: suggestions.filter(item => item.type === 'feature').length,
@@ -3313,25 +3337,50 @@ app.put('/api/admin/tenants/:tenantSlug/settings', requireTenantAccess(['owner',
     }
 
     if (settingsUpdate.plainTenant.slug !== (tenant.slug || tenant.id)) {
-      const slugSnapshot = await db.collection('tenants')
-        .where('slug', '==', settingsUpdate.plainTenant.slug)
-        .limit(2)
-        .get();
-      const hasConflict = slugSnapshot.docs.some(doc => doc.id !== tenant.id);
-      if (hasConflict) {
-        return res.status(409).json({ error: 'Workspace slug already exists' });
+      if (usePostgres()) {
+        const existing = await repos.tenants.findBySlug(settingsUpdate.plainTenant.slug);
+        if (existing && existing.id !== tenant.id) {
+          return res.status(409).json({ error: 'Workspace slug already exists' });
+        }
+      } else {
+        const slugSnapshot = await db.collection('tenants')
+          .where('slug', '==', settingsUpdate.plainTenant.slug)
+          .limit(2)
+          .get();
+        const hasConflict = slugSnapshot.docs.some(doc => doc.id !== tenant.id);
+        if (hasConflict) {
+          return res.status(409).json({ error: 'Workspace slug already exists' });
+        }
       }
     }
 
-    const batch = db.batch();
-    batch.set(db.collection('tenants').doc(tenant.id), settingsUpdate.tenantUpdate, { merge: true });
+    if (usePostgres()) {
+      // Kein counters-Table in Postgres: ticketPrefix lebt direkt auf der App.
+      await repos.tenants.update(tenant.id, {
+        name: settingsUpdate.plainTenant.name,
+        displayName: settingsUpdate.plainTenant.displayName,
+        slug: settingsUpdate.plainTenant.slug,
+        emailFromName: settingsUpdate.plainTenant.emailSettings.fromName,
+        emailReplyTo: settingsUpdate.plainTenant.emailSettings.replyTo,
+      });
+      if (defaultBoard && settingsUpdate.plainDefaultBoard) {
+        await repos.apps.update(defaultBoard.id, {
+          name: settingsUpdate.plainDefaultBoard.name,
+          slug: settingsUpdate.plainDefaultBoard.slug,
+          ticketPrefix: settingsUpdate.plainDefaultBoard.ticketPrefix,
+        });
+      }
+    } else {
+      const batch = db.batch();
+      batch.set(db.collection('tenants').doc(tenant.id), settingsUpdate.tenantUpdate, { merge: true });
 
-    if (defaultBoard && settingsUpdate.appUpdate && settingsUpdate.counterUpdate) {
-      batch.set(db.collection('apps').doc(defaultBoard.id), settingsUpdate.appUpdate, { merge: true });
-      batch.set(db.collection('counters').doc(defaultBoard.id), settingsUpdate.counterUpdate, { merge: true });
+      if (defaultBoard && settingsUpdate.appUpdate && settingsUpdate.counterUpdate) {
+        batch.set(db.collection('apps').doc(defaultBoard.id), settingsUpdate.appUpdate, { merge: true });
+        batch.set(db.collection('counters').doc(defaultBoard.id), settingsUpdate.counterUpdate, { merge: true });
+      }
+
+      await batch.commit();
     }
-
-    await batch.commit();
 
     const responseApps = defaultBoard
       ? apps.map(appData => appData.id === defaultBoard.id ? settingsUpdate.plainDefaultBoard : appData)
@@ -3390,14 +3439,18 @@ app.put('/api/admin/tenants/:tenantSlug/members/:membershipId', requireTenantAcc
       return res.status(mutation.errorStatus).json({ error: mutation.error });
     }
 
-    await resolved.membershipDoc.ref.set({
-      role: mutation.role,
-      status: mutation.status,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    if (usePostgres()) {
+      await repos.memberships.update(resolved.membershipId, { role: mutation.role, status: mutation.status });
+    } else {
+      await resolved.membershipDoc.ref.set({
+        role: mutation.role,
+        status: mutation.status,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
 
     res.json({
-      id: resolved.membershipDoc.id,
+      id: resolved.membershipId,
       ...resolved.membership,
       role: mutation.role,
       status: mutation.status,
@@ -3431,13 +3484,17 @@ app.delete('/api/admin/tenants/:tenantSlug/members/:membershipId', requireTenant
       return res.status(mutation.errorStatus).json({ error: mutation.error });
     }
 
-    await resolved.membershipDoc.ref.set({
-      status: 'disabled',
-      disabledAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    if (usePostgres()) {
+      await repos.memberships.update(resolved.membershipId, { status: 'disabled', disabledAt: new Date() });
+    } else {
+      await resolved.membershipDoc.ref.set({
+        status: 'disabled',
+        disabledAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
 
-    res.json({ success: true, id: resolved.membershipDoc.id, status: 'disabled' });
+    res.json({ success: true, id: resolved.membershipId, status: 'disabled' });
   } catch (error) {
     console.error('Error disabling tenant member:', error);
     res.status(500).json({ error: 'Failed to disable member' });
@@ -3462,32 +3519,46 @@ app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner',
       return res.status(400).json({ error: 'Invalid role' });
     }
 
-    const existingInvite = await db.collection('invites')
-      .where('tenantId', '==', tenant.id)
-      .where('email', '==', email)
-      .where('status', '==', 'pending')
-      .limit(1)
-      .get();
-
-    if (!existingInvite.empty) {
-      return res.status(409).json({ error: 'Invite already pending for this email' });
-    }
-
-    const existingUser = await db.collection('users')
-      .where('email', '==', email)
-      .limit(1)
-      .get();
-
-    if (!existingUser.empty) {
-      const userId = existingUser.docs[0].id;
-      const existingMembership = await db.collection('memberships')
+    if (usePostgres()) {
+      const pending = await repos.invites.findPending(tenant.id, email);
+      if (pending) {
+        return res.status(409).json({ error: 'Invite already pending for this email' });
+      }
+      const existing = await repos.users.findByEmail(email);
+      if (existing) {
+        const membership = await repos.memberships.findByTenantAndUser(tenant.id, existing.id);
+        if (membership) {
+          return res.status(409).json({ error: 'User is already a member of this tenant' });
+        }
+      }
+    } else {
+      const existingInvite = await db.collection('invites')
         .where('tenantId', '==', tenant.id)
-        .where('userId', '==', userId)
+        .where('email', '==', email)
+        .where('status', '==', 'pending')
         .limit(1)
         .get();
 
-      if (!existingMembership.empty) {
-        return res.status(409).json({ error: 'User is already a member of this tenant' });
+      if (!existingInvite.empty) {
+        return res.status(409).json({ error: 'Invite already pending for this email' });
+      }
+
+      const existingUser = await db.collection('users')
+        .where('email', '==', email)
+        .limit(1)
+        .get();
+
+      if (!existingUser.empty) {
+        const userId = existingUser.docs[0].id;
+        const existingMembership = await db.collection('memberships')
+          .where('tenantId', '==', tenant.id)
+          .where('userId', '==', userId)
+          .limit(1)
+          .get();
+
+        if (!existingMembership.empty) {
+          return res.status(409).json({ error: 'User is already a member of this tenant' });
+        }
       }
     }
 
@@ -3500,7 +3571,17 @@ app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner',
       now: new Date(),
     });
 
-    const docRef = await db.collection('invites').add(inviteData);
+    let newInviteId;
+    if (usePostgres()) {
+      newInviteId = crypto.randomUUID();
+      await repos.invites.create({
+        id: newInviteId, tenantId: tenant.id, email, role,
+        tokenHash: inviteData.tokenHash, expiresAt: inviteData.expiresAt,
+      });
+    } else {
+      const docRef = await db.collection('invites').add(inviteData);
+      newInviteId = docRef.id;
+    }
     const acceptUrl = `${buildRequestBaseUrl(req)}/accept-invite.html?token=${encodeURIComponent(token)}`;
     await sendTenantInviteEmail({
       to: email,
@@ -3510,7 +3591,7 @@ app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner',
     });
 
     res.status(201).json({
-      id: docRef.id,
+      id: newInviteId,
       email: inviteData.email,
       role: inviteData.role,
       status: inviteData.status,
@@ -3548,7 +3629,15 @@ app.post('/api/admin/tenants/:tenantSlug/invites/:inviteId/resend', requireTenan
       now: new Date(),
     });
 
-    await resolved.inviteDoc.ref.set(inviteData, { merge: true });
+    if (usePostgres()) {
+      await repos.invites.update(resolved.inviteId, {
+        tokenHash: inviteData.tokenHash,
+        expiresAt: inviteData.expiresAt,
+        status: 'pending',
+      });
+    } else {
+      await resolved.inviteDoc.ref.set(inviteData, { merge: true });
+    }
     const acceptUrl = `${buildRequestBaseUrl(req)}/accept-invite.html?token=${encodeURIComponent(token)}`;
     await sendTenantInviteEmail({
       to: inviteData.email,
@@ -3558,7 +3647,7 @@ app.post('/api/admin/tenants/:tenantSlug/invites/:inviteId/resend', requireTenan
     });
 
     res.json({
-      id: resolved.inviteDoc.id,
+      id: resolved.inviteId,
       email: inviteData.email,
       role: inviteData.role,
       status: inviteData.status,
@@ -3587,13 +3676,20 @@ app.delete('/api/admin/tenants/:tenantSlug/invites/:inviteId', requireTenantAcce
       return res.status(400).json({ error: 'Only pending invites can be revoked' });
     }
 
-    await resolved.inviteDoc.ref.set({
-      status: 'revoked',
-      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    if (usePostgres()) {
+      await repos.invites.update(resolved.inviteId, {
+        status: 'revoked',
+        revokedAt: new Date(),
+      });
+    } else {
+      await resolved.inviteDoc.ref.set({
+        status: 'revoked',
+        revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
 
-    res.json({ success: true, id: resolved.inviteDoc.id, status: 'revoked' });
+    res.json({ success: true, id: resolved.inviteId, status: 'revoked' });
   } catch (error) {
     console.error('Error revoking tenant invite:', error);
     res.status(500).json({ error: 'Failed to revoke invite' });
@@ -3766,6 +3862,10 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', req
 // ---------------------------------------------------------------------------
 
 function toReleaseDate(value) {
+  // Postgres liefert echte JS-Dates; Firestore Timestamps (.toDate()) bzw. reine
+  // {_seconds}-Objekte. Ohne den Date-Zweig würden Postgres-Werte auf epoch 0
+  // fallen und die Sortierung gleicher Status kollabieren.
+  if (value instanceof Date) return value;
   return value?.toDate?.()
     ?? (value?._seconds != null ? new Date(value._seconds * 1000) : new Date(0));
 }
@@ -3823,6 +3923,24 @@ async function countSuggestionsByReleaseId(releaseIds, tenantId) {
 }
 
 async function loadReleasesForTenant(tenantId, { appId } = {}) {
+  if (usePostgres()) {
+    const [scoped, apps] = await Promise.all([
+      repos.releases.listByTenant(tenantId),
+      repos.apps.listByTenant(tenantId),
+    ]);
+    const appsMap = {};
+    apps.forEach((a) => { appsMap[a.id] = a; });
+    let scopedReleases = scoped;
+    if (appId) scopedReleases = scopedReleases.filter((r) => r.appId === appId);
+    const itemCountMap = await repos.suggestions.countByReleaseIds(scopedReleases.map((r) => r.id), tenantId);
+    const releases = scopedReleases.map((r) => ({
+      ...r,
+      app: appsMap[r.appId] || { name: 'Unbekannte App' },
+      itemCount: itemCountMap[r.id] || 0,
+    }));
+    return sortAdminReleases(releases);
+  }
+
   // Scope the read to the tenant directly instead of pulling the whole
   // releases collection and filtering in memory. tenantId is a single-field
   // equality filter (auto-indexed), so no composite index is needed; the
@@ -3883,8 +4001,15 @@ app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner'
       return res.status(400).json({ error: 'Ungültige App-ID' });
     }
 
-    const appDoc = await db.collection('apps').doc(appId).get();
-    if (!appDoc.exists || getTenantId(appDoc.data() || {}) !== tenant.id) {
+    let appOk;
+    if (usePostgres()) {
+      const appRow = await repos.apps.findById(appId);
+      appOk = appRow && appRow.tenantId === tenant.id;
+    } else {
+      const appDoc = await db.collection('apps').doc(appId).get();
+      appOk = appDoc.exists && getTenantId(appDoc.data() || {}) === tenant.id;
+    }
+    if (!appOk) {
       return res.status(404).json({ error: 'App nicht gefunden' });
     }
 
@@ -3912,9 +4037,24 @@ app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner'
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    const docRef = await db.collection('releases').add(release);
+    let newReleaseId;
+    if (usePostgres()) {
+      newReleaseId = crypto.randomUUID();
+      await repos.releases.create({
+        id: newReleaseId, tenantId: tenant.id, appId, version: validVersion,
+        title: release.title, description: release.description,
+        // parsedReleaseDate ist ein Firestore-Timestamp; für timestamptz zu Date.
+        status: validStatus, releaseDate: parsedReleaseDate ? parsedReleaseDate.toDate() : null,
+      });
+      if (validStatus === 'veröffentlicht') {
+        await repos.releases.update(newReleaseId, { publishedAt: new Date() });
+      }
+    } else {
+      const docRef = await db.collection('releases').add(release);
+      newReleaseId = docRef.id;
+    }
     res.status(201).json({
-      id: docRef.id,
+      id: newReleaseId,
       ...release,
       // serverTimestamp() is a write-only sentinel — resolve the timestamps for
       // the response so the client never sees {"_methodName":"serverTimestamp"}.
@@ -3938,9 +4078,18 @@ app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAcces
       return res.status(400).json({ error: 'Invalid release ID format' });
     }
 
-    const releaseDoc = await db.collection('releases').doc(releaseId).get();
-    if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
-      return res.status(404).json({ error: 'Release nicht gefunden' });
+    let releaseData;
+    if (usePostgres()) {
+      releaseData = await repos.releases.findById(releaseId);
+      if (!releaseData || releaseData.tenantId !== tenant.id) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+    } else {
+      const releaseDoc = await db.collection('releases').doc(releaseId).get();
+      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+      releaseData = releaseDoc.data();
     }
 
     const { version, title, description, status, releaseDate } = req.body || {};
@@ -3968,7 +4117,7 @@ app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAcces
       }
       updateData.status = status;
 
-      const previousStatus = releaseDoc.data().status;
+      const previousStatus = releaseData.status;
       if (status === 'veröffentlicht' && previousStatus !== 'veröffentlicht') {
         updateData.publishedAt = admin.firestore.FieldValue.serverTimestamp();
       }
@@ -3982,7 +4131,17 @@ app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAcces
       updateData.releaseDate = parsedReleaseDate;
     }
 
-    await db.collection('releases').doc(releaseId).update(updateData);
+    if (usePostgres()) {
+      const pgUpdate = { ...updateData };
+      delete pgUpdate.updatedAt;
+      if (pgUpdate.publishedAt) pgUpdate.publishedAt = new Date();
+      // parseReleaseDate liefert einen Firestore-Timestamp; für timestamptz in
+      // eine JS-Date wandeln (null = Datum entfernen bleibt erhalten).
+      if (pgUpdate.releaseDate) pgUpdate.releaseDate = pgUpdate.releaseDate.toDate();
+      await repos.releases.update(releaseId, pgUpdate);
+    } else {
+      await db.collection('releases').doc(releaseId).update(updateData);
+    }
     res.json({ success: true, message: 'Release erfolgreich aktualisiert' });
   } catch (error) {
     console.error('Error updating tenant release:', error);
@@ -4000,35 +4159,48 @@ app.delete('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAc
       return res.status(400).json({ error: 'Invalid release ID format' });
     }
 
-    const releaseDoc = await db.collection('releases').doc(releaseId).get();
-    if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
-      return res.status(404).json({ error: 'Release nicht gefunden' });
+    let unlinkedCount;
+    if (usePostgres()) {
+      const rel = await repos.releases.findById(releaseId);
+      if (!rel || rel.tenantId !== tenant.id) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+      const counts = await repos.suggestions.countByReleaseIds([releaseId], tenant.id);
+      unlinkedCount = counts[releaseId] || 0;
+      // ON DELETE SET NULL entkoppelt die verknüpften Suggestions automatisch.
+      await repos.releases.remove(releaseId);
+    } else {
+      const releaseDoc = await db.collection('releases').doc(releaseId).get();
+      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+        return res.status(404).json({ error: 'Release nicht gefunden' });
+      }
+
+      const linkedSuggestions = await db.collection('suggestions')
+        .where('releaseId', '==', releaseId)
+        .get();
+
+      const scopedSuggestions = linkedSuggestions.docs
+        .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+
+      // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
+      // one batch — a release on a large tenant can have more linked entries than
+      // that. The release itself is deleted last; the operation is idempotent, so
+      // a retry after a partial failure simply finishes the remaining unlinks.
+      for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
+        const batch = db.batch();
+        scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
+          batch.update(doc.ref, { releaseId: null });
+        });
+        await batch.commit();
+      }
+      await db.collection('releases').doc(releaseId).delete();
+      unlinkedCount = scopedSuggestions.length;
     }
-
-    const linkedSuggestions = await db.collection('suggestions')
-      .where('releaseId', '==', releaseId)
-      .get();
-
-    const scopedSuggestions = linkedSuggestions.docs
-      .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
-
-    // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
-    // one batch — a release on a large tenant can have more linked entries than
-    // that. The release itself is deleted last; the operation is idempotent, so
-    // a retry after a partial failure simply finishes the remaining unlinks.
-    for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
-      const batch = db.batch();
-      scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
-        batch.update(doc.ref, { releaseId: null });
-      });
-      await batch.commit();
-    }
-    await db.collection('releases').doc(releaseId).delete();
 
     res.json({
       success: true,
       message: 'Release gelöscht',
-      unlinkedSuggestions: scopedSuggestions.length,
+      unlinkedSuggestions: unlinkedCount,
     });
   } catch (error) {
     console.error('Error deleting tenant release:', error);
@@ -4057,14 +4229,25 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release', requ
       if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
         return res.status(400).json({ error: 'Invalid release ID format' });
       }
-      const releaseDoc = await db.collection('releases').doc(releaseId).get();
-      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+      let relOk;
+      if (usePostgres()) {
+        const rel = await repos.releases.findById(releaseId);
+        relOk = rel && rel.tenantId === tenant.id;
+      } else {
+        const releaseDoc = await db.collection('releases').doc(releaseId).get();
+        relOk = releaseDoc.exists && getTenantId(releaseDoc.data() || {}) === tenant.id;
+      }
+      if (!relOk) {
         return res.status(404).json({ error: 'Release nicht gefunden' });
       }
     }
 
     const previousReleaseId = suggestionData.releaseId || null;
-    await db.collection('suggestions').doc(suggestionId).update({ releaseId: releaseId || null });
+    if (usePostgres()) {
+      await repos.suggestions.update(suggestionId, { releaseId: releaseId || null });
+    } else {
+      await db.collection('suggestions').doc(suggestionId).update({ releaseId: releaseId || null });
+    }
 
     await logActivity(suggestionId, 'release_changed', {
       oldValue: previousReleaseId,
@@ -6285,18 +6468,23 @@ app.get('/api/admin/tenants/:tenantSlug/api-keys', requireTenantAccess(['owner',
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
 
-    const snapshot = await db.collection('apiKeys')
-      .where('tenantId', '==', tenant.id)
-      .get();
-
-    const keys = snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .sort((a, b) => {
-        const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
-        const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
-        return bTime - aTime;
-      })
-      .map(buildApiKeyAdminResponse);
+    let keys;
+    if (usePostgres()) {
+      const rows = await repos.apiKeys.listByTenant(tenant.id); // bereits order by created_at desc
+      keys = rows.map(buildApiKeyAdminResponse);
+    } else {
+      const snapshot = await db.collection('apiKeys')
+        .where('tenantId', '==', tenant.id)
+        .get();
+      keys = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => {
+          const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+          const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+          return bTime - aTime;
+        })
+        .map(buildApiKeyAdminResponse);
+    }
 
     res.json(keys);
   } catch (error) {
@@ -6332,10 +6520,24 @@ app.post('/api/admin/tenants/:tenantSlug/api-keys', requireTenantAccess(['owner'
       createdBy,
     });
 
-    const docRef = await db.collection('apiKeys').add(data);
+    let createdKey;
+    if (usePostgres()) {
+      createdKey = await repos.apiKeys.create({
+        id: crypto.randomUUID(),
+        tenantId: tenant.id,
+        name,
+        scopes,
+        tokenHash: data.tokenHash,
+        tokenPrefix: data.tokenPrefix,
+        createdBy,
+      });
+    } else {
+      const docRef = await db.collection('apiKeys').add(data);
+      createdKey = { id: docRef.id, ...data };
+    }
 
     res.status(201).json({
-      ...buildApiKeyAdminResponse({ id: docRef.id, ...data }),
+      ...buildApiKeyAdminResponse(createdKey),
       token,
       message: 'Token wird nur einmal angezeigt. Bitte sicher aufbewahren.',
     });
@@ -6355,15 +6557,23 @@ app.delete('/api/admin/tenants/:tenantSlug/api-keys/:keyId', requireTenantAccess
       return res.status(400).json({ error: 'Invalid key id' });
     }
 
-    const keyRef = db.collection('apiKeys').doc(keyId);
-    const keyDoc = await keyRef.get();
-    if (!keyDoc.exists || (keyDoc.data() || {}).tenantId !== tenant.id) {
-      return res.status(404).json({ error: 'API key not found' });
-    }
+    if (usePostgres()) {
+      const key = await repos.apiKeys.findById(keyId);
+      if (!key || key.tenantId !== tenant.id) {
+        return res.status(404).json({ error: 'API key not found' });
+      }
+      await repos.apiKeys.revoke(keyId);
+    } else {
+      const keyRef = db.collection('apiKeys').doc(keyId);
+      const keyDoc = await keyRef.get();
+      if (!keyDoc.exists || (keyDoc.data() || {}).tenantId !== tenant.id) {
+        return res.status(404).json({ error: 'API key not found' });
+      }
 
-    await keyRef.update({
-      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+      await keyRef.update({
+        revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
 
     res.json({ success: true, message: 'API-Schlüssel widerrufen' });
   } catch (error) {
