@@ -94,7 +94,33 @@ async function remove(id) {
   await query('delete from comments where id = $1', [id]);
 }
 
+// Kommentar-Statistik je Suggestion als Map { suggestionId: {totalCount,
+// pendingCount, publicCount} } — ersetzt den gechunkten Firestore-Scan durch
+// ein GROUP BY. Suggestions ohne Kommentare fehlen im Map (Aufrufer defaultet 0).
+async function statsForSuggestions(suggestionIds, tenantId) {
+  const map = {};
+  if (!suggestionIds || suggestionIds.length === 0) return map;
+  const { rows } = await query(
+    `select suggestion_id,
+       count(*)::int as total_count,
+       (count(*) filter (where approval_status = 'pending'))::int as pending_count,
+       (count(*) filter (where approval_status = 'approved'))::int as public_count
+     from comments
+     where suggestion_id = any($1::text[]) and tenant_id = $2
+     group by suggestion_id`,
+    [suggestionIds, tenantId]
+  );
+  for (const r of rows) {
+    map[r.suggestion_id] = {
+      totalCount: r.total_count,
+      pendingCount: r.pending_count,
+      publicCount: r.public_count,
+    };
+  }
+  return map;
+}
+
 module.exports = {
   findById, listApprovedForSuggestion, listForSuggestion, listPendingByTenant,
-  create, approve, reject, update, remove,
+  create, approve, reject, update, remove, statsForSuggestions,
 };
