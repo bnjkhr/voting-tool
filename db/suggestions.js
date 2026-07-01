@@ -55,6 +55,21 @@ async function listByRelease(releaseId) {
 
 // Approved Suggestions für mehrere Releases (tenant-gescopt) — für den
 // öffentlichen Roadmap/Changelog-View. Ersetzt den gechunkten releaseId-in-Scan.
+// Anzahl Suggestions je Release (alle, tenant-gescopt) als Map — für die
+// Admin-Roadmap-Ansicht (itemCount). Ersetzt den gechunkten releaseId-in-Scan.
+async function countByReleaseIds(releaseIds, tenantId) {
+  const map = {};
+  if (!releaseIds || releaseIds.length === 0) return map;
+  const { rows } = await query(
+    `select release_id, count(*)::int as n from suggestions
+     where release_id = any($1::text[]) and tenant_id = $2
+     group by release_id`,
+    [releaseIds, tenantId]
+  );
+  for (const r of rows) map[r.release_id] = r.n;
+  return map;
+}
+
 async function listApprovedByReleaseIds(releaseIds, tenantId) {
   if (!releaseIds || releaseIds.length === 0) return [];
   const { rows } = await query(
@@ -142,5 +157,5 @@ async function remove(id) {
 
 module.exports = {
   findById, listPublicForApp, listByApp, listByTenant, listByRelease,
-  listApprovedByReleaseIds, create, update, setApproved, addLabel, removeLabel, remove,
+  listApprovedByReleaseIds, countByReleaseIds, create, update, setApproved, addLabel, removeLabel, remove,
 };

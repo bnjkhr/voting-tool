@@ -25,6 +25,11 @@ async function listByTenant(tenantId) {
   return mapRows(rows);
 }
 
+async function findById(id) {
+  const { rows } = await query(`select ${COLUMNS} from api_keys where id = $1`, [id]);
+  return mapRow(rows[0]);
+}
+
 async function create({ id, tenantId, name, scopes = [], tokenHash, tokenPrefix, createdBy }) {
   const { rows } = await query(
     `insert into api_keys (id, tenant_id, name, scopes, token_hash, token_prefix, created_by)
@@ -54,5 +59,5 @@ async function revoke(id) {
 }
 
 module.exports = {
-  findByTokenHash, listByTenant, create, touch, revoke,
+  findByTokenHash, listByTenant, findById, create, touch, revoke,
 };

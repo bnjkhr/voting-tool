@@ -23,6 +23,14 @@ async function listByApp(appId) {
   return mapRows(rows);
 }
 
+async function listByTenant(tenantId) {
+  const { rows } = await query(
+    `select ${COLUMNS} from releases where tenant_id = $1 order by created_at desc`,
+    [tenantId]
+  );
+  return mapRows(rows);
+}
+
 async function listPublishedByApp(appId) {
   const { rows } = await query(
     `select ${COLUMNS} from releases
@@ -70,5 +78,5 @@ async function remove(id) {
 }
 
 module.exports = {
-  findById, listByApp, listPublishedByApp, create, update, setPublished, remove,
+  findById, listByApp, listByTenant, listPublishedByApp, create, update, setPublished, remove,
 };

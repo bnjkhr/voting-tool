@@ -81,4 +81,10 @@ async function uncast({ tenantId, suggestionId, userFingerprint }) {
   });
 }
 
-module.exports = { hasVoted, votedSuggestionIds, cast, uncast };
+// Gesamtzahl der Votes eines Tenants (für die Admin-Statistik).
+async function countByTenant(tenantId) {
+  const { rows } = await query('select count(*)::int as count from votes where tenant_id = $1', [tenantId]);
+  return rows[0].count;
+}
+
+module.exports = { hasVoted, votedSuggestionIds, cast, uncast, countByTenant };

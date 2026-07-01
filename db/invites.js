@@ -66,5 +66,5 @@ async function remove(id) {
 }
 
 module.exports = {
-  findByTokenHash, listByTenant, findPending, create, update, remove,
+  findByTokenHash, listByTenant, findPending, findById, create, update, remove,
 };
