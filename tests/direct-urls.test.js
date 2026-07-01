@@ -19,128 +19,95 @@ function loadUrlStateModule() {
 }
 
 test('direct url state helper exists', () => {
-    assert.ok(
-        fs.existsSync(urlStatePath),
-        'expected a dedicated helper for parsing and building direct url state'
-    );
+    assert.ok(fs.existsSync(urlStatePath));
 });
 
-test('direct url state parses and builds app/view query parameters', () => {
-    const { parseUrlState, buildUrlState } = loadUrlStateModule();
+test('parses path-based tenant board urls', () => {
+    const { parseUrlState } = loadUrlStateModule();
 
-    assert.deepEqual(parseUrlState(''), {
-        appId: null,
-        tenantSlug: null,
-        appSlug: null,
-        view: 'suggestions',
+    assert.deepEqual(parseUrlState('/', ''), {
+        appId: null, tenantSlug: null, appSlug: null, view: 'suggestions', suggestionId: null,
     });
 
-    assert.deepEqual(parseUrlState('?appId=family123&view=roadmap'), {
-        appId: 'family123',
-        tenantSlug: null,
-        appSlug: null,
-        view: 'roadmap',
+    assert.deepEqual(parseUrlState('/acme', ''), {
+        appId: null, tenantSlug: 'acme', appSlug: null, view: 'suggestions', suggestionId: null,
     });
 
-    assert.equal(
-        buildUrlState({ appId: 'family123', view: 'changelog' }),
-        '?appId=family123&view=changelog'
-    );
+    assert.deepEqual(parseUrlState('/acme/feedback', ''), {
+        appId: null, tenantSlug: 'acme', appSlug: 'feedback', view: 'suggestions', suggestionId: null,
+    });
 
-    assert.equal(
-        buildUrlState({ appId: 'family123', view: 'suggestions' }),
-        '?appId=family123'
-    );
+    assert.deepEqual(parseUrlState('/acme/feedback/roadmap', ''), {
+        appId: null, tenantSlug: 'acme', appSlug: 'feedback', view: 'roadmap', suggestionId: null,
+    });
 
-    assert.equal(
-        buildUrlState({ appId: null, view: 'suggestions' }),
-        ''
-    );
+    assert.deepEqual(parseUrlState('/acme/feedback/changelog', ''), {
+        appId: null, tenantSlug: 'acme', appSlug: 'feedback', view: 'changelog', suggestionId: null,
+    });
+
+    assert.deepEqual(parseUrlState('/acme/feedback/t/1234', ''), {
+        appId: null, tenantSlug: 'acme', appSlug: 'feedback', view: 'suggestions', suggestionId: '1234',
+    });
 });
 
-test('direct url state supports tenant and app slugs', () => {
-    const { parseUrlState, buildUrlState } = loadUrlStateModule();
+test('builds canonical path-based urls from state', () => {
+    const { buildUrlState } = loadUrlStateModule();
 
-    assert.deepEqual(parseUrlState('?tenant=staging-saas-smoke&app=board&view=roadmap'), {
-        appId: null,
-        tenantSlug: 'staging-saas-smoke',
-        appSlug: 'board',
-        view: 'roadmap',
+    assert.equal(buildUrlState({ tenantSlug: 'acme' }), '/acme');
+    assert.equal(buildUrlState({ tenantSlug: 'acme', appSlug: 'feedback' }), '/acme/feedback');
+    assert.equal(buildUrlState({ tenantSlug: 'acme', appSlug: 'feedback', view: 'suggestions' }), '/acme/feedback');
+    assert.equal(buildUrlState({ tenantSlug: 'acme', appSlug: 'feedback', view: 'roadmap' }), '/acme/feedback/roadmap');
+    assert.equal(buildUrlState({ tenantSlug: 'acme', appSlug: 'feedback', view: 'changelog' }), '/acme/feedback/changelog');
+    assert.equal(buildUrlState({ tenantSlug: 'acme', appSlug: 'feedback', suggestionId: '1234' }), '/acme/feedback/t/1234');
+    assert.equal(buildUrlState({}), '/');
+});
+
+test('parse and build round-trip for tenant board deep links', () => {
+    const { parseUrlState, buildUrlState } = loadUrlStateModule();
+    for (const url of ['/acme', '/acme/feedback', '/acme/feedback/roadmap', '/acme/feedback/t/1234']) {
+        assert.equal(buildUrlState(parseUrlState(url, '')), url, `round-trip failed for ${url}`);
+    }
+});
+
+test('back-compat: old query-param deep links still parse', () => {
+    const { parseUrlState } = loadUrlStateModule();
+
+    // Alter Tenant-Link
+    assert.deepEqual(parseUrlState('/', '?tenant=acme&app=feedback&view=roadmap'), {
+        appId: null, tenantSlug: 'acme', appSlug: 'feedback', view: 'roadmap', suggestionId: null,
     });
 
-    assert.equal(
-        buildUrlState({ tenantSlug: 'staging-saas-smoke', appSlug: 'board', view: 'changelog' }),
-        '?tenant=staging-saas-smoke&app=board&view=changelog'
-    );
+    // Alter Legacy-Link (Firestore-Doc-ID)
+    assert.deepEqual(parseUrlState('/', '?appId=family123&view=roadmap'), {
+        appId: 'family123', tenantSlug: null, appSlug: null, view: 'roadmap', suggestionId: null,
+    });
+});
 
-    assert.equal(
-        buildUrlState({ tenantSlug: 'staging-saas-smoke', appSlug: 'board', view: 'suggestions' }),
-        '?tenant=staging-saas-smoke&app=board'
-    );
-
-    assert.equal(
-        buildUrlState({ tenantSlug: 'staging-saas-smoke', appSlug: null, view: 'suggestions' }),
-        '?tenant=staging-saas-smoke'
-    );
+test('legacy appId state builds root query url (unchanged legacy behaviour)', () => {
+    const { buildUrlState } = loadUrlStateModule();
+    assert.equal(buildUrlState({ appId: 'family123', view: 'changelog' }), '/?appId=family123&view=changelog');
+    assert.equal(buildUrlState({ appId: 'family123', view: 'suggestions' }), '/?appId=family123');
 });
 
 test('public app loads url state helper before the main app script', () => {
     const urlStateScriptIndex = indexHtml.indexOf('src="url-state.js"');
     const mainScriptIndex = indexHtml.indexOf('src="script.js"');
-
-    assert.notEqual(urlStateScriptIndex, -1, 'expected index.html to load the direct url helper');
-    assert.notEqual(mainScriptIndex, -1, 'expected index.html to load the main app script');
-    assert.ok(
-        urlStateScriptIndex < mainScriptIndex,
-        'expected url-state.js to be loaded before script.js'
-    );
+    assert.notEqual(urlStateScriptIndex, -1);
+    assert.notEqual(mainScriptIndex, -1);
+    assert.ok(urlStateScriptIndex < mainScriptIndex);
 });
 
-test('public app syncs direct urls through query params and browser history', () => {
-    assert.ok(
-        publicScript.includes('UrlState.parseUrlState'),
-        'expected script.js to read direct url state from the helper'
-    );
-
-    assert.ok(
-        publicScript.includes('window.location.search'),
-        'expected script.js to inspect query parameters from the current location'
-    );
-
-    assert.ok(
-        publicScript.includes('history.pushState'),
-        'expected script.js to write direct url changes into browser history'
-    );
-
-    assert.ok(
-        publicScript.includes("window.addEventListener('popstate'"),
-        'expected script.js to react to browser back/forward navigation'
-    );
+test('public app syncs direct urls through the path and browser history', () => {
+    assert.ok(publicScript.includes('UrlState.parseUrlState'));
+    assert.ok(publicScript.includes('window.location.pathname'), 'expected script.js to read the path from the location');
+    assert.ok(publicScript.includes('history.pushState'));
+    assert.ok(publicScript.includes("window.addEventListener('popstate'"));
 });
 
-test('public app can load tenant read endpoints from url state', () => {
-    assert.ok(
-        publicScript.includes('/api/tenants/${encodeURIComponent(this.tenantSlug)}/apps'),
-        'expected script.js to load tenant apps by tenant slug'
-    );
-
-    assert.ok(
-        publicScript.includes('buildSuggestionsUrl'),
-        'expected script.js to centralize tenant-aware suggestion read urls'
-    );
-
-    assert.ok(
-        publicScript.includes('buildReleasesUrl'),
-        'expected script.js to centralize tenant-aware release read urls'
-    );
-
-    assert.ok(
-        publicScript.includes('buildCommentsUrl'),
-        'expected script.js to centralize tenant-aware comment read urls'
-    );
-
-    assert.ok(
-        publicScript.includes('buildVoteUrl'),
-        'expected script.js to centralize tenant-aware vote urls'
-    );
+test('public app centralizes tenant-aware read endpoints', () => {
+    assert.ok(publicScript.includes('/api/tenants/${encodeURIComponent(this.tenantSlug)}/apps'));
+    assert.ok(publicScript.includes('buildSuggestionsUrl'));
+    assert.ok(publicScript.includes('buildReleasesUrl'));
+    assert.ok(publicScript.includes('buildCommentsUrl'));
+    assert.ok(publicScript.includes('buildVoteUrl'));
 });
