@@ -63,6 +63,9 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.equal((await releases.listPublishedByApp(A)).length, 1);
   await suggestions.update('test_r_s1', { releaseId: 'test_r_rel' });
   assert.equal((await suggestions.listByRelease('test_r_rel')).length, 1);
+  // approved + tenant-gescopt für Roadmap/Changelog
+  assert.equal((await suggestions.listApprovedByReleaseIds(['test_r_rel'], T)).length, 1);
+  assert.equal((await suggestions.listApprovedByReleaseIds(['test_r_rel'], 'other-tenant')).length, 0);
 
   // --- comments (Moderation) ---
   const adminC = await comments.create({ id: 'test_r_c1', tenantId: T, suggestionId: 'test_r_s1', text: 'admin', authorType: 'admin', approvalStatus: 'approved' });

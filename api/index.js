@@ -442,6 +442,36 @@ async function loadPublicReleasesForApp(appId, tenantId, statusFilter) {
     return { error };
   }
 
+  if (usePostgres()) {
+    let releases = await repos.releases.listByApp(appId);
+    if (statusList) {
+      releases = releases.filter((r) => statusList.includes(r.status));
+    }
+    const releaseIds = releases.map((r) => r.id);
+    const suggestionsByRelease = {};
+    if (releaseIds.length > 0) {
+      const sugs = await repos.suggestions.listApprovedByReleaseIds(releaseIds, tenantId);
+      for (const data of sugs) {
+        const rid = data.releaseId;
+        if (!suggestionsByRelease[rid]) suggestionsByRelease[rid] = [];
+        const type = normalizeSuggestionType(data.type);
+        suggestionsByRelease[rid].push({
+          id: data.id,
+          title: data.title,
+          type,
+          status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
+          ticketNumber: data.ticketNumber || null,
+        });
+      }
+    }
+    return {
+      releases: sortPublicReleases(releases.map((r) => ({
+        ...r,
+        items: suggestionsByRelease[r.id] || [],
+      }))),
+    };
+  }
+
   let query = db.collection('releases').where('appId', '==', appId);
   if (statusList && statusList.length === 1) {
     query = query.where('status', '==', statusList[0]);

@@ -53,6 +53,19 @@ async function listByRelease(releaseId) {
   return mapRows(rows);
 }
 
+// Approved Suggestions für mehrere Releases (tenant-gescopt) — für den
+// öffentlichen Roadmap/Changelog-View. Ersetzt den gechunkten releaseId-in-Scan.
+async function listApprovedByReleaseIds(releaseIds, tenantId) {
+  if (!releaseIds || releaseIds.length === 0) return [];
+  const { rows } = await query(
+    `select ${COLUMNS} from suggestions
+     where release_id = any($1::text[]) and tenant_id = $2 and approved = true
+     order by created_at desc`,
+    [releaseIds, tenantId]
+  );
+  return mapRows(rows);
+}
+
 async function create(data) {
   const {
     id, tenantId, appId, type, title, description = '', status = 'neu',
@@ -129,5 +142,5 @@ async function remove(id) {
 
 module.exports = {
   findById, listPublicForApp, listByApp, listByTenant, listByRelease,
-  create, update, setApproved, addLabel, removeLabel, remove,
+  listApprovedByReleaseIds, create, update, setApproved, addLabel, removeLabel, remove,
 };
