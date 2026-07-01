@@ -55,6 +55,7 @@ const {
   normalizeScopes,
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
+const { shouldServeAppShell } = require('./spa-fallback');
 
 const app = express();
 
@@ -6075,6 +6076,16 @@ app.delete('/api/admin/tenants/:tenantSlug/api-keys/:keyId', requireTenantAccess
     console.error('Error revoking API key:', error);
     res.status(500).json({ error: 'Failed to revoke API key' });
   }
+});
+
+// SPA-Fallback: pfad-basierte Board-URLs (/{tenant}/{board}/{view}) auf die
+// öffentliche Shell mappen. Läuft NACH allen API-Routen und express.static,
+// lässt /api/*, statische Assets und reservierte Seiten unangetastet.
+app.get('*', (req, res, next) => {
+  if (!shouldServeAppShell(req.method, req.path)) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // For Vercel serverless functions

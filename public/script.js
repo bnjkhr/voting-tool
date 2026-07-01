@@ -368,10 +368,10 @@ class VotingApp {
     }
 
     navigateToUrlState(state, { replace = false } = {}) {
-        const query = UrlState.buildUrlState(state);
-        if (query === window.location.search) return;
+        const nextUrl = UrlState.buildUrlState(state);
+        const current = `${window.location.pathname}${window.location.search}`;
+        if (nextUrl === current) return;
 
-        const nextUrl = `${window.location.pathname}${query}${window.location.hash || ''}`;
         if (replace) {
             history.replaceState(null, '', nextUrl);
             return;
@@ -381,7 +381,7 @@ class VotingApp {
     }
 
     applyUrlStateFromLocation({ replace = false } = {}) {
-        const state = UrlState.parseUrlState(window.location.search);
+        const state = UrlState.parseUrlState(window.location.pathname, window.location.search);
         const nextTenantSlug = state.tenantSlug || null;
 
         if (nextTenantSlug !== this.tenantSlug) {
@@ -401,6 +401,7 @@ class VotingApp {
             tenantSlug: state?.tenantSlug || null,
             appSlug: state?.appSlug || null,
             view: UrlState.normalizeView(state?.view),
+            suggestionId: state?.suggestionId || null,
         };
 
         if (normalizedState.tenantSlug) {
@@ -503,7 +504,7 @@ class VotingApp {
     // API methods
     async loadApps() {
         try {
-            const state = UrlState.parseUrlState(window.location.search);
+            const state = UrlState.parseUrlState(window.location.pathname, window.location.search);
             this.tenantSlug = state.tenantSlug || null;
             const appsUrl = this.isTenantMode()
                 ? `/api/tenants/${encodeURIComponent(this.tenantSlug)}/apps`
