@@ -3862,6 +3862,10 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', req
 // ---------------------------------------------------------------------------
 
 function toReleaseDate(value) {
+  // Postgres liefert echte JS-Dates; Firestore Timestamps (.toDate()) bzw. reine
+  // {_seconds}-Objekte. Ohne den Date-Zweig würden Postgres-Werte auf epoch 0
+  // fallen und die Sortierung gleicher Status kollabieren.
+  if (value instanceof Date) return value;
   return value?.toDate?.()
     ?? (value?._seconds != null ? new Date(value._seconds * 1000) : new Date(0));
 }
