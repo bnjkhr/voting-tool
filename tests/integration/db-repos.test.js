@@ -70,6 +70,9 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   await comments.create({ id: 'test_r_c2', tenantId: T, suggestionId: 'test_r_s1', text: 'user', authorType: 'user' });
   assert.equal((await comments.listApprovedForSuggestion('test_r_s1')).length, 1);
   assert.equal((await comments.listPendingByTenant(T)).length, 1);
+  // statsForSuggestions: 1 approved + 1 pending
+  const stats = await comments.statsForSuggestions(['test_r_s1']);
+  assert.deepEqual(stats['test_r_s1'], { totalCount: 2, pendingCount: 1, publicCount: 1 });
   await comments.approve('test_r_c2', 'admin');
   assert.equal((await comments.listApprovedForSuggestion('test_r_s1')).length, 2);
   await comments.reject('test_r_c2', 'admin');
