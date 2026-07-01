@@ -365,7 +365,7 @@ async function loadPublicSuggestionsForApp(appId, tenantId, userFingerprint) {
     const suggestionIds = suggestions.map((s) => s.id);
     const [commentStatsMap, votedIds] = await Promise.all([
       repos.comments.statsForSuggestions(suggestionIds, tenantId),
-      repos.votes.votedSuggestionIds(userFingerprint, suggestionIds),
+      repos.votes.votedSuggestionIds(userFingerprint, suggestionIds, tenantId),
     ]);
     const userVotesSet = new Set(votedIds);
     return sortPublicSuggestions(
@@ -1902,7 +1902,7 @@ app.get('/api/tenants/:tenantSlug/suggestions/:suggestionId/voted', async (req, 
     }
 
     if (usePostgres()) {
-      const voted = await repos.votes.hasVoted(suggestionId, userFingerprint);
+      const voted = await repos.votes.hasVoted(suggestionId, userFingerprint, tenant.id);
       return res.json({ voted });
     }
 
