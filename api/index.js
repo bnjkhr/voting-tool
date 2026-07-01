@@ -56,6 +56,9 @@ const {
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
 const { shouldServeAppShell } = require('./spa-fallback');
+// Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
+const repos = require('../db');
+const { usePostgres } = repos.backend;
 
 const app = express();
 
@@ -177,6 +180,9 @@ function isActiveTenant(data = {}) {
 }
 
 async function findActiveTenantBySlug(tenantSlug) {
+  if (usePostgres()) {
+    return repos.tenants.findActiveBySlug(tenantSlug);
+  }
   const snapshot = await db.collection('tenants')
     .where('slug', '==', tenantSlug)
     .limit(2)
@@ -200,6 +206,9 @@ async function findActiveTenantBySlug(tenantSlug) {
 }
 
 async function findTenantAppBySlug(tenantId, appSlug) {
+  if (usePostgres()) {
+    return repos.apps.findBySlug(tenantId, appSlug);
+  }
   const snapshot = await db.collection('apps')
     .where('slug', '==', appSlug)
     .get();
@@ -1440,19 +1449,7 @@ app.get('/api/tenants/:tenantSlug/apps', async (req, res) => {
       return res.status(404).json({ error: 'Tenant not found' });
     }
 
-    const appsSnapshot = await db.collection('apps')
-      .where('tenantId', '==', tenant.id)
-      .get();
-
-    const apps = appsSnapshot.docs
-      .map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }))
-      .filter(appData => getTenantId(appData) === tenant.id);
-
-    apps.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
+    const apps = await loadTenantApps(tenant.id);
     res.json(apps);
   } catch (error) {
     console.error('Error fetching tenant apps:', error);
@@ -2513,14 +2510,18 @@ function requireTenantAccess(allowedRoles = MEMBERSHIP_ROLES) {
 }
 
 async function loadTenantApps(tenantId) {
-  const appsSnapshot = await db.collection('apps')
-    .where('tenantId', '==', tenantId)
-    .get();
-
-  const apps = appsSnapshot.docs
-    .map(doc => ({ id: doc.id, ...doc.data() }))
-    .filter(appData => getTenantId(appData) === tenantId);
-
+  let apps;
+  if (usePostgres()) {
+    apps = await repos.apps.listByTenant(tenantId);
+  } else {
+    const appsSnapshot = await db.collection('apps')
+      .where('tenantId', '==', tenantId)
+      .get();
+    apps = appsSnapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .filter(appData => getTenantId(appData) === tenantId);
+  }
+  // Einheitliche, locale-aware Sortierung für beide Backends (konsistente Reihenfolge).
   apps.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   return apps;
 }
