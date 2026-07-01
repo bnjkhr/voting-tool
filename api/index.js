@@ -2574,9 +2574,20 @@ function safeCompareSecret(a, b) {
 async function resolveSessionAuth(req) {
   const sessionToken = req.headers['x-user-session'];
   if (!sessionToken || Array.isArray(sessionToken)) return null;
+  const tokenHash = buildInviteTokenHash(sessionToken);
+
+  if (usePostgres()) {
+    const session = await repos.sessions.findByTokenHash(tokenHash);
+    if (!session || isSessionExpired(session)) return null;
+    const user = await repos.users.findById(session.userId);
+    if (!user) return null;
+    if (user.status && user.status !== 'active') return null;
+    await repos.sessions.touch(session.id);
+    return { type: 'session', session, user };
+  }
 
   const sessionSnapshot = await db.collection('sessions')
-    .where('tokenHash', '==', buildInviteTokenHash(sessionToken))
+    .where('tokenHash', '==', tokenHash)
     .where('status', '==', 'active')
     .limit(2)
     .get();
@@ -2623,18 +2634,25 @@ function requireTenantAccess(allowedRoles = MEMBERSHIP_ROLES) {
 
       const sessionAuth = await resolveSessionAuth(req);
       if (sessionAuth) {
-        const membershipSnapshot = await db.collection('memberships')
-          .where('tenantId', '==', tenant.id)
-          .where('userId', '==', sessionAuth.user.id)
-          .where('status', '==', 'active')
-          .limit(1)
-          .get();
+        let membership;
+        if (usePostgres()) {
+          membership = await repos.memberships.findByTenantAndUser(tenant.id, sessionAuth.user.id);
+          if (!membership || (membership.status && membership.status !== 'active')) {
+            return res.status(403).json({ error: 'Forbidden - Tenant membership required' });
+          }
+        } else {
+          const membershipSnapshot = await db.collection('memberships')
+            .where('tenantId', '==', tenant.id)
+            .where('userId', '==', sessionAuth.user.id)
+            .where('status', '==', 'active')
+            .limit(1)
+            .get();
 
-        if (membershipSnapshot.empty) {
-          return res.status(403).json({ error: 'Forbidden - Tenant membership required' });
+          if (membershipSnapshot.empty) {
+            return res.status(403).json({ error: 'Forbidden - Tenant membership required' });
+          }
+          membership = { id: membershipSnapshot.docs[0].id, ...membershipSnapshot.docs[0].data() };
         }
-
-        const membership = { id: membershipSnapshot.docs[0].id, ...membershipSnapshot.docs[0].data() };
         const role = normalizeMembershipRole(membership.role);
         if (!allowedRoles.includes(role)) {
           return res.status(403).json({ error: 'Forbidden - Insufficient role' });
