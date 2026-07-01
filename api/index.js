@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const path = require('path');
+const crypto = require('crypto');
 const { Resend } = require('resend');
 const fs = require('fs');
 const {
@@ -146,6 +147,11 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+
+// Empfänger für Betreiber-Benachrichtigungen aus dem Legacy-Bereich (nicht Tenant-scoped).
+// Konfigurierbar über OPERATOR_EMAIL; Fallback erhält das bisherige Verhalten.
+const OPERATOR_EMAIL = process.env.OPERATOR_EMAIL || 'ben.kohler@me.com';
+
 const FEATURE_TAGS = ['wird umgesetzt', 'im Test', 'wird nicht umgesetzt', 'wird geprüft', 'ist umgesetzt'];
 const BUG_TAGS = ['neu', 'in analyse', 'behoben', 'nicht reproduzierbar'];
 const VALID_SUGGESTION_TYPES = ['feature', 'bug', 'ticket'];
@@ -559,10 +565,58 @@ async function logActivity(ticketId, action, {
   }
 }
 
+// Normalisiert eine Empfängerliste (String oder Array) zu eindeutigen, gültigen Adressen.
+function normalizeRecipientList(to) {
+  const list = Array.isArray(to) ? to : (to ? [to] : []);
+  return [...new Set(
+    list
+      .map((email) => (typeof email === 'string' ? email.trim().toLowerCase() : ''))
+      .filter((email) => isValidEmail(email))
+  )];
+}
+
+// Ermittelt die Benachrichtigungs-Empfänger für einen Tenant (aktive Owner/Admins).
+// Legacy-Daten gehen an den Betreiber; nie an fremde Tenants.
+async function resolveNotificationRecipients(tenantId) {
+  if (!tenantId || tenantId === LEGACY_TENANT_ID) {
+    return normalizeRecipientList(OPERATOR_EMAIL);
+  }
+  try {
+    // Schlank: nur aktive Owner/Admins auflösen (keine invites-Query, keine User-Docs
+    // für Nicht-Empfänger) — dieser Pfad läuft bei jedem öffentlichen Submit.
+    const membershipsSnapshot = await db.collection('memberships')
+      .where('tenantId', '==', tenantId)
+      .get();
+    const admins = membershipsSnapshot.docs
+      .map((doc) => doc.data())
+      .filter((member) => (member.status || 'active') === 'active')
+      .filter((member) => ['owner', 'admin'].includes(normalizeMembershipRole(member.role)));
+
+    const userDocs = await Promise.all(
+      [...new Set(admins.map((member) => member.userId).filter(Boolean))]
+        .map((userId) => db.collection('users').doc(userId).get())
+    );
+    const recipients = userDocs
+      .map((doc) => (doc.exists ? doc.data() : null))
+      .filter((user) => user && (!user.status || user.status === 'active'))
+      .map((user) => user.email);
+    return normalizeRecipientList(recipients);
+  } catch (error) {
+    console.error('Failed to resolve tenant notification recipients:', error);
+    return [];
+  }
+}
+
 // Helper function to send admin notification email
-async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}) {
+async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}, to = null) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('Email not configured - RESEND_API_KEY missing');
+    return;
+  }
+
+  const recipients = normalizeRecipientList(to);
+  if (recipients.length === 0) {
+    console.warn('No notification recipients resolved - skipping admin email');
     return;
   }
 
@@ -579,7 +633,7 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   try {
     const { data, error } = await resend.emails.send({
       from: fromEmail,
-      to: 'ben.kohler@me.com',
+      to: recipients,
       subject: `Neuer ${reportTypeLabel}-Eintrag wartet auf Freigabe: ${title}`,
       html: `
         <h2>Neuer ${reportTypeLabel}-Eintrag eingereicht</h2>
@@ -605,9 +659,15 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   }
 }
 
-async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, commentText, appName) {
+async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, commentText, appName, to = null) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('Email not configured - RESEND_API_KEY missing');
+    return;
+  }
+
+  const recipients = normalizeRecipientList(to);
+  if (recipients.length === 0) {
+    console.warn('No notification recipients resolved - skipping admin comment email');
     return;
   }
 
@@ -618,7 +678,7 @@ async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, 
   try {
     const { data, error } = await resend.emails.send({
       from: fromEmail,
-      to: 'ben.kohler@me.com',
+      to: recipients,
       subject: `Neuer Kommentar wartet auf Freigabe: ${suggestionTitle}`,
       html: `
         <h2>Neuer Kommentar wartet auf Freigabe</h2>
@@ -1488,12 +1548,14 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
     });
 
     try {
+      const recipients = await resolveNotificationRecipients(tenant.id);
       await sendAdminNotificationEmail(
         docRef.id,
         suggestion.title,
         suggestion.description,
         tenantApp.name,
-        { type: suggestion.type, severity: suggestion.severity || null }
+        { type: suggestion.type, severity: suggestion.severity || null },
+        recipients
       );
     } catch (emailError) {
       console.error('Error sending notification email:', emailError);
@@ -1811,7 +1873,8 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
     try {
       const appDoc = await db.collection('apps').doc(suggestionData.appId).get();
       const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
-      await sendAdminCommentNotificationEmail(suggestionId, suggestionData.title, validText, appName);
+      const recipients = await resolveNotificationRecipients(tenant.id);
+      await sendAdminCommentNotificationEmail(suggestionId, suggestionData.title, validText, appName, recipients);
     } catch (notificationError) {
       console.error('Error sending admin comment notification:', notificationError);
     }
@@ -2005,12 +2068,14 @@ app.post('/api/apps/:appId/suggestions', rateLimit(60000, 3), async (req, res) =
 
     // Send email notification to admin
     try {
+      const recipients = await resolveNotificationRecipients(tenantId);
       await sendAdminNotificationEmail(
         docRef.id,
         suggestion.title,
         suggestion.description,
         appData.name,
-        { type: suggestion.type, severity: suggestion.severity || null }
+        { type: suggestion.type, severity: suggestion.severity || null },
+        recipients
       );
     } catch (emailError) {
       console.error('Error sending notification email:', emailError);
@@ -2341,7 +2406,17 @@ function hasValidAdminPassword(req) {
   }
 
   const token = authHeader.substring(7);
-  return token === adminPassword;
+  return safeCompareSecret(token, adminPassword);
+}
+
+// Konstantzeitiger Vergleich, um Timing-Angriffe auf das Admin-Passwort zu verhindern.
+// Über SHA-256-Digests verglichen, damit auch falsch-lange Tokens denselben Pfad
+// nehmen und die Passwortlänge nicht übers Timing durchsickert.
+function safeCompareSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const digestA = crypto.createHash('sha256').update(a, 'utf8').digest();
+  const digestB = crypto.createHash('sha256').update(b, 'utf8').digest();
+  return crypto.timingSafeEqual(digestA, digestB);
 }
 
 async function resolveSessionAuth(req) {
@@ -4465,7 +4540,8 @@ app.post('/api/suggestions/:suggestionId/comments', rateLimit(60000, 3), async (
     try {
       const appDoc = await db.collection('apps').doc(suggestion.appId).get();
       const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
-      await sendAdminCommentNotificationEmail(suggestionId, suggestion.title, validText, appName);
+      const recipients = await resolveNotificationRecipients(getTenantId(suggestion));
+      await sendAdminCommentNotificationEmail(suggestionId, suggestion.title, validText, appName, recipients);
     } catch (notificationError) {
       console.error('Error sending admin comment notification:', notificationError);
     }
