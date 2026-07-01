@@ -130,9 +130,11 @@ function normalizeFirebasePrivateKey(key) {
     k = k.slice(1, -1);
   }
   return k
-    .replace(/\\\\n/g, '\n') // doppelt escaped (\\n)
-    .replace(/\\n/g, '\n')   // einfach escaped (\n)
-    .replace(/\r\n/g, '\n'); // CRLF -> LF
+    .replace(/\\r\\n/g, '\n') // escaptes CRLF (\r\n) zuerst -> LF
+    .replace(/\\\\n/g, '\n')  // doppelt escaped (\\n)
+    .replace(/\\n/g, '\n')    // einfach escaped (\n)
+    .replace(/\\r/g, '')      // übrige escapte \r entfernen
+    .replace(/\r\n/g, '\n');  // echte CRLF -> LF
 }
 
 // Firebase Admin initialization
