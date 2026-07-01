@@ -16,7 +16,10 @@ const COLUMNS = `
 function mapTenant(row) {
   const t = mapRow(row);
   if (!t) return null;
+  // Verschachteltes emailSettings wie im Alt-Shape; die flachen Spalten nicht durchreichen.
   t.emailSettings = { fromName: t.emailFromName || null, replyTo: t.emailReplyTo || null };
+  delete t.emailFromName;
+  delete t.emailReplyTo;
   return t;
 }
 
@@ -67,8 +70,12 @@ async function update(id, fields) {
 }
 
 // Email-Settings (fromName/replyTo) — spiegelt das Alt-Feld emailSettings.
-async function updateEmailSettings(id, { fromName, replyTo }) {
-  return update(id, { emailFromName: fromName ?? null, emailReplyTo: replyTo ?? null });
+// Nur übergebene Felder werden geändert; weggelassene bleiben unangetastet.
+async function updateEmailSettings(id, { fromName, replyTo } = {}) {
+  const fields = {};
+  if (fromName !== undefined) fields.emailFromName = fromName;
+  if (replyTo !== undefined) fields.emailReplyTo = replyTo;
+  return update(id, fields);
 }
 
 module.exports = {

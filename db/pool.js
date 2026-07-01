@@ -33,7 +33,8 @@ function getPool() {
     max: Number(process.env.PG_POOL_MAX || 5),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ssl: { rejectUnauthorized: false },
+    // Volle TLS-Verifikation (Neon nutzt öffentlich vertrauenswürdige Zertifikate).
+    ssl: true,
   });
   pool.on('error', (err) => console.error('Unerwarteter PG-Pool-Fehler:', err));
   return pool;

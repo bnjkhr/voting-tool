@@ -30,6 +30,14 @@ async function votedSuggestionIds(userFingerprint, suggestionIds) {
 // verhindert (ON CONFLICT DO NOTHING). Rückgabe: { created, votes }.
 async function cast({ id, tenantId, suggestionId, userFingerprint }) {
   return withTransaction(async (client) => {
+    // Cross-Tenant-Schutz: nur abstimmen, wenn die Suggestion zum Tenant gehört.
+    const owns = await client.query(
+      'select 1 from suggestions where id = $1 and tenant_id = $2',
+      [suggestionId, tenantId]
+    );
+    if (owns.rowCount === 0) {
+      return { created: false, votes: null, notFound: true };
+    }
     const ins = await client.query(
       `insert into votes (id, tenant_id, suggestion_id, user_fingerprint)
        values ($1, $2, $3, $4)
