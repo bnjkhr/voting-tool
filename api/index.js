@@ -4196,6 +4196,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       id: commentId,
       ...normalizeCommentData(comment),
       createdAt: new Date(),
+      approvedAt: new Date(),
       message: 'Kommentar erfolgreich hinzugefügt'
     });
   } catch (error) {
