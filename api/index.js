@@ -601,6 +601,11 @@ function mapSeverityToPriority(severity) {
 }
 
 async function generateTicketNumber(appId, tenantId = LEGACY_TENANT_ID) {
+  if (usePostgres()) {
+    const { ticketNumber } = await repos.apps.nextTicketNumber(appId);
+    return ticketNumber;
+  }
+
   const counterRef = db.collection('counters').doc(appId);
 
   const result = await db.runTransaction(async (transaction) => {
@@ -642,6 +647,12 @@ async function logActivity(ticketId, action, {
   tenantId = LEGACY_TENANT_ID,
 } = {}) {
   try {
+    if (usePostgres()) {
+      await repos.activity.log({
+        tenantId: getTenantId({ tenantId }), ticketId, action, oldValue, newValue, detail, actor,
+      });
+      return;
+    }
     await db.collection('activity').add({
       tenantId: getTenantId({ tenantId }),
       ticketId,
@@ -674,6 +685,10 @@ async function resolveNotificationRecipients(tenantId) {
     return normalizeRecipientList(OPERATOR_EMAIL);
   }
   try {
+    if (usePostgres()) {
+      const emails = await repos.memberships.adminEmails(tenantId);
+      return normalizeRecipientList(emails);
+    }
     // Schlank: nur aktive Owner/Admins auflösen (keine invites-Query, keine User-Docs
     // für Nicht-Empfänger) — dieser Pfad läuft bei jedem öffentlichen Submit.
     const membershipsSnapshot = await db.collection('memberships')
@@ -1617,11 +1632,24 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
       return res.status(400).json({ error: suggestionError });
     }
 
+    // Screenshots gehen im Postgres-Modus noch verloren (kommen in PR D via
+    // attachments/Object-Storage). Bis dahin ablehnen statt still verwerfen.
+    if (usePostgres() && Array.isArray(suggestion.screenshots) && suggestion.screenshots.length > 0) {
+      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
+    }
+
     suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, tenant.id);
 
-    const docRef = await db.collection('suggestions').add(suggestion);
+    let suggestionId;
+    if (usePostgres()) {
+      suggestionId = crypto.randomUUID();
+      await repos.suggestions.create({ id: suggestionId, ...suggestion });
+    } else {
+      const docRef = await db.collection('suggestions').add(suggestion);
+      suggestionId = docRef.id;
+    }
 
-    await logActivity(docRef.id, 'created', {
+    await logActivity(suggestionId, 'created', {
       detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" erstellt`,
       actor: `user:${userFingerprint}`,
       tenantId: tenant.id,
@@ -1630,7 +1658,7 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
     try {
       const recipients = await resolveNotificationRecipients(tenant.id);
       await sendAdminNotificationEmail(
-        docRef.id,
+        suggestionId,
         suggestion.title,
         suggestion.description,
         tenantApp.name,
@@ -1648,7 +1676,7 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
     };
 
     res.status(201).json({
-      id: docRef.id,
+      id: suggestionId,
       ...suggestion,
       createdAt: new Date(),
       message: typeMessages[suggestion.type] || typeMessages.feature
@@ -1944,6 +1972,10 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
     if (screenshotValidation.error) {
       return res.status(400).json({ error: screenshotValidation.error });
     }
+    // Screenshots im Postgres-Modus noch nicht unterstützt (PR D) -> ablehnen statt verwerfen.
+    if (usePostgres() && Array.isArray(screenshotValidation.screenshots) && screenshotValidation.screenshots.length > 0) {
+      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
+    }
 
     const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
     if (error) {
@@ -1965,7 +1997,18 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    const commentRef = await db.collection('comments').add(comment);
+    let commentId;
+    if (usePostgres()) {
+      commentId = crypto.randomUUID();
+      await repos.comments.create({
+        id: commentId, tenantId: tenant.id, suggestionId,
+        text: validText, authorType: 'user', authorFingerprint: userFingerprint,
+        approvalStatus: 'pending',
+      });
+    } else {
+      const commentRef = await db.collection('comments').add(comment);
+      commentId = commentRef.id;
+    }
 
     await logActivity(suggestionId, 'comment_submitted', {
       detail: `Benutzer-Kommentar eingereicht: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
@@ -1974,8 +2017,14 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
     });
 
     try {
-      const appDoc = await db.collection('apps').doc(suggestionData.appId).get();
-      const appName = appDoc.exists ? appDoc.data().name : 'Unbekannte App';
+      let appName = 'Unbekannte App';
+      if (usePostgres()) {
+        const app = await repos.apps.findById(suggestionData.appId);
+        if (app) appName = app.name;
+      } else {
+        const appDoc = await db.collection('apps').doc(suggestionData.appId).get();
+        if (appDoc.exists) appName = appDoc.data().name;
+      }
       const recipients = await resolveNotificationRecipients(tenant.id);
       await sendAdminCommentNotificationEmail(suggestionId, suggestionData.title, validText, appName, recipients);
     } catch (notificationError) {
@@ -1983,7 +2032,7 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
     }
 
     res.status(201).json({
-      id: commentRef.id,
+      id: commentId,
       message: 'Kommentar erfolgreich eingereicht und zur Freigabe vorgemerkt'
     });
   } catch (error) {

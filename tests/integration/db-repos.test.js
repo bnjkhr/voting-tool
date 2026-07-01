@@ -93,8 +93,10 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.equal((await memberships.findByTenantAndUser(T, U)).id, 'test_r_m');
   assert.equal((await memberships.listActiveAdmins(T)).length, 1);
   assert.equal(await memberships.countActiveOwners(T), 1);
+  assert.deepEqual(await memberships.adminEmails(T), [EMAIL]); // für Benachrichtigungen
   await memberships.update('test_r_m', { status: 'disabled', disabledAt: new Date() });
   assert.equal(await memberships.countActiveOwners(T), 0);
+  assert.deepEqual(await memberships.adminEmails(T), []); // disabled -> keine Empfänger
 
   // --- invites ---
   const inv = await invites.create({ id: 'test_r_inv', tenantId: T, email: 'x@example.com', role: 'viewer', tokenHash: 'hash_inv', expiresAt: new Date(Date.now() + 3600e3) });
