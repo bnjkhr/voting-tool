@@ -19,12 +19,15 @@
     "build": "echo 'Build complete - Node.js API ready'",
     "vercel-build": "echo 'Vercel build complete'",
     "tenant:create": "node scripts/create-tenant.js",
-    "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run"
+    "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run",
+    "db:migrate": "node scripts/migrate-db.js",
+    "db:migrate:status": "node scripts/migrate-db.js --status"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "firebase-admin": "^13.5.0",
+    "pg": "^8.13.1",
     "resend": "^4.8.0"
   },
   "engines": {
