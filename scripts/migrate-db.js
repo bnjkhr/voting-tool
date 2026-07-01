@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+const { stripSslParams } = require('../db/pool');
 
 // Minimaler .env.local/.env-Loader (Shell-Env hat Vorrang).
 function loadEnv() {
@@ -40,7 +41,7 @@ async function main() {
   const migrationsDir = path.join(__dirname, '..', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
 
-  const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: stripSslParams(connectionString), ssl: { rejectUnauthorized: false } });
   await client.connect();
   try {
     await client.query(`
