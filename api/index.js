@@ -4039,7 +4039,8 @@ app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner'
       await repos.releases.create({
         id: newReleaseId, tenantId: tenant.id, appId, version: validVersion,
         title: release.title, description: release.description,
-        status: validStatus, releaseDate: parsedReleaseDate,
+        // parsedReleaseDate ist ein Firestore-Timestamp; für timestamptz zu Date.
+        status: validStatus, releaseDate: parsedReleaseDate ? parsedReleaseDate.toDate() : null,
       });
       if (validStatus === 'veröffentlicht') {
         await repos.releases.update(newReleaseId, { publishedAt: new Date() });
@@ -4130,6 +4131,9 @@ app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAcces
       const pgUpdate = { ...updateData };
       delete pgUpdate.updatedAt;
       if (pgUpdate.publishedAt) pgUpdate.publishedAt = new Date();
+      // parseReleaseDate liefert einen Firestore-Timestamp; für timestamptz in
+      // eine JS-Date wandeln (null = Datum entfernen bleibt erhalten).
+      if (pgUpdate.releaseDate) pgUpdate.releaseDate = pgUpdate.releaseDate.toDate();
       await repos.releases.update(releaseId, pgUpdate);
     } else {
       await db.collection('releases').doc(releaseId).update(updateData);
