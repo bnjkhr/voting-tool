@@ -4094,22 +4094,37 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', req
       return res.status(errorStatus).json({ error });
     }
 
-    const commentsSnapshot = await db.collection('comments')
-      .where('suggestionId', '==', suggestionId)
-      .get();
-
-    const comments = commentsSnapshot.docs
-      .filter(doc => getTenantId(doc.data() || {}) === tenant.id)
-      .map(buildAdminCommentResponse);
+    let comments;
+    if (usePostgres()) {
+      const rows = await repos.comments.listForSuggestion(suggestionId);
+      comments = rows
+        .filter((c) => c.tenantId === tenant.id)
+        .map((c) => ({
+          id: c.id,
+          text: c.text,
+          screenshots: [],
+          createdAt: c.createdAt,
+          authorType: c.authorType,
+          approvalStatus: c.approvalStatus,
+          approvedAt: c.approvedAt,
+          approvedBy: c.approvedBy,
+          rejectedAt: c.rejectedAt,
+          rejectedBy: c.rejectedBy,
+        }));
+    } else {
+      const commentsSnapshot = await db.collection('comments')
+        .where('suggestionId', '==', suggestionId)
+        .get();
+      comments = commentsSnapshot.docs
+        .filter(doc => getTenantId(doc.data() || {}) === tenant.id)
+        .map(buildAdminCommentResponse);
+    }
 
     comments.sort((a, b) => {
       const statusOrder = { pending: 0, approved: 1, rejected: 2 };
       const statusDelta = (statusOrder[a.approvalStatus] ?? 99) - (statusOrder[b.approvalStatus] ?? 99);
       if (statusDelta !== 0) return statusDelta;
-
-      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
-      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
-      return bTime - aTime;
+      return toDateOrEpoch(b.createdAt) - toDateOrEpoch(a.createdAt);
     });
 
     res.json(comments);
@@ -4138,6 +4153,10 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
     if (screenshotValidation.error) {
       return res.status(400).json({ error: screenshotValidation.error });
     }
+    // Screenshots im Postgres-Modus noch nicht unterstützt (PR D) -> ablehnen statt verwerfen.
+    if (usePostgres() && Array.isArray(screenshotValidation.screenshots) && screenshotValidation.screenshots.length > 0) {
+      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
+    }
 
     const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
     if (error) {
@@ -4156,7 +4175,17 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    const commentRef = await db.collection('comments').add(comment);
+    let commentId;
+    if (usePostgres()) {
+      commentId = crypto.randomUUID();
+      await repos.comments.create({
+        id: commentId, tenantId: tenant.id, suggestionId,
+        text: validText, authorType: 'admin', approvalStatus: 'approved', approvedBy: 'admin',
+      });
+    } else {
+      const commentRef = await db.collection('comments').add(comment);
+      commentId = commentRef.id;
+    }
 
     await logActivity(suggestionId, 'commented', {
       detail: `Kommentar hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
@@ -4164,9 +4193,10 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
     });
 
     res.status(201).json({
-      id: commentRef.id,
+      id: commentId,
       ...normalizeCommentData(comment),
       createdAt: new Date(),
+      approvedAt: new Date(),
       message: 'Kommentar erfolgreich hinzugefügt'
     });
   } catch (error) {
@@ -4187,36 +4217,52 @@ async function updateTenantCommentModeration(req, res, approvalStatus) {
     return res.status(errorStatus).json({ error });
   }
 
-  const commentRef = db.collection('comments').doc(commentId);
-  const commentDoc = await commentRef.get();
-  if (!commentDoc.exists) {
-    return res.status(404).json({ error: 'Comment not found' });
+  let comment;
+  if (usePostgres()) {
+    comment = await repos.comments.findById(commentId);
+    if (!comment || comment.suggestionId !== suggestionId || comment.tenantId !== tenant.id) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+    if (comment.authorType !== 'user') {
+      return res.status(400).json({ error: 'Only user comments require moderation' });
+    }
+    if (approvalStatus === 'approved') {
+      await repos.comments.approve(commentId, 'admin');
+    } else {
+      await repos.comments.reject(commentId, 'admin');
+    }
+  } else {
+    const commentRef = db.collection('comments').doc(commentId);
+    const commentDoc = await commentRef.get();
+    if (!commentDoc.exists) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    comment = normalizeCommentData(commentDoc.data());
+    if (comment.suggestionId !== suggestionId || getTenantId(comment) !== tenant.id) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    if (comment.authorType !== 'user') {
+      return res.status(400).json({ error: 'Only user comments require moderation' });
+    }
+
+    const updateData = approvalStatus === 'approved'
+      ? {
+          approvalStatus: 'approved',
+          approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          approvedBy: 'admin',
+          rejectedAt: null,
+          rejectedBy: null,
+        }
+      : {
+          approvalStatus: 'rejected',
+          rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+          rejectedBy: 'admin',
+        };
+
+    await commentRef.update(updateData);
   }
-
-  const comment = normalizeCommentData(commentDoc.data());
-  if (comment.suggestionId !== suggestionId || getTenantId(comment) !== tenant.id) {
-    return res.status(404).json({ error: 'Comment not found' });
-  }
-
-  if (comment.authorType !== 'user') {
-    return res.status(400).json({ error: 'Only user comments require moderation' });
-  }
-
-  const updateData = approvalStatus === 'approved'
-    ? {
-        approvalStatus: 'approved',
-        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
-        approvedBy: 'admin',
-        rejectedAt: null,
-        rejectedBy: null,
-      }
-    : {
-        approvalStatus: 'rejected',
-        rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
-        rejectedBy: 'admin',
-      };
-
-  await commentRef.update(updateData);
 
   await logActivity(suggestionId, approvalStatus === 'approved' ? 'comment_approved' : 'comment_rejected', {
     detail: `Benutzer-Kommentar ${approvalStatus === 'approved' ? 'freigegeben' : 'abgelehnt'}: "${comment.text.slice(0, 80)}${comment.text.length > 80 ? '...' : ''}"`,
