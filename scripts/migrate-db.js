@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+const { stripSslParams } = require('../db/pool');
 
 // Minimaler .env.local/.env-Loader (Shell-Env hat Vorrang).
 function loadEnv() {
@@ -40,9 +41,23 @@ async function main() {
   const migrationsDir = path.join(__dirname, '..', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
 
-  const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: stripSslParams(connectionString), ssl: true });
   await client.connect();
   try {
+    // --status ist rein lesend: Tabelle NICHT anlegen, nur abfragen falls vorhanden.
+    if (statusOnly) {
+      const exists = (await client.query(`select to_regclass('public.schema_migrations') is not null as e`)).rows[0].e;
+      const applied = exists
+        ? new Set((await client.query('select name from schema_migrations')).rows.map((r) => r.name))
+        : new Set();
+      const pending = files.filter((f) => !applied.has(f));
+      console.log(`Angewandt: ${applied.size} | Offen: ${pending.length}`);
+      pending.forEach((f) => console.log('  offen:', f));
+      return;
+    }
+
+    // Advisory-Lock verhindert, dass zwei Runner parallel dieselbe Migration anwenden.
+    await client.query('select pg_advisory_lock(4242424242)');
     await client.query(`
       create table if not exists schema_migrations (
         name text primary key,
@@ -53,11 +68,6 @@ async function main() {
     );
 
     const pending = files.filter((f) => !applied.has(f));
-    if (statusOnly) {
-      console.log(`Angewandt: ${[...applied].length} | Offen: ${pending.length}`);
-      pending.forEach((f) => console.log('  offen:', f));
-      return;
-    }
     if (pending.length === 0) {
       console.log('Keine offenen Migrationen.');
       return;
