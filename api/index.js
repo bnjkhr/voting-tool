@@ -119,17 +119,40 @@ app.get(['/admin', '/admin/'], (req, res) => {
   res.redirect(302, '/admin.html');
 });
 
+// Normalisiert einen aus einer Env-Var stammenden PEM-Private-Key robust:
+// entfernt umschließende Quotes und wandelt (auch doppelt) escapte Zeilenumbrüche
+// in echte um. Fängt die häufigen Vercel/Env-Copy-Paste-Fehler ab, die sonst zu
+// "DECODER routines::unsupported" bei der ersten Firestore-Query führen.
+function normalizeFirebasePrivateKey(key) {
+  if (!key) return key;
+  let k = key.trim();
+  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
+    k = k.slice(1, -1);
+  }
+  return k
+    .replace(/\\\\n/g, '\n') // doppelt escaped (\\n)
+    .replace(/\\n/g, '\n')   // einfach escaped (\n)
+    .replace(/\r\n/g, '\n'); // CRLF -> LF
+}
+
 // Firebase Admin initialization
 if (!admin.apps.length) {
   try {
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+      // Bulletproof: kompletter Service-Account als base64-kodiertes JSON -> keine
+      // Newline-/Quote-Probleme möglich.
+      const serviceAccount = JSON.parse(
+        Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8')
+      );
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       admin.initializeApp({
         credential: admin.credential.applicationDefault(),
       });
     } else {
       const projectId = process.env.FIREBASE_PROJECT_ID;
       const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-      const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+      const privateKey = normalizeFirebasePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
 
       if (!projectId || !clientEmail || !privateKey) {
         console.error('Missing required Firebase environment variables');
@@ -137,11 +160,7 @@ if (!admin.apps.length) {
       }
 
       admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey: privateKey.trim().replace(/\\n/g, '\n'),
-        }),
+        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
       });
     }
   } catch (error) {
