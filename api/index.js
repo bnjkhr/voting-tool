@@ -420,6 +420,15 @@ function parseStatusFilter(statusFilter) {
   return { statusList };
 }
 
+// Normalisiert ein Datumsfeld zu einem JS-Date. Deckt JS-Date (Postgres),
+// Firestore-Timestamp (.toDate) und {_seconds} ab; sonst Epoch 0.
+function toDateOrEpoch(v) {
+  if (v instanceof Date) return v;
+  if (v && typeof v.toDate === 'function') return v.toDate();
+  if (v && v._seconds != null) return new Date(v._seconds * 1000);
+  return new Date(0);
+}
+
 function sortPublicReleases(releases) {
   releases.sort((a, b) => {
     // "in Arbeit" und "geplant" gemeinsam chronologisch nach Datum, "veröffentlicht" separat ans Ende
@@ -428,8 +437,8 @@ function sortPublicReleases(releases) {
     const bOrder = statusOrder[b.status] ?? 9;
     if (aOrder !== bOrder) return aOrder - bOrder;
 
-    const aDate = a.releaseDate?.toDate?.() ?? (a.releaseDate?._seconds != null ? new Date(a.releaseDate._seconds * 1000) : new Date(0));
-    const bDate = b.releaseDate?.toDate?.() ?? (b.releaseDate?._seconds != null ? new Date(b.releaseDate._seconds * 1000) : new Date(0));
+    const aDate = toDateOrEpoch(a.releaseDate);
+    const bDate = toDateOrEpoch(b.releaseDate);
     return a.status === 'veröffentlicht' ? bDate - aDate : aDate - bDate;
   });
 
