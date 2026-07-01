@@ -94,6 +94,11 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.equal((await memberships.listActiveAdmins(T)).length, 1);
   assert.equal(await memberships.countActiveOwners(T), 1);
   assert.deepEqual(await memberships.adminEmails(T), [EMAIL]); // für Benachrichtigungen
+  const withUsers = await memberships.listWithUsers(T);
+  assert.equal(withUsers.length, 1);
+  assert.equal(withUsers[0].email, EMAIL);
+  assert.equal(withUsers[0].displayName, 'R User');
+  assert.equal(withUsers[0].role, 'owner');
   await memberships.update('test_r_m', { status: 'disabled', disabledAt: new Date() });
   assert.equal(await memberships.countActiveOwners(T), 0);
   assert.deepEqual(await memberships.adminEmails(T), []); // disabled -> keine Empfänger
