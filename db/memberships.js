@@ -86,6 +86,20 @@ async function remove(id) {
   await query('delete from memberships where id = $1', [id]);
 }
 
+// E-Mail-Adressen der aktiven Owner/Admins eines Tenants (für Benachrichtigungen).
+// Join memberships -> users, damit die tatsächliche User-E-Mail geliefert wird.
+async function adminEmails(tenantId) {
+  const { rows } = await query(
+    `select u.email from memberships m
+     join users u on u.id = m.user_id
+     where m.tenant_id = $1 and m.status = 'active'
+       and m.role in ('owner', 'admin')
+       and (u.status is null or u.status = 'active')`,
+    [tenantId]
+  );
+  return rows.map((r) => r.email);
+}
+
 module.exports = {
   findByTenantAndUser,
   listByTenant,
@@ -94,5 +108,6 @@ module.exports = {
   create,
   update,
   countActiveOwners,
+  adminEmails,
   remove,
 };

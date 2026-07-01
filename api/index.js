@@ -685,6 +685,10 @@ async function resolveNotificationRecipients(tenantId) {
     return normalizeRecipientList(OPERATOR_EMAIL);
   }
   try {
+    if (usePostgres()) {
+      const emails = await repos.memberships.adminEmails(tenantId);
+      return normalizeRecipientList(emails);
+    }
     // Schlank: nur aktive Owner/Admins auflösen (keine invites-Query, keine User-Docs
     // für Nicht-Empfänger) — dieser Pfad läuft bei jedem öffentlichen Submit.
     const membershipsSnapshot = await db.collection('memberships')
@@ -1628,6 +1632,12 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
       return res.status(400).json({ error: suggestionError });
     }
 
+    // Screenshots gehen im Postgres-Modus noch verloren (kommen in PR D via
+    // attachments/Object-Storage). Bis dahin ablehnen statt still verwerfen.
+    if (usePostgres() && Array.isArray(suggestion.screenshots) && suggestion.screenshots.length > 0) {
+      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
+    }
+
     suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, tenant.id);
 
     let suggestionId;
@@ -1961,6 +1971,10 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
     const screenshotValidation = validateCommentScreenshots(screenshots);
     if (screenshotValidation.error) {
       return res.status(400).json({ error: screenshotValidation.error });
+    }
+    // Screenshots im Postgres-Modus noch nicht unterstützt (PR D) -> ablehnen statt verwerfen.
+    if (usePostgres() && Array.isArray(screenshotValidation.screenshots) && screenshotValidation.screenshots.length > 0) {
+      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
     }
 
     const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
