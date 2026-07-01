@@ -10,11 +10,16 @@ const {
   validateCommentScreenshots,
 } = require('../api/comment-utils');
 
+// Fester Zeitstempel statt new Date(): sonst liefert jeder data()-Aufruf einen
+// frischen Timestamp, und der createdAt-Vergleich schlaegt sporadisch mit 1 ms
+// Differenz fehl, wenn zwei Aufrufe eine Millisekundengrenze ueberschreiten.
+const FIXED_CREATED_AT = new Date('2026-01-01T12:00:00.000Z');
+
 test('legacy admin comments are treated as approved and public', () => {
   const legacyComment = normalizeCommentData({
     text: 'Legacy admin comment',
     screenshots: [],
-    createdAt: new Date(),
+    createdAt: FIXED_CREATED_AT,
   });
 
   assert.equal(legacyComment.authorType, 'admin');
@@ -26,7 +31,7 @@ test('user comments default to pending until moderated', () => {
   const userComment = normalizeCommentData({
     text: 'Need help with this ticket',
     authorFingerprint: 'fingerprint-123',
-    createdAt: new Date(),
+    createdAt: FIXED_CREATED_AT,
   });
 
   assert.equal(userComment.authorType, 'user');
@@ -41,7 +46,7 @@ test('public comment response excludes pending comments', () => {
       text: 'Pending user comment',
       authorType: 'user',
       approvalStatus: 'pending',
-      createdAt: new Date(),
+      createdAt: FIXED_CREATED_AT,
     }),
   };
 
@@ -52,7 +57,7 @@ test('public comment response excludes pending comments', () => {
       authorType: 'user',
       approvalStatus: 'approved',
       screenshots: ['data:image/jpeg;base64,abc'],
-      createdAt: new Date(),
+      createdAt: FIXED_CREATED_AT,
     }),
   };
 
@@ -75,7 +80,7 @@ test('admin comment response keeps moderation metadata for review', () => {
       approvalStatus: 'pending',
       approvedAt: null,
       rejectedAt: null,
-      createdAt: new Date(),
+      createdAt: FIXED_CREATED_AT,
     }),
   };
 
@@ -88,13 +93,13 @@ test('admin comment response keeps moderation metadata for review', () => {
 test('comment stats count public and pending comments separately', () => {
   const commentDocs = [
     {
-      data: () => ({ text: 'Admin', authorType: 'admin', createdAt: new Date() }),
+      data: () => ({ text: 'Admin', authorType: 'admin', createdAt: FIXED_CREATED_AT }),
     },
     {
-      data: () => ({ text: 'Pending', authorType: 'user', approvalStatus: 'pending', createdAt: new Date() }),
+      data: () => ({ text: 'Pending', authorType: 'user', approvalStatus: 'pending', createdAt: FIXED_CREATED_AT }),
     },
     {
-      data: () => ({ text: 'Approved user', authorType: 'user', approvalStatus: 'approved', createdAt: new Date() }),
+      data: () => ({ text: 'Approved user', authorType: 'user', approvalStatus: 'approved', createdAt: FIXED_CREATED_AT }),
     },
   ];
 
