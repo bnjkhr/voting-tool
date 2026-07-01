@@ -86,6 +86,21 @@ async function remove(id) {
   await query('delete from memberships where id = $1', [id]);
 }
 
+// Memberships eines Tenants inkl. User-E-Mail/-Anzeigename (Join). Für die
+// Team-Ansicht der tenant-admin-Konsole.
+async function listWithUsers(tenantId) {
+  const { rows } = await query(
+    `select m.id, m.user_id, m.role, m.status, m.created_at,
+            u.email, u.display_name
+     from memberships m
+     left join users u on u.id = m.user_id
+     where m.tenant_id = $1
+     order by m.created_at asc`,
+    [tenantId]
+  );
+  return mapRows(rows);
+}
+
 // E-Mail-Adressen der aktiven Owner/Admins eines Tenants (für Benachrichtigungen).
 // Join memberships -> users, damit die tatsächliche User-E-Mail geliefert wird.
 async function adminEmails(tenantId) {
@@ -109,5 +124,6 @@ module.exports = {
   update,
   countActiveOwners,
   adminEmails,
+  listWithUsers,
   remove,
 };

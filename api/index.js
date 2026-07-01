@@ -2699,6 +2699,35 @@ async function loadTenantApps(tenantId) {
 }
 
 async function loadTenantTeam(tenantId) {
+  if (usePostgres()) {
+    const [rawMembers, allInvites] = await Promise.all([
+      repos.memberships.listWithUsers(tenantId),
+      repos.invites.listByTenant(tenantId),
+    ]);
+    const members = rawMembers.map((m) => ({
+      id: m.id,
+      userId: m.userId || null,
+      email: m.email || null,
+      displayName: m.displayName || null,
+      role: normalizeMembershipRole(m.role),
+      status: m.status || 'active',
+      createdAt: m.createdAt || null,
+    }));
+    const invites = allInvites
+      .filter((i) => (i.status || 'pending') === 'pending')
+      .map((i) => ({
+        id: i.id,
+        email: i.email,
+        role: normalizeMembershipRole(i.role),
+        status: i.status || 'pending',
+        expiresAt: i.expiresAt || null,
+        createdAt: i.createdAt || null,
+      }));
+    members.sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+    invites.sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+    return { members, invites };
+  }
+
   const [membershipsSnapshot, invitesSnapshot] = await Promise.all([
     db.collection('memberships').where('tenantId', '==', tenantId).get(),
     db.collection('invites').where('tenantId', '==', tenantId).where('status', '==', 'pending').get(),
