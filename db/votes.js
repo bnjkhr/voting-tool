@@ -1,13 +1,15 @@
 'use strict';
 
 // Repository für votes. Nutzt die DB-Unique-Constraint (suggestion_id,
-// user_fingerprint) statt App-seitiger Dedup-Logik.
+// user_fingerprint) statt App-seitiger Dedup-Logik. Alle Operationen sind
+// tenant-gescopt (Defense-in-depth gegen Cross-Tenant-Schreiben/-Lesen).
 const { query, withTransaction } = require('./pool');
 
-async function hasVoted(suggestionId, userFingerprint) {
+async function hasVoted(suggestionId, userFingerprint, tenantId) {
   const { rowCount } = await query(
-    `select 1 from votes where suggestion_id = $1 and user_fingerprint = $2`,
-    [suggestionId, userFingerprint]
+    `select 1 from votes
+     where suggestion_id = $1 and user_fingerprint = $2 and tenant_id = $3`,
+    [suggestionId, userFingerprint, tenantId]
   );
   return rowCount > 0;
 }
@@ -15,12 +17,12 @@ async function hasVoted(suggestionId, userFingerprint) {
 // Gibt die Teilmenge der suggestionIds zurück, für die der Fingerprint bereits
 // abgestimmt hat. Ersetzt die gechunkte Firestore-`in`-Query (Postgres kann
 // beliebig große Arrays via = ANY()).
-async function votedSuggestionIds(userFingerprint, suggestionIds) {
+async function votedSuggestionIds(userFingerprint, suggestionIds, tenantId) {
   if (!userFingerprint || !suggestionIds || suggestionIds.length === 0) return [];
   const { rows } = await query(
     `select suggestion_id from votes
-     where user_fingerprint = $1 and suggestion_id = any($2::text[])`,
-    [userFingerprint, suggestionIds]
+     where user_fingerprint = $1 and suggestion_id = any($2::text[]) and tenant_id = $3`,
+    [userFingerprint, suggestionIds, tenantId]
   );
   return rows.map((r) => r.suggestion_id);
 }
@@ -50,11 +52,33 @@ async function cast({ id, tenantId, suggestionId, userFingerprint }) {
       return { created: false, votes: rows[0] ? rows[0].votes : null };
     }
     const upd = await client.query(
-      'update suggestions set votes = votes + 1 where id = $1 returning votes',
-      [suggestionId]
+      'update suggestions set votes = votes + 1 where id = $1 and tenant_id = $2 returning votes',
+      [suggestionId, tenantId]
     );
     return { created: true, votes: upd.rows[0] ? upd.rows[0].votes : null };
   });
 }
 
-module.exports = { hasVoted, votedSuggestionIds, cast };
+// Entfernt einen Vote und dekrementiert den Zähler — atomar, tenant-gescopt.
+// Rückgabe: { removed, votes }.
+async function uncast({ tenantId, suggestionId, userFingerprint }) {
+  return withTransaction(async (client) => {
+    const del = await client.query(
+      `delete from votes
+       where tenant_id = $1 and suggestion_id = $2 and user_fingerprint = $3
+       returning id`,
+      [tenantId, suggestionId, userFingerprint]
+    );
+    if (del.rowCount === 0) {
+      return { removed: false, votes: null };
+    }
+    const upd = await client.query(
+      `update suggestions set votes = greatest(votes - 1, 0)
+       where id = $1 and tenant_id = $2 returning votes`,
+      [suggestionId, tenantId]
+    );
+    return { removed: true, votes: upd.rows[0] ? upd.rows[0].votes : null };
+  });
+}
+
+module.exports = { hasVoted, votedSuggestionIds, cast, uncast };

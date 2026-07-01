@@ -66,9 +66,19 @@ suite('apps + votes repositories', async (t) => {
   assert.equal(second.created, true);
   assert.equal(second.votes, 2);
 
-  assert.equal(await votes.hasVoted(S, 'fp-a'), true);
-  assert.equal(await votes.hasVoted(S, 'fp-x'), false);
+  assert.equal(await votes.hasVoted(S, 'fp-a', T), true);
+  assert.equal(await votes.hasVoted(S, 'fp-x', T), false);
+  assert.equal(await votes.hasVoted(S, 'fp-a', 'other-tenant'), false); // tenant-gescopt
 
-  const voted = await votes.votedSuggestionIds('fp-a', [S, 'other']);
+  const voted = await votes.votedSuggestionIds('fp-a', [S, 'other'], T);
   assert.deepEqual(voted, [S]);
+  assert.deepEqual(await votes.votedSuggestionIds('fp-a', [S], 'other-tenant'), []);
+
+  // uncast: entfernt + dekrementiert; zweites uncast tut nichts
+  const un1 = await votes.uncast({ tenantId: T, suggestionId: S, userFingerprint: 'fp-a' });
+  assert.equal(un1.removed, true);
+  assert.equal(un1.votes, 1);
+  const un2 = await votes.uncast({ tenantId: T, suggestionId: S, userFingerprint: 'fp-a' });
+  assert.equal(un2.removed, false);
+  assert.equal(await votes.hasVoted(S, 'fp-a', T), false);
 });

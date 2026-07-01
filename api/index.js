@@ -265,6 +265,14 @@ async function resolveTenantSuggestionById(tenantSlug, suggestionId) {
     return { errorStatus: 404, error: 'Tenant not found' };
   }
 
+  if (usePostgres()) {
+    const suggestionData = await repos.suggestions.findById(suggestionId);
+    if (!suggestionData || getTenantId(suggestionData) !== tenant.id) {
+      return { errorStatus: 404, error: 'Suggestion not found' };
+    }
+    return { tenant, suggestionData, suggestionDoc: null };
+  }
+
   const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
   const suggestionData = suggestionDoc.exists ? suggestionDoc.data() : null;
   if (!suggestionDoc.exists || getTenantId(suggestionData) !== tenant.id) {
@@ -357,7 +365,7 @@ async function loadPublicSuggestionsForApp(appId, tenantId, userFingerprint) {
     const suggestionIds = suggestions.map((s) => s.id);
     const [commentStatsMap, votedIds] = await Promise.all([
       repos.comments.statsForSuggestions(suggestionIds, tenantId),
-      repos.votes.votedSuggestionIds(userFingerprint, suggestionIds),
+      repos.votes.votedSuggestionIds(userFingerprint, suggestionIds, tenantId),
     ]);
     const userVotesSet = new Set(votedIds);
     return sortPublicSuggestions(
@@ -1764,6 +1772,16 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/vote', rateLimit(60
       return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
     }
 
+    if (usePostgres()) {
+      const result = await repos.votes.cast({
+        id: crypto.randomUUID(), tenantId: tenant.id, suggestionId, userFingerprint,
+      });
+      if (!result.created) {
+        return res.status(400).json({ error: 'You have already voted for this suggestion' });
+      }
+      return res.json({ success: true, message: 'Vote recorded successfully' });
+    }
+
     const existingVote = await db.collection('votes')
       .where('tenantId', '==', tenant.id)
       .where('suggestionId', '==', suggestionId)
@@ -1826,6 +1844,14 @@ app.delete('/api/tenants/:tenantSlug/suggestions/:suggestionId/vote', rateLimit(
       return res.status(400).json({ error: 'Voting is only supported for feature suggestions' });
     }
 
+    if (usePostgres()) {
+      const result = await repos.votes.uncast({ tenantId: tenant.id, suggestionId, userFingerprint });
+      if (!result.removed) {
+        return res.status(400).json({ error: 'You have not voted for this suggestion' });
+      }
+      return res.json({ success: true, message: 'Vote removed successfully' });
+    }
+
     const existingVote = await db.collection('votes')
       .where('tenantId', '==', tenant.id)
       .where('suggestionId', '==', suggestionId)
@@ -1873,6 +1899,11 @@ app.get('/api/tenants/:tenantSlug/suggestions/:suggestionId/voted', async (req, 
 
     if (!suggestionData.approved) {
       return res.status(404).json({ error: 'Suggestion not found' });
+    }
+
+    if (usePostgres()) {
+      const voted = await repos.votes.hasVoted(suggestionId, userFingerprint, tenant.id);
+      return res.json({ voted });
     }
 
     const voteSnapshot = await db.collection('votes')
