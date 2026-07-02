@@ -457,7 +457,8 @@
                 </span>
                 Roadlight
             </a>
-            <nav class="footer-links" aria-label="Rechtliches">
+            <nav class="footer-links" aria-label="Footer-Links">
+                <a href="https://benkohler.de/#apps" target="_blank" rel="noopener">Meine Apps</a>
                 <a href="/impressum.html">Impressum</a>
                 <a href="/datenschutz.html">Datenschutz</a>
                 <a href="mailto:hallo@roadlight.pro">Kontakt</a>
@@ -465,6 +466,16 @@
             <span class="footer-copy">© 2026 Roadlight</span>
         </div>
     </footer>
+
+    <!-- Cookie-/Speicher-Hinweis (informativ – nur technisch notwendige Speicherung) -->
+    <div class="cookie-banner" id="cookieBanner" role="region" aria-label="Hinweis zur Datenspeicherung" hidden>
+        <p class="cookie-text">
+            Wir verwenden nur technisch notwendige Speicherung (z.&nbsp;B. für dein Farbschema) –
+            <strong>keine Tracking- oder Marketing-Cookies</strong>. Mehr dazu im
+            <a href="/datenschutz.html">Datenschutz</a>.
+        </p>
+        <button class="btn btn-primary" id="cookieAck" type="button">Verstanden</button>
+    </div>
 
     <script>
         // Mobiles Menü umschalten
@@ -523,6 +534,22 @@
 
             // Roving-Tabindex initialisieren (nur der aktive Tab ist per Tab erreichbar).
             tabs.forEach(function (t) { t.tabIndex = t.classList.contains('active') ? 0 : -1; });
+        })();
+
+        // Cookie-/Speicher-Hinweis: einmalig zeigen, Bestätigung lokal merken.
+        (function () {
+            var banner = document.getElementById('cookieBanner');
+            var ack = document.getElementById('cookieAck');
+            if (!banner || !ack) return;
+            var KEY = 'roadlight_cookie_ack';
+            var stored = null;
+            try { stored = localStorage.getItem(KEY); } catch (e) {}
+            if (stored === '1') return; // bereits bestätigt – nicht erneut zeigen
+            banner.hidden = false;
+            ack.addEventListener('click', function () {
+                try { localStorage.setItem(KEY, '1'); } catch (e) {}
+                banner.hidden = true;
+            });
         })();
     </script>
 </body>
