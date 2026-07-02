@@ -131,10 +131,16 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   await apiKeys.revoke('test_r_key');
   assert.ok((await apiKeys.findByTokenHash('hash_key')).revokedAt);
 
-  // --- attachments ---
-  const att = await attachments.create({ tenantId: T, parentType: 'suggestion', parentId: 'test_r_s1', storageKey: 'k/1.png', contentType: 'image/png', sizeBytes: 123 });
+  // --- attachments (inline bytea + Batch-Load + Proxy-Fetch) ---
+  const bytes = Buffer.from('89504e470d0a1a0a', 'hex');           // PNG-Magic reicht als Testinhalt
+  const att = await attachments.create({ tenantId: T, parentType: 'suggestion', parentId: 'test_r_s1', data: bytes, contentType: 'image/png' });
   assert.ok(att.id);                                              // von DB generiert
+  assert.equal(att.sizeBytes, bytes.length);                      // size aus data abgeleitet
   assert.equal((await attachments.listForParent('suggestion', 'test_r_s1')).length, 1);
+  assert.equal((await attachments.listForParents('suggestion', ['test_r_s1', 'nope'])).length, 1);
+  const fetched = await attachments.findWithData(att.id, T);
+  assert.ok(fetched.data.equals(bytes));                          // Bytes round-trip
+  assert.equal(await attachments.findWithData(att.id, 'other-tenant'), null); // tenant-gescopt
   await attachments.removeForParent('suggestion', 'test_r_s1');
   assert.equal((await attachments.listForParent('suggestion', 'test_r_s1')).length, 0);
 
