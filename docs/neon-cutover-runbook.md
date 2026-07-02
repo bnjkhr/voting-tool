@@ -6,10 +6,13 @@ wird nie migriert. Betrifft nur das **roadlight**-Vercel-Projekt (roadlight.pro 
 app.roadlight.pro, Branch `main`).
 
 Der gesamte Postgres-Pfad liegt hinter `DATA_BACKEND` (Default `firestore`). Der
-Cutover ist ein einzelner Env-Flip — jederzeit zurückdrehbar.
+Cutover ist ein einzelner Env-Flip — prinzipiell zurückdrehbar (mit Vorbehalt,
+siehe Rollback).
 
-## Voraussetzungen (einmalig)
+## Voraussetzungen (unmittelbar vor Cutover prüfen)
 - Schema auf Neon aktuell: `npm run db:migrate` (wendet `migrations/*.sql` an).
+  Wichtig: erneut laufen lassen, wenn seit dem letzten Mal neue Migrationen
+  hinzugekommen sind — das Skript setzt den aktuellen Tabellenstand voraus.
 - `.env.local` bzw. Vercel-Env enthält `DATABASE_URL` (pooled),
   `DATABASE_URL_UNPOOLED` (direct, für den Migrations-Runner) und die
   Firebase-Credentials (zum Lesen der Quelle).

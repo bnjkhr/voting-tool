@@ -251,7 +251,8 @@ async function run() {
          values ($1,$2,$3,$4,coalesce($5,now()))
          on conflict (id) do update set tenant_id=excluded.tenant_id, suggestion_id=excluded.suggestion_id,
            user_fingerprint=excluded.user_fingerprint`,
-        [v.id, tenantIdOf(v), v.suggestionId, v.userFingerprint, ts(v.createdAt)]
+        // Firestore-Votes speichern die Zeit in `timestamp` (nicht createdAt).
+        [v.id, tenantIdOf(v), v.suggestionId, v.userFingerprint, ts(v.createdAt || v.timestamp)]
       );
     }
 
