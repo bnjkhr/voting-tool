@@ -222,11 +222,19 @@ h3 { font-size: 1.2rem; }
 .board-body { padding: 22px; }
 .board-tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
 .board-tab {
+    font-family: inherit;
     font-size: 0.88rem; font-weight: 600;
     padding: 7px 14px; border-radius: var(--radius-full);
-    color: var(--secondary); border: 1px solid var(--border);
+    color: var(--secondary); background: var(--surface);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
-.board-tab.active { color: var(--accent); background: var(--accent-light); border-color: transparent; }
+.board-tab:hover { color: var(--text); border-color: var(--muted); }
+.board-tab.active,
+.board-tab.active:hover { color: var(--accent); background: var(--accent-light); border-color: transparent; }
+
+.board-panel[hidden] { display: none; }
 
 .board-item {
     display: flex;
@@ -271,6 +279,42 @@ h3 { font-size: 1.2rem; }
 .chip-planned { background: rgba(26, 26, 26, 0.06); color: var(--secondary); }
 .chip-progress { background: var(--accent-light); color: var(--accent); }
 .chip-shipped { background: rgba(58, 143, 92, 0.12); color: var(--success); }
+
+/* Status-Tags im Board (an der echten App orientiert: Pill mit Punkt) */
+.tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.74rem; font-weight: 600;
+    padding: 3px 9px; border-radius: var(--radius-full);
+    flex-shrink: 0; white-space: nowrap;
+}
+.tag::before { content: ""; width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; }
+.tag-indigo { background: var(--accent-light); color: var(--accent); }
+.tag-grey { background: rgba(26, 26, 26, 0.06); color: var(--secondary); }
+.tag-green { background: rgba(58, 143, 92, 0.12); color: var(--success); }
+
+/* Release-Karten (Roadmap & Changelog) */
+.release-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 18px;
+    margin-bottom: 12px;
+    background: var(--surface);
+    text-align: left;
+}
+.release-card:last-child { margin-bottom: 0; }
+.release-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; }
+.release-head-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.release-version { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 700; font-size: 0.95rem; color: var(--text); }
+.release-title { color: var(--secondary); font-size: 0.92rem; }
+.release-date { color: var(--muted); font-size: 0.82rem; flex-shrink: 0; }
+.release-desc { color: var(--secondary); font-size: 0.9rem; margin-top: 8px; }
+.release-items { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-light); display: grid; gap: 9px; }
+.release-item { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; }
+.release-item-icon { flex-shrink: 0; font-size: 0.95rem; line-height: 1; }
+.release-item-title { flex: 1; min-width: 0; }
+.release-group { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-light); }
+.release-group-title { font-size: 0.82rem; font-weight: 700; margin-bottom: 8px; }
+.release-group .release-item { padding: 2px 0; }
 
 /* ---------- Feature trio ---------- */
 .grid-3 {

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#FAF8F5">
+    <meta name="robots" content="noindex">
+    <title>Kommt bald – Roadlight</title>
+    <meta name="description" content="Die Anmeldung für Roadlight ist bald verfügbar.">
+    <link rel="stylesheet" href="/fonts/fonts.css">
+    <link rel="stylesheet" href="/landing.css">
+    <style>
+        .soon {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 40px 24px;
+        }
+        .soon .brand { font-size: 1.5rem; margin-bottom: 40px; }
+        .soon .brand .logo { width: 32px; height: 32px; border-radius: 9px; }
+        .soon .eyebrow { margin-bottom: 20px; }
+        .soon h1 {
+            font-size: clamp(2rem, 5vw, 3rem);
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        .soon p {
+            max-width: 480px;
+            margin: 20px auto 0;
+            font-size: 1.12rem;
+            color: var(--secondary);
+        }
+        .soon .actions { margin-top: 34px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+        @media (max-width: 480px) {
+            .soon .actions .btn { width: 100%; }
+            .soon .actions { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <main class="soon">
+        <a href="/" class="brand">
+            <span class="logo" aria-hidden="true">
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3.5"/></svg>
+            </span>
+            Roadlight
+        </a>
+        <span class="eyebrow">In Kürze</span>
+        <h1>Die Anmeldung kommt bald.</h1>
+        <p>Wir legen gerade die letzten Boards an. Schau in Kürze wieder vorbei – oder schreib uns, wenn du früh dabei sein möchtest.</p>
+        <div class="actions">
+            <a href="/" class="btn btn-secondary btn-lg">Zurück zur Startseite</a>
+            <a href="mailto:hallo@roadlight.pro" class="btn btn-primary btn-lg">Früh dabei sein</a>
+        </div>
+    </main>
+</body>
+</html>

@@ -27,8 +27,8 @@
                 <a href="#vorschau">Beispiel-Board</a>
             </nav>
             <div class="nav-actions">
-                <a href="/login.html" class="btn btn-ghost">Anmelden</a>
-                <a href="/signup.html" class="btn btn-primary">Kostenlos starten</a>
+                <a href="/kommt-bald.html" class="btn btn-ghost">Anmelden</a>
+                <a href="/kommt-bald.html" class="btn btn-primary">Kostenlos starten</a>
             </div>
             <button class="nav-toggle" id="navToggle" aria-label="Menü öffnen" aria-expanded="false">
                 <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
@@ -43,7 +43,7 @@
                 <h1>Sammle Feedback. Zeig deine Roadmap. Feiere jedes Release.</h1>
                 <p class="subline">Roadlight bündelt öffentliches Feedback-Board, Voting, Roadmap und Changelog an einem Ort – damit du das baust, was deine Nutzer wirklich wollen.</p>
                 <div class="hero-ctas">
-                    <a href="/signup.html" class="btn btn-primary btn-lg">Kostenlos starten</a>
+                    <a href="/kommt-bald.html" class="btn btn-primary btn-lg">Kostenlos starten</a>
                     <a href="#vorschau" class="btn btn-secondary btn-lg">Live-Board ansehen</a>
                 </div>
                 <div class="trust">
@@ -63,45 +63,115 @@
                         <span class="board-url">roadlight.pro/acme/feedback</span>
                     </div>
                     <div class="board-body">
-                        <div class="board-tabs">
-                            <span class="board-tab active">Feedback</span>
-                            <span class="board-tab">Roadmap</span>
-                            <span class="board-tab">Changelog</span>
+                        <div class="board-tabs" role="tablist" aria-label="Board-Ansichten">
+                            <button class="board-tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-feedback" data-panel="feedback">Feedback</button>
+                            <button class="board-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-roadmap" data-panel="roadmap">Roadmap</button>
+                            <button class="board-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-changelog" data-panel="changelog">Changelog</button>
                         </div>
 
-                        <div class="board-item">
-                            <div class="vote-pill voted">
-                                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
-                                <span class="count">248</span>
+                        <!-- Panel: Feedback -->
+                        <div class="board-panel active" id="panel-feedback" role="tabpanel">
+                            <div class="board-item">
+                                <div class="vote-pill voted">
+                                    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                                    <span class="count">248</span>
+                                </div>
+                                <div class="item-main">
+                                    <h4>Dunkelmodus für das gesamte Dashboard</h4>
+                                    <p>Bitte einen echten Dark Mode, der auch nachts angenehm ist.</p>
+                                    <span class="chip chip-progress">In Arbeit</span>
+                                </div>
                             </div>
-                            <div class="item-main">
-                                <h4>Dunkelmodus für das gesamte Dashboard</h4>
-                                <p>Bitte einen echten Dark Mode, der auch nachts angenehm ist.</p>
-                                <span class="chip chip-progress">In Arbeit</span>
+
+                            <div class="board-item">
+                                <div class="vote-pill">
+                                    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                                    <span class="count">176</span>
+                                </div>
+                                <div class="item-main">
+                                    <h4>CSV-Export der Abstimmungsergebnisse</h4>
+                                    <p>Für interne Reports wäre ein Export nach CSV super hilfreich.</p>
+                                    <span class="chip chip-planned">Geplant</span>
+                                </div>
+                            </div>
+
+                            <div class="board-item">
+                                <div class="vote-pill">
+                                    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                                    <span class="count">92</span>
+                                </div>
+                                <div class="item-main">
+                                    <h4>Slack-Benachrichtigung bei neuen Ideen</h4>
+                                    <p>Neue Vorschläge direkt im Team-Channel sehen.</p>
+                                    <span class="chip chip-shipped">Veröffentlicht</span>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="board-item">
-                            <div class="vote-pill">
-                                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
-                                <span class="count">176</span>
+                        <!-- Panel: Roadmap -->
+                        <div class="board-panel" id="panel-roadmap" role="tabpanel" hidden>
+                            <div class="release-card">
+                                <div class="release-head">
+                                    <div class="release-head-left">
+                                        <span class="tag tag-indigo">In Arbeit</span>
+                                        <span class="release-version">v1.4</span>
+                                        <span class="release-title">— Dashboard &amp; Dark Mode</span>
+                                    </div>
+                                    <span class="release-date">voraussichtlich März 2026</span>
+                                </div>
+                                <p class="release-desc">Bessere Lesbarkeit bei Nacht und eine ruhigere Übersicht.</p>
+                                <div class="release-items">
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">Dunkelmodus für das gesamte Dashboard</span><span class="tag tag-indigo">wird umgesetzt</span></div>
+                                </div>
                             </div>
-                            <div class="item-main">
-                                <h4>CSV-Export der Abstimmungsergebnisse</h4>
-                                <p>Für interne Reports wäre ein Export nach CSV super hilfreich.</p>
-                                <span class="chip chip-planned">Geplant</span>
+                            <div class="release-card">
+                                <div class="release-head">
+                                    <div class="release-head-left">
+                                        <span class="tag tag-grey">Geplant</span>
+                                        <span class="release-version">v1.5</span>
+                                        <span class="release-title">— Reporting &amp; Integrationen</span>
+                                    </div>
+                                    <span class="release-date">voraussichtlich Q2 2026</span>
+                                </div>
+                                <div class="release-items">
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">CSV-Export der Abstimmungsergebnisse</span><span class="tag tag-grey">geplant</span></div>
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">API-Zugriff für eigene Workflows</span><span class="tag tag-grey">geplant</span></div>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="board-item">
-                            <div class="vote-pill">
-                                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
-                                <span class="count">92</span>
+                        <!-- Panel: Changelog -->
+                        <div class="board-panel" id="panel-changelog" role="tabpanel" hidden>
+                            <div class="release-card">
+                                <div class="release-head">
+                                    <div class="release-head-left">
+                                        <span class="release-version">v1.3</span>
+                                        <span class="release-title">— Slack &amp; Team</span>
+                                    </div>
+                                    <span class="release-date">12. Juni 2026</span>
+                                </div>
+                                <div class="release-group">
+                                    <h5 class="release-group-title">✨ Neue Features</h5>
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">Slack-Benachrichtigung bei neuen Ideen</span></div>
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">Team-Rollen für die Moderation</span></div>
+                                </div>
+                                <div class="release-group">
+                                    <h5 class="release-group-title">🐞 Fehlerbehebungen</h5>
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">🐞</span><span class="release-item-title">Filter bleibt nach dem Neuladen erhalten</span></div>
+                                </div>
                             </div>
-                            <div class="item-main">
-                                <h4>Slack-Benachrichtigung bei neuen Ideen</h4>
-                                <p>Neue Vorschläge direkt im Team-Channel sehen.</p>
-                                <span class="chip chip-shipped">Veröffentlicht</span>
+                            <div class="release-card">
+                                <div class="release-head">
+                                    <div class="release-head-left">
+                                        <span class="release-version">v1.2</span>
+                                        <span class="release-title">— Öffentliche Roadmap</span>
+                                    </div>
+                                    <span class="release-date">28. Mai 2026</span>
+                                </div>
+                                <div class="release-group">
+                                    <h5 class="release-group-title">✨ Neue Features</h5>
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">Öffentliche Roadmap-Ansicht mit Status</span></div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -296,7 +366,7 @@
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Öffentlicher Changelog</li>
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Hosting in Frankfurt</li>
                         </ul>
-                        <a href="/signup.html" class="btn btn-secondary">Kostenlos starten</a>
+                        <a href="/kommt-bald.html" class="btn btn-secondary">Kostenlos starten</a>
                     </div>
                     <div class="price-card featured">
                         <span class="price-badge">Bald verfügbar</span>
@@ -309,7 +379,7 @@
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Eigenes Branding</li>
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Priorisierter Support</li>
                         </ul>
-                        <a href="/signup.html" class="btn btn-primary">Zugang sichern</a>
+                        <a href="/kommt-bald.html" class="btn btn-primary">Zugang sichern</a>
                     </div>
                 </div>
                 <p class="price-note">Bezahlung folgt später – aktuell startest du komplett kostenlos.</p>
@@ -354,7 +424,7 @@
                 <div class="cta-inner">
                     <h2>Bereit, echtes Feedback zu sammeln?</h2>
                     <p>Leg in wenigen Minuten dein Board an und zeig deiner Community, dass du zuhörst.</p>
-                    <a href="/signup.html" class="btn btn-primary btn-lg">Kostenlos starten</a>
+                    <a href="/kommt-bald.html" class="btn btn-primary btn-lg">Kostenlos starten</a>
                 </div>
             </div>
         </section>
@@ -392,6 +462,27 @@
                 link.addEventListener('click', function () {
                     nav.classList.remove('open');
                     toggle.setAttribute('aria-expanded', 'false');
+                });
+            });
+        })();
+
+        // Board-Vorschau: zwischen Feedback / Roadmap / Changelog umschalten
+        (function () {
+            var tabs = Array.prototype.slice.call(document.querySelectorAll('.board-tab'));
+            if (!tabs.length) return;
+            var url = document.querySelector('.board-url');
+            tabs.forEach(function (tab) {
+                tab.addEventListener('click', function () {
+                    var name = tab.getAttribute('data-panel');
+                    tabs.forEach(function (t) {
+                        var on = t === tab;
+                        t.classList.toggle('active', on);
+                        t.setAttribute('aria-selected', on ? 'true' : 'false');
+                    });
+                    document.querySelectorAll('.board-panel').forEach(function (p) {
+                        p.hidden = (p.id !== 'panel-' + name);
+                    });
+                    if (url) url.textContent = 'roadlight.pro/acme/' + name;
                 });
             });
         })();
