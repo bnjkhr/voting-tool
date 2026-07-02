@@ -137,7 +137,8 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.ok(att.id);                                              // von DB generiert
   assert.equal(att.sizeBytes, bytes.length);                      // size aus data abgeleitet
   assert.equal((await attachments.listForParent('suggestion', 'test_r_s1')).length, 1);
-  assert.equal((await attachments.listForParents('suggestion', ['test_r_s1', 'nope'])).length, 1);
+  assert.equal((await attachments.listForParents('suggestion', ['test_r_s1', 'nope'], T)).length, 1);
+  assert.equal((await attachments.listForParents('suggestion', ['test_r_s1'], 'other-tenant')).length, 0); // tenant-gescopt
   const fetched = await attachments.findWithData(att.id, T);
   assert.ok(fetched.data.equals(bytes));                          // Bytes round-trip
   assert.equal(await attachments.findWithData(att.id, 'other-tenant'), null); // tenant-gescopt

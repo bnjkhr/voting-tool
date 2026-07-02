@@ -28,18 +28,35 @@ test('Schreibpfade legen Screenshots als attachments an', () => {
   assert.ok(apiSource.includes("persistScreenshotAttachments(tenant.id, 'comment'"));
 });
 
-test('Lesepfade hängen Proxy-URLs an (suggestion + comment)', () => {
-  assert.ok(apiSource.includes("attachScreenshotUrls(suggestions, 'suggestion', tenant.slug)"));
-  assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', tenant.slug)"));
+test('Lesepfade hängen Proxy-URLs an (public vs admin)', () => {
+  // Public-Reads ohne admin-Flag, Admin-Reads mit true (authentifizierter Proxy).
+  assert.ok(apiSource.includes("attachScreenshotUrls(suggestions, 'suggestion', tenant)"));
+  assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', tenant)"));
+  assert.ok(apiSource.includes("attachScreenshotUrls(suggestions, 'suggestion', tenant, true)"));
+  assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', tenant, true)"));
 });
 
-test('der Attachment-Proxy-Endpoint existiert und ist tenant-gescopt', () => {
+test('öffentlicher Proxy ist tenant-gescopt UND nur für freigegebene Parents', () => {
   assert.ok(
     apiSource.includes("app.get('/api/tenants/:tenantSlug/attachments/:attachmentId'"),
-    'erwartet die Proxy-Route',
+    'erwartet die öffentliche Proxy-Route',
   );
-  // tenant-gescopter Fetch als Defense-in-depth.
   assert.ok(apiSource.includes('repos.attachments.findWithData(attachmentId, tenant.id)'));
+  // approved-Parent-Gate gegen geleakte URLs unmoderierter Inhalte.
+  assert.ok(apiSource.includes('isAttachmentParentPublic('));
+});
+
+test('authentifizierter Admin-Proxy existiert (Moderations-Vorschau)', () => {
+  assert.ok(
+    apiSource.includes("app.get('/api/admin/tenants/:tenantSlug/attachments/:attachmentId', requireTenantAccess()"),
+    'erwartet die authentifizierte Admin-Proxy-Route',
+  );
+});
+
+test('Serving erzwingt Raster-Whitelist und nosniff (SVG-XSS-Schutz)', () => {
+  assert.ok(apiSource.includes('SERVABLE_IMAGE_TYPES'));
+  assert.ok(apiSource.includes("'image/png', 'image/jpeg', 'image/gif', 'image/webp'"));
+  assert.ok(apiSource.includes("res.setHeader('X-Content-Type-Options', 'nosniff')"));
 });
 
 test('der öffentliche Kommentar-Lesepfad hat einen Postgres-Branch (approved-only)', () => {
@@ -54,7 +71,7 @@ test('der öffentliche Kommentar-Lesepfad hat einen Postgres-Branch (approved-on
 
 test('das attachments-Repo hält Bytes inline und lädt tenant-gescopt', () => {
   assert.ok(attachmentsRepo.includes('function findWithData(id, tenantId)'));
-  assert.ok(attachmentsRepo.includes('function listForParents(parentType, parentIds)'));
+  assert.ok(attachmentsRepo.includes('function listForParents(parentType, parentIds, tenantId)'));
   assert.ok(/insert into attachments[\s\S]*data/.test(attachmentsRepo), 'create schreibt die data-Spalte');
 });
 

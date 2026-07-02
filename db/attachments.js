@@ -34,15 +34,16 @@ async function listForParent(parentType, parentId) {
 }
 
 // Batch-Variante: alle Attachments für mehrere Parents auf einmal (vermeidet
-// N+1 beim Rendern von Listen). Rückgabe chronologisch, damit der Aufrufer je
-// parent_id gruppieren kann.
-async function listForParents(parentType, parentIds) {
+// N+1 beim Rendern von Listen). tenant-gescopt — sonst könnten bei einer
+// polymorphen parent_id-Kollision fremde Attachments in die URL-Liste geraten.
+// Rückgabe chronologisch, damit der Aufrufer je parent_id gruppieren kann.
+async function listForParents(parentType, parentIds, tenantId) {
   if (!parentIds || parentIds.length === 0) return [];
   const { rows } = await query(
     `select ${META} from attachments
-     where parent_type = $1 and parent_id = any($2::text[])
+     where parent_type = $1 and parent_id = any($2::text[]) and tenant_id = $3
      order by created_at asc`,
-    [parentType, parentIds]
+    [parentType, parentIds, tenantId]
   );
   return mapRows(rows);
 }

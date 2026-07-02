@@ -7,8 +7,13 @@
 alter table attachments alter column storage_key drop not null;
 alter table attachments add column if not exists data bytea;
 
--- Genau eine Quelle je Zeile: entweder inline-data (Postgres) ODER storage_key
--- (externer Store). Verhindert leere Attachments.
+-- Genau eine nicht-leere Quelle je Zeile: entweder inline-data (Postgres) ODER
+-- storage_key (externer Store). NULL-Prüfung reicht nicht — Zero-Length-bytea
+-- bzw. Leerstring müssen ebenfalls abgewiesen werden.
+alter table attachments drop constraint if exists attachments_data_or_key;
 alter table attachments
   add constraint attachments_data_or_key
-  check (data is not null or storage_key is not null);
+  check (
+    (data is not null and octet_length(data) > 0)
+    or (storage_key is not null and storage_key <> '')
+  );
