@@ -38,7 +38,7 @@ function shouldServeAppShell(method, pathname) {
     if (p.startsWith('/api/') || p === '/api') return false;
 
     const segments = p.split('/').filter(Boolean);
-    if (segments.length === 0) return false; // "/" wird von express.static bedient
+    if (segments.length === 0) return false; // "/" liefert die Landingpage (eigene Route)
 
     if (RESERVED_FIRST_SEGMENTS.has(segments[0])) return false;
 

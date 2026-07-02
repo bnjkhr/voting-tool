@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#FAF8F5">
+    <title>Roadlight – Feedback-Board, öffentliche Roadmap & Changelog</title>
+    <meta name="description" content="Sammle Feedback, priorisiere nach echten Votes, zeig deine öffentliche Roadmap und feiere jedes Release – alles in einem. DSGVO-konform, Hosting in Frankfurt.">
+    <!-- Selbst gehostete Schriften (kein Drittland-Transfer an Google, DSGVO-konform) -->
+    <link rel="stylesheet" href="/fonts/fonts.css">
+    <link rel="stylesheet" href="/landing.css">
+</head>
+<body>
+
+    <!-- ============ NAV ============ -->
+    <header class="nav" id="nav">
+        <div class="wrap nav-inner">
+            <a href="/" class="brand">
+                <span class="logo" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3.5"/></svg>
+                </span>
+                Roadlight
+            </a>
+            <nav class="nav-links" aria-label="Hauptnavigation">
+                <a href="#funktionen">Funktionen</a>
+                <a href="#preise">Preise</a>
+                <a href="#vorschau">Beispiel-Board</a>
+            </nav>
+            <div class="nav-actions">
+                <a href="/login.html" class="btn btn-ghost">Anmelden</a>
+                <a href="/signup.html" class="btn btn-primary">Kostenlos starten</a>
+            </div>
+            <button class="nav-toggle" id="navToggle" aria-label="Menü öffnen" aria-expanded="false">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <main>
+        <!-- ============ HERO ============ -->
+        <section class="hero">
+            <div class="wrap">
+                <h1>Sammle Feedback. Zeig deine Roadmap. Feiere jedes Release.</h1>
+                <p class="subline">Roadlight bündelt öffentliches Feedback-Board, Voting, Roadmap und Changelog an einem Ort – damit du das baust, was deine Nutzer wirklich wollen.</p>
+                <div class="hero-ctas">
+                    <a href="/signup.html" class="btn btn-primary btn-lg">Kostenlos starten</a>
+                    <a href="#vorschau" class="btn btn-secondary btn-lg">Live-Board ansehen</a>
+                </div>
+                <div class="trust">
+                    <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> DSGVO-konform</span>
+                    <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Hosting in Frankfurt</span>
+                    <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Ohne Kreditkarte</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ PRODUKTVORSCHAU ============ -->
+        <section class="preview" id="vorschau" aria-label="Produktvorschau">
+            <div class="wrap">
+                <div class="board-card">
+                    <div class="board-topbar">
+                        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                        <span class="board-url">roadlight.pro/acme/feedback</span>
+                    </div>
+                    <div class="board-body">
+                        <div class="board-tabs">
+                            <span class="board-tab active">Feedback</span>
+                            <span class="board-tab">Roadmap</span>
+                            <span class="board-tab">Changelog</span>
+                        </div>
+
+                        <div class="board-item">
+                            <div class="vote-pill voted">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                                <span class="count">248</span>
+                            </div>
+                            <div class="item-main">
+                                <h4>Dunkelmodus für das gesamte Dashboard</h4>
+                                <p>Bitte einen echten Dark Mode, der auch nachts angenehm ist.</p>
+                                <span class="chip chip-progress">In Arbeit</span>
+                            </div>
+                        </div>
+
+                        <div class="board-item">
+                            <div class="vote-pill">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                                <span class="count">176</span>
+                            </div>
+                            <div class="item-main">
+                                <h4>CSV-Export der Abstimmungsergebnisse</h4>
+                                <p>Für interne Reports wäre ein Export nach CSV super hilfreich.</p>
+                                <span class="chip chip-planned">Geplant</span>
+                            </div>
+                        </div>
+
+                        <div class="board-item">
+                            <div class="vote-pill">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                                <span class="count">92</span>
+                            </div>
+                            <div class="item-main">
+                                <h4>Slack-Benachrichtigung bei neuen Ideen</h4>
+                                <p>Neue Vorschläge direkt im Team-Channel sehen.</p>
+                                <span class="chip chip-shipped">Veröffentlicht</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ FUNKTIONS-TRIO ============ -->
+        <section id="funktionen">
+            <div class="wrap">
+                <div class="section-head">
+                    <span class="eyebrow">Alles in einem</span>
+                    <h2>Ein roter Faden vom Feedback bis zum Release</h2>
+                    <p>Drei Bausteine, die zusammengehören – ohne Tool-Wildwuchs und ohne Medienbrüche.</p>
+                </div>
+                <div class="grid-3">
+                    <div class="feature-card">
+                        <span class="feature-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+                        <h3>Feedback mit Voting</h3>
+                        <p>Nutzer schlagen Ideen vor, melden Bugs und stimmen ab. Du siehst sofort, was wirklich Priorität hat – statt lauter Einzelmeinungen.</p>
+                    </div>
+                    <div class="feature-card">
+                        <span class="feature-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+                        <h3>Öffentliche Roadmap</h3>
+                        <p>Zeig transparent, was geplant, in Arbeit und fertig ist. Deine Nutzer wissen jederzeit, woran ihr gerade baut.</p>
+                    </div>
+                    <div class="feature-card">
+                        <span class="feature-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M12 2 8 6M12 2l4 4"/><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 13h18"/></svg></span>
+                        <h3>Changelog</h3>
+                        <p>Kommuniziere jedes Release im gleichen Board. Wer eine Idee eingebracht hat, erfährt, wenn sie live geht.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ SO FUNKTIONIERT'S ============ -->
+        <section class="steps">
+            <div class="wrap">
+                <div class="section-head">
+                    <span class="eyebrow">So funktioniert's</span>
+                    <h2>In drei Schritten startklar</h2>
+                </div>
+                <div class="grid-steps">
+                    <div class="step">
+                        <span class="step-num">1</span>
+                        <h3>Board anlegen</h3>
+                        <p>Workspace erstellen, Board benennen, fertig. Kein DNS-Setup, keine Wartezeit – deine öffentliche URL steht sofort.</p>
+                    </div>
+                    <div class="step">
+                        <span class="step-num">2</span>
+                        <h3>Sammeln &amp; voten</h3>
+                        <p>Teile den Link mit deiner Community. Nutzer bringen Ideen ein und stimmen ab – du priorisierst nach echten Votes.</p>
+                    </div>
+                    <div class="step">
+                        <span class="step-num">3</span>
+                        <h3>Teilen &amp; feiern</h3>
+                        <p>Pflege die Roadmap und veröffentliche Releases im Changelog. Deine Nutzer bleiben immer auf dem Laufenden.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ DEEP DIVES ============ -->
+        <section>
+            <div class="wrap">
+                <!-- 1: Priorisieren nach Votes -->
+                <div class="deepdive">
+                    <div class="dd-text">
+                        <span class="eyebrow">Priorisieren</span>
+                        <h2>Baue, was zählt – nach echten Votes</h2>
+                        <p>Schluss mit Bauchgefühl. Jede Idee wird von deiner Community bewertet, sodass du den Aufwand dorthin lenkst, wo die Wirkung am größten ist.</p>
+                        <ul class="dd-list">
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Automatische Sortierung nach Stimmen</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Ein Vote pro Person – ohne Verzerrung</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Klare Signale statt lauter Einzelstimmen</li>
+                        </ul>
+                    </div>
+                    <div class="dd-visual">
+                        <div class="rank-row"><span class="rank-votes">248</span><span class="rank-bar"><span style="width:100%"></span></span><span class="rank-label">Dunkelmodus</span></div>
+                        <div class="rank-row"><span class="rank-votes">176</span><span class="rank-bar"><span style="width:71%"></span></span><span class="rank-label">CSV-Export</span></div>
+                        <div class="rank-row"><span class="rank-votes">92</span><span class="rank-bar"><span style="width:37%"></span></span><span class="rank-label">Slack-Alerts</span></div>
+                        <div class="rank-row"><span class="rank-votes">54</span><span class="rank-bar"><span style="width:22%"></span></span><span class="rank-label">API-Zugriff</span></div>
+                    </div>
+                </div>
+
+                <!-- 2: Roadmap mit Status -->
+                <div class="deepdive reverse">
+                    <div class="dd-text">
+                        <span class="eyebrow">Roadmap</span>
+                        <h2>Transparenz, die Vertrauen schafft</h2>
+                        <p>Eine öffentliche Roadmap mit klaren Status-Spalten zeigt deiner Community, dass Feedback ankommt und etwas bewegt.</p>
+                        <ul class="dd-list">
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Status geplant, in Arbeit, veröffentlicht</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Direkt aus Feedback-Einträgen befüllt</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Immer aktuell, ohne Extra-Pflegeaufwand</li>
+                        </ul>
+                    </div>
+                    <div class="dd-visual">
+                        <div class="roadmap-cols">
+                            <div class="roadmap-col">
+                                <h5>Geplant</h5>
+                                <div class="roadmap-card">CSV-Export</div>
+                                <div class="roadmap-card">API-Zugriff</div>
+                            </div>
+                            <div class="roadmap-col">
+                                <h5>In Arbeit</h5>
+                                <div class="roadmap-card">Dunkelmodus</div>
+                            </div>
+                            <div class="roadmap-col">
+                                <h5>Fertig</h5>
+                                <div class="roadmap-card">Slack-Alerts</div>
+                                <div class="roadmap-card">Team-Rollen</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3: Bug-Reports, Moderation, Rollen -->
+                <div class="deepdive">
+                    <div class="dd-text">
+                        <span class="eyebrow">Im Griff</span>
+                        <h2>Bug-Reports, Moderation &amp; Team-Rollen</h2>
+                        <p>Melde Bugs mit Screenshots, moderiere Einreichungen und arbeite als Team – mit Rollen, die genau die richtigen Rechte vergeben.</p>
+                        <ul class="dd-list">
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Bug-Reports mit Screenshot-Anhang</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Moderation vor der Veröffentlichung</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Rollen für Owner, Admins und Team</li>
+                        </ul>
+                    </div>
+                    <div class="dd-visual">
+                        <div class="report-visual">
+                            <div class="report-thumb">
+                                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.5-3.5L9 21"/></svg>
+                            </div>
+                            <div class="report-line"><span class="avatar">LM</span> „Absturz beim Speichern“ – Screenshot angehängt</div>
+                            <div class="report-line"><span class="chip chip-planned" style="margin:0">Zur Prüfung</span> wartet auf Moderation</div>
+                            <div class="report-line"><span class="avatar" style="background:rgba(58,143,92,.12);color:var(--success)">✓</span> Von Admin freigegeben</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ DARUM ROADLIGHT ============ -->
+        <section>
+            <div class="wrap">
+                <div class="section-head">
+                    <span class="eyebrow">Darum Roadlight</span>
+                    <h2>Gemacht für europäische Produktteams</h2>
+                </div>
+                <div class="grid-4">
+                    <div class="why-card">
+                        <span class="why-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+                        <h3>EU &amp; DSGVO</h3>
+                        <p>Datenverarbeitung nach DSGVO, Hosting in Frankfurt. Keine Datenweitergabe in Drittländer.</p>
+                    </div>
+                    <div class="why-card">
+                        <span class="why-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+                        <h3>Alles in einem</h3>
+                        <p>Feedback, Roadmap und Changelog in einem Board – statt drei Tools und ständigem Copy-Paste.</p>
+                    </div>
+                    <div class="why-card">
+                        <span class="why-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></span>
+                        <h3>Pfad-basiert</h3>
+                        <p>Deine URL steht sofort: roadlight.pro/deinname. Kein DNS, keine Subdomain-Einrichtung.</p>
+                    </div>
+                    <div class="why-card">
+                        <span class="why-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></span>
+                        <h3>Schlank &amp; schnell</h3>
+                        <p>Aufgeräumte Oberfläche, kurze Ladezeiten. Fokus aufs Wesentliche – ohne Ballast.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ PREISE ============ -->
+        <section class="pricing" id="preise">
+            <div class="wrap">
+                <div class="section-head">
+                    <span class="eyebrow">Preise</span>
+                    <h2>Fair und einfach</h2>
+                    <p>Starte kostenlos. Upgrade, wenn du mehr brauchst.</p>
+                </div>
+                <div class="grid-pricing">
+                    <div class="price-card">
+                        <h3>Free</h3>
+                        <p class="price-tagline">Für den Start und kleine Communities</p>
+                        <div class="price-amount">0&nbsp;€<span> / Monat</span></div>
+                        <ul class="price-list">
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> 1 Board</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Feedback, Voting &amp; Roadmap</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Öffentlicher Changelog</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Hosting in Frankfurt</li>
+                        </ul>
+                        <a href="/signup.html" class="btn btn-secondary">Kostenlos starten</a>
+                    </div>
+                    <div class="price-card featured">
+                        <span class="price-badge">Bald verfügbar</span>
+                        <h3>Pro</h3>
+                        <p class="price-tagline">Für wachsende Produktteams</p>
+                        <div class="price-amount">bald<span> &nbsp;</span></div>
+                        <ul class="price-list">
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Mehrere Boards</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Team-Rollen &amp; Moderation</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Eigenes Branding</li>
+                            <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Priorisierter Support</li>
+                        </ul>
+                        <a href="/signup.html" class="btn btn-primary">Zugang sichern</a>
+                    </div>
+                </div>
+                <p class="price-note">Bezahlung folgt später – aktuell startest du komplett kostenlos.</p>
+            </div>
+        </section>
+
+        <!-- ============ FAQ ============ -->
+        <section>
+            <div class="wrap">
+                <div class="section-head">
+                    <span class="eyebrow">FAQ</span>
+                    <h2>Häufige Fragen</h2>
+                </div>
+                <div class="faq-list">
+                    <details class="faq-item">
+                        <summary>Ist Roadlight DSGVO-konform?<span class="plus"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+                        <p>Ja. Wir verarbeiten Daten nach den Vorgaben der DSGVO und hosten in Frankfurt. Schriften sind selbst gehostet, es findet keine Datenweitergabe in Drittländer statt.</p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Kann ich eine eigene Domain nutzen?<span class="plus"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+                        <p>Standardmäßig läuft dein Board pfad-basiert unter roadlight.pro/deinname – sofort und ohne DNS-Setup. Eigene Domains sind für Pro geplant.</p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Ist es wirklich kostenlos?<span class="plus"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+                        <p>Ja. Der Free-Plan mit Feedback-Board, Voting, Roadmap und Changelog ist dauerhaft kostenlos und erfordert keine Kreditkarte. Pro mit erweiterten Funktionen kommt später.</p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Kann ich bestehendes Feedback importieren?<span class="plus"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+                        <p>Ein Import ist in Planung. Bis dahin legst du bestehende Einträge in wenigen Minuten manuell an – oder du meldest dich bei uns, wir helfen beim Umzug.</p>
+                    </details>
+                    <details class="faq-item">
+                        <summary>Wie viele Boards kann ich anlegen?<span class="plus"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+                        <p>Im Free-Plan startest du mit einem Board. Mehrere Boards für unterschiedliche Produkte oder Teams sind Teil von Pro.</p>
+                    </details>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ ABSCHLUSS-CTA ============ -->
+        <section class="cta-band">
+            <div class="wrap">
+                <div class="cta-inner">
+                    <h2>Bereit, echtes Feedback zu sammeln?</h2>
+                    <p>Leg in wenigen Minuten dein Board an und zeig deiner Community, dass du zuhörst.</p>
+                    <a href="/signup.html" class="btn btn-primary btn-lg">Kostenlos starten</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ============ FOOTER ============ -->
+    <footer class="footer">
+        <div class="wrap footer-inner">
+            <a href="/" class="brand">
+                <span class="logo" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3.5"/></svg>
+                </span>
+                Roadlight
+            </a>
+            <nav class="footer-links" aria-label="Rechtliches">
+                <a href="/impressum.html">Impressum</a>
+                <a href="/datenschutz.html">Datenschutz</a>
+                <a href="mailto:hallo@roadlight.pro">Kontakt</a>
+            </nav>
+            <span class="footer-copy">© 2026 Roadlight</span>
+        </div>
+    </footer>
+
+    <script>
+        // Mobiles Menü umschalten
+        (function () {
+            var nav = document.getElementById('nav');
+            var toggle = document.getElementById('navToggle');
+            if (!nav || !toggle) return;
+            toggle.addEventListener('click', function () {
+                var open = nav.classList.toggle('open');
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            });
+            nav.querySelectorAll('.nav-links a').forEach(function (link) {
+                link.addEventListener('click', function () {
+                    nav.classList.remove('open');
+                    toggle.setAttribute('aria-expanded', 'false');
+                });
+            });
+        })();
+    </script>
+</body>
+</html>
