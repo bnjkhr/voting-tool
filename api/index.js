@@ -111,6 +111,14 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Root-Route liefert die Landingpage. Muss VOR express.static stehen, damit
+// nicht die Board-SPA (public/index.html) als Default-Index für "/" greift.
+// Board-URLs (/{tenant}, /{tenant}/{board}, ...) laufen weiter über den
+// SPA-Fallback am Ende der Datei; /index.html bleibt als Board-Shell erreichbar.
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/landing.html'));
+});
+
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, '../public')));
 
