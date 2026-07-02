@@ -466,25 +466,45 @@
             });
         })();
 
-        // Board-Vorschau: zwischen Feedback / Roadmap / Changelog umschalten
+        // Board-Vorschau: zwischen Feedback / Roadmap / Changelog umschalten.
+        // Folgt dem ARIA-Tabs-Pattern inkl. Tastaturnavigation (Pfeile, Home/End)
+        // und Roving-Tabindex.
         (function () {
             var tabs = Array.prototype.slice.call(document.querySelectorAll('.board-tab'));
             if (!tabs.length) return;
             var url = document.querySelector('.board-url');
-            tabs.forEach(function (tab) {
-                tab.addEventListener('click', function () {
-                    var name = tab.getAttribute('data-panel');
-                    tabs.forEach(function (t) {
-                        var on = t === tab;
-                        t.classList.toggle('active', on);
-                        t.setAttribute('aria-selected', on ? 'true' : 'false');
-                    });
-                    document.querySelectorAll('.board-panel').forEach(function (p) {
-                        p.hidden = (p.id !== 'panel-' + name);
-                    });
-                    if (url) url.textContent = 'roadlight.pro/acme/' + name;
+
+            function activate(tab, focus) {
+                var name = tab.getAttribute('data-panel');
+                tabs.forEach(function (t) {
+                    var on = t === tab;
+                    t.classList.toggle('active', on);
+                    t.setAttribute('aria-selected', on ? 'true' : 'false');
+                    t.tabIndex = on ? 0 : -1;
+                });
+                document.querySelectorAll('.board-panel').forEach(function (p) {
+                    p.hidden = (p.id !== 'panel-' + name);
+                });
+                if (url) url.textContent = 'roadlight.pro/acme/' + name;
+                if (focus) tab.focus();
+            }
+
+            tabs.forEach(function (tab, i) {
+                tab.addEventListener('click', function () { activate(tab); });
+                tab.addEventListener('keydown', function (e) {
+                    var idx = null;
+                    if (e.key === 'ArrowRight') idx = (i + 1) % tabs.length;
+                    else if (e.key === 'ArrowLeft') idx = (i - 1 + tabs.length) % tabs.length;
+                    else if (e.key === 'Home') idx = 0;
+                    else if (e.key === 'End') idx = tabs.length - 1;
+                    if (idx === null) return;
+                    e.preventDefault();
+                    activate(tabs[idx], true);
                 });
             });
+
+            // Roving-Tabindex initialisieren (nur der aktive Tab ist per Tab erreichbar).
+            tabs.forEach(function (t) { t.tabIndex = t.classList.contains('active') ? 0 : -1; });
         })();
     </script>
 </body>
