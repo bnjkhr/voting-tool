@@ -1855,7 +1855,11 @@ async function isAttachmentParentPublic(attachment, tenantId) {
   }
   if (attachment.parentType === 'comment') {
     const c = await repos.comments.findById(attachment.parentId);
-    return !!c && c.tenantId === tenantId && c.approvalStatus === 'approved';
+    if (!c || c.tenantId !== tenantId || c.approvalStatus !== 'approved') return false;
+    // Auch die Suggestion muss freigegeben sein — ein approved Kommentar auf
+    // einer noch unmoderierten Suggestion ist öffentlich nicht sichtbar.
+    const s = await repos.suggestions.findById(c.suggestionId);
+    return !!s && s.tenantId === tenantId && s.approved === true;
   }
   return false;
 }
