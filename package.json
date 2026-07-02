@@ -22,6 +22,8 @@
     "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run",
     "db:migrate": "node scripts/migrate-db.js",
     "db:migrate:status": "node scripts/migrate-db.js --status",
+    "db:migrate-data:dry-run": "node scripts/migrate-firestore-to-neon.js",
+    "db:migrate-data": "node scripts/migrate-firestore-to-neon.js --commit",
     "test": "node --test \"tests/*.test.js\"",
     "test:integration": "node --test \"tests/integration/*.test.js\""
   },
