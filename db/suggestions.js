@@ -147,9 +147,17 @@ async function removeLabel(id, label) {
 }
 
 // Löscht Suggestion inkl. abhängiger activity-Zeilen. votes/comments räumt der
-// FK ON DELETE CASCADE ab; activity hat keinen FK (soft ref) -> explizit.
+// FK ON DELETE CASCADE ab; activity und attachments haben keinen FK (soft/poly
+// ref) -> explizit. Attachments der Suggestion UND ihrer Comments zuerst löschen,
+// solange die Comments-Zeilen noch existieren.
 async function remove(id) {
   await withTransaction(async (client) => {
+    await client.query(
+      `delete from attachments
+       where (parent_type = 'suggestion' and parent_id = $1)
+          or (parent_type = 'comment' and parent_id in (select id from comments where suggestion_id = $1))`,
+      [id]
+    );
     await client.query('delete from activity where ticket_id = $1', [id]);
     await client.query('delete from suggestions where id = $1', [id]);
   });

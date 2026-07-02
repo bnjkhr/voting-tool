@@ -358,6 +358,64 @@ function sortPublicSuggestions(suggestions) {
   return suggestions;
 }
 
+// ---------------------------------------------------------------------------
+// Screenshots (PR D): im Postgres-Modus liegen sie als attachments-Zeilen
+// (bytea) statt base64 im Doc. Beim Schreiben dekodieren wir die data-URLs und
+// legen je Bild eine Zeile an; beim Lesen bauen wir Proxy-URLs, die der Client
+// unverändert als <img src> rendert.
+// ---------------------------------------------------------------------------
+const DATA_URL_RE = /^data:([\w.+-]+\/[\w.+-]+);base64,(.+)$/s;
+// Nur Raster-Bilder werden akzeptiert/ausgeliefert. SVG ist bewusst NICHT dabei:
+// als image/svg+xml von der eigenen Origin serviert könnte es Skript ausführen.
+const SERVABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+async function persistScreenshotAttachments(tenantId, parentType, parentId, dataUrls) {
+  if (!usePostgres() || !Array.isArray(dataUrls) || dataUrls.length === 0) return;
+  for (const url of dataUrls) {
+    const m = DATA_URL_RE.exec(typeof url === 'string' ? url : '');
+    if (!m || !SERVABLE_IMAGE_TYPES.has(m[1])) continue;
+    await repos.attachments.create({
+      tenantId,
+      parentType,
+      parentId,
+      data: Buffer.from(m[2], 'base64'),
+      contentType: m[1],
+    });
+  }
+}
+
+function attachmentUrl(tenantSlug, id, admin) {
+  const base = admin ? `/api/admin/tenants` : `/api/tenants`;
+  return `${base}/${encodeURIComponent(tenantSlug)}/attachments/${id}`;
+}
+
+// Setzt item.screenshots auf ein Array von Proxy-URLs (batch, tenant-gescopt).
+// admin=true erzeugt URLs auf den authentifizierten Admin-Proxy (liefert auch
+// unfreigegebene Parents für die Moderation); sonst den öffentlichen Proxy.
+async function attachScreenshotUrls(items, parentType, tenant, admin = false) {
+  if (!usePostgres() || !Array.isArray(items) || items.length === 0) return items;
+  const rows = await repos.attachments.listForParents(parentType, items.map((i) => i.id), tenant.id);
+  const byParent = {};
+  for (const a of rows) {
+    (byParent[a.parentId] = byParent[a.parentId] || []).push(attachmentUrl(tenant.slug, a.id, admin));
+  }
+  for (const item of items) item.screenshots = byParent[item.id] || [];
+  return items;
+}
+
+// Gemeinsames Streaming: Raster-Whitelist erzwingen (kein aktives SVG),
+// nosniff, unveränderlich cachebar.
+function serveAttachmentBytes(res, attachment) {
+  const contentType = SERVABLE_IMAGE_TYPES.has(attachment.contentType)
+    ? attachment.contentType
+    : 'application/octet-stream';
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Length', attachment.data.length);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  return res.end(attachment.data);
+}
+
 async function loadPublicSuggestionsForApp(appId, tenantId, userFingerprint) {
   if (usePostgres()) {
     const suggestions = await repos.suggestions.listPublicForApp(appId);
@@ -1599,6 +1657,7 @@ app.get('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', async (req, res) =
       tenant.id,
       generateUserFingerprint(req)
     );
+    await attachScreenshotUrls(suggestions, 'suggestion', tenant);
 
     res.json(suggestions);
   } catch (error) {
@@ -1632,18 +1691,15 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
       return res.status(400).json({ error: suggestionError });
     }
 
-    // Screenshots gehen im Postgres-Modus noch verloren (kommen in PR D via
-    // attachments/Object-Storage). Bis dahin ablehnen statt still verwerfen.
-    if (usePostgres() && Array.isArray(suggestion.screenshots) && suggestion.screenshots.length > 0) {
-      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
-    }
-
     suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, tenant.id);
 
     let suggestionId;
     if (usePostgres()) {
       suggestionId = crypto.randomUUID();
+      // screenshots ist kein Suggestions-Spaltenfeld — der Repo-Create ignoriert
+      // es; die Bilder landen als attachments-Zeilen.
       await repos.suggestions.create({ id: suggestionId, ...suggestion });
+      await persistScreenshotAttachments(tenant.id, 'suggestion', suggestionId, suggestion.screenshots);
     } else {
       const docRef = await db.collection('suggestions').add(suggestion);
       suggestionId = docRef.id;
@@ -1740,35 +1796,127 @@ app.get('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', async (re
       return res.status(404).json({ error: 'Tenant not found' });
     }
 
-    const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-    const suggestionData = suggestionDoc.exists ? suggestionDoc.data() : null;
-    if (
-      !suggestionDoc.exists ||
-      !suggestionData.approved ||
-      getTenantId(suggestionData) !== tenant.id
-    ) {
-      return res.status(404).json({ error: 'Suggestion not found' });
+    let comments;
+    if (usePostgres()) {
+      const suggestionData = await repos.suggestions.findById(suggestionId);
+      if (!suggestionData || !suggestionData.approved || getTenantId(suggestionData) !== tenant.id) {
+        return res.status(404).json({ error: 'Suggestion not found' });
+      }
+      const rows = await repos.comments.listForSuggestion(suggestionId);
+      comments = rows
+        .filter((c) => c.tenantId === tenant.id && c.approvalStatus === 'approved')
+        .map((c) => ({
+          id: c.id,
+          text: c.text,
+          screenshots: [],
+          createdAt: c.createdAt,
+          authorType: c.authorType,
+        }));
+      await attachScreenshotUrls(comments, 'comment', tenant);
+    } else {
+      const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+      const suggestionData = suggestionDoc.exists ? suggestionDoc.data() : null;
+      if (
+        !suggestionDoc.exists ||
+        !suggestionData.approved ||
+        getTenantId(suggestionData) !== tenant.id
+      ) {
+        return res.status(404).json({ error: 'Suggestion not found' });
+      }
+
+      const commentsSnapshot = await db.collection('comments')
+        .where('suggestionId', '==', suggestionId)
+        .get();
+
+      comments = commentsSnapshot.docs
+        .filter(doc => getTenantId(doc.data() || {}) === tenant.id)
+        .map(buildPublicCommentResponse)
+        .filter(Boolean);
     }
 
-    const commentsSnapshot = await db.collection('comments')
-      .where('suggestionId', '==', suggestionId)
-      .get();
-
-    const comments = commentsSnapshot.docs
-      .filter(doc => getTenantId(doc.data() || {}) === tenant.id)
-      .map(buildPublicCommentResponse)
-      .filter(Boolean);
-
-    comments.sort((a, b) => {
-      const aTime = a.createdAt?.toDate?.() ?? (a.createdAt?._seconds != null ? new Date(a.createdAt._seconds * 1000) : new Date(0));
-      const bTime = b.createdAt?.toDate?.() ?? (b.createdAt?._seconds != null ? new Date(b.createdAt._seconds * 1000) : new Date(0));
-      return bTime - aTime;
-    });
+    comments.sort((a, b) => toDateOrEpoch(b.createdAt) - toDateOrEpoch(a.createdAt));
 
     res.json(comments);
   } catch (error) {
     console.error('Error fetching tenant comments:', error);
     res.status(500).json({ error: 'Failed to fetch tenant comments' });
+  }
+});
+
+const ATTACHMENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Prüft, ob der Parent eines Attachments öffentlich sichtbar ist (approved).
+// Verhindert, dass eine geleakte URL eines noch nicht freigegebenen
+// Suggestion/Comment-Screenshots öffentlich abrufbar wird.
+async function isAttachmentParentPublic(attachment, tenantId) {
+  if (attachment.parentType === 'suggestion') {
+    const s = await repos.suggestions.findById(attachment.parentId);
+    return !!s && s.tenantId === tenantId && s.approved === true;
+  }
+  if (attachment.parentType === 'comment') {
+    const c = await repos.comments.findById(attachment.parentId);
+    if (!c || c.tenantId !== tenantId || c.approvalStatus !== 'approved') return false;
+    // Auch die Suggestion muss freigegeben sein — ein approved Kommentar auf
+    // einer noch unmoderierten Suggestion ist öffentlich nicht sichtbar.
+    const s = await repos.suggestions.findById(c.suggestionId);
+    return !!s && s.tenantId === tenantId && s.approved === true;
+  }
+  return false;
+}
+
+// SaaS public: serve a screenshot attachment (proxy für die in Postgres
+// gehaltenen Bytes). tenant-gescopt UND nur für freigegebene Parents — eine
+// geleakte URL darf keinen unmoderierten Inhalt öffentlich machen. Nur im
+// Postgres-Modus aktiv.
+app.get('/api/tenants/:tenantSlug/attachments/:attachmentId', async (req, res) => {
+  try {
+    if (!usePostgres()) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const tenantSlug = parseSlugParam(req.params.tenantSlug);
+    const { attachmentId } = req.params;
+    if (!tenantSlug || !ATTACHMENT_UUID_RE.test(attachmentId)) {
+      return res.status(400).json({ error: 'Invalid request' });
+    }
+    const tenant = await findActiveTenantBySlug(tenantSlug);
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+    const attachment = await repos.attachments.findWithData(attachmentId, tenant.id);
+    if (!attachment || !attachment.data) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    if (!(await isAttachmentParentPublic(attachment, tenant.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    return serveAttachmentBytes(res, attachment);
+  } catch (error) {
+    console.error('Error serving attachment:', error);
+    return res.status(500).json({ error: 'Failed to load attachment' });
+  }
+});
+
+// Tenant Admin: serve any attachment of the tenant (auch unfreigegebene) für die
+// Moderations-Vorschau. Authentifiziert via requireTenantAccess.
+app.get('/api/admin/tenants/:tenantSlug/attachments/:attachmentId', requireTenantAccess(), async (req, res) => {
+  try {
+    if (!usePostgres()) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const { attachmentId } = req.params;
+    if (!ATTACHMENT_UUID_RE.test(attachmentId)) {
+      return res.status(400).json({ error: 'Invalid request' });
+    }
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+    const attachment = await repos.attachments.findWithData(attachmentId, tenant.id);
+    if (!attachment || !attachment.data) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    return serveAttachmentBytes(res, attachment);
+  } catch (error) {
+    console.error('Error serving admin attachment:', error);
+    return res.status(500).json({ error: 'Failed to load attachment' });
   }
 });
 
@@ -1972,10 +2120,6 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
     if (screenshotValidation.error) {
       return res.status(400).json({ error: screenshotValidation.error });
     }
-    // Screenshots im Postgres-Modus noch nicht unterstützt (PR D) -> ablehnen statt verwerfen.
-    if (usePostgres() && Array.isArray(screenshotValidation.screenshots) && screenshotValidation.screenshots.length > 0) {
-      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
-    }
 
     const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
     if (error) {
@@ -2005,6 +2149,7 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
         text: validText, authorType: 'user', authorFingerprint: userFingerprint,
         approvalStatus: 'pending',
       });
+      await persistScreenshotAttachments(tenant.id, 'comment', commentId, screenshotValidation.screenshots);
     } else {
       const commentRef = await db.collection('comments').add(comment);
       commentId = commentRef.id;
@@ -3703,6 +3848,7 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions', requireTenantAccess(), asy
     if (!tenant) return;
 
     const { suggestions } = await loadTenantAdminSuggestions(tenant.id);
+    await attachScreenshotUrls(suggestions, 'suggestion', tenant, true);
     res.json(suggestions);
   } catch (error) {
     console.error('Error fetching tenant admin suggestions:', error);
@@ -4294,6 +4440,7 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', req
           rejectedAt: c.rejectedAt,
           rejectedBy: c.rejectedBy,
         }));
+      await attachScreenshotUrls(comments, 'comment', tenant, true);
     } else {
       const commentsSnapshot = await db.collection('comments')
         .where('suggestionId', '==', suggestionId)
@@ -4336,10 +4483,6 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
     if (screenshotValidation.error) {
       return res.status(400).json({ error: screenshotValidation.error });
     }
-    // Screenshots im Postgres-Modus noch nicht unterstützt (PR D) -> ablehnen statt verwerfen.
-    if (usePostgres() && Array.isArray(screenshotValidation.screenshots) && screenshotValidation.screenshots.length > 0) {
-      return res.status(400).json({ error: 'Screenshots werden aktuell nicht unterstützt' });
-    }
 
     const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
     if (error) {
@@ -4365,6 +4508,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
         id: commentId, tenantId: tenant.id, suggestionId,
         text: validText, authorType: 'admin', approvalStatus: 'approved', approvedBy: 'admin',
       });
+      await persistScreenshotAttachments(tenant.id, 'comment', commentId, screenshotValidation.screenshots);
     } else {
       const commentRef = await db.collection('comments').add(comment);
       commentId = commentRef.id;
