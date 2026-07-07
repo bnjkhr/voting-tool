@@ -47,7 +47,7 @@ const {
   normalizeInviteEmail,
   normalizeMembershipRole,
 } = require('./team-utils');
-const { senderAddress, brandButton, wrapEmail, htmlEscape } = require('./email-templates');
+const { senderAddress, brandButton, wrapEmail, htmlEscape, adminNotificationUrl, tenantBoardEntryUrl } = require('./email-templates');
 const {
   API_KEY_SCOPES,
   buildApiKeyData,
@@ -783,7 +783,7 @@ async function resolveNotificationRecipients(tenantId) {
 }
 
 // Helper function to send admin notification email
-async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}, to = null) {
+async function sendAdminNotificationEmail(suggestionId, title, description, appName, reportMeta = {}, to = null, tenantSlug = null) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('Email not configured - RESEND_API_KEY missing');
     return;
@@ -796,7 +796,8 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
+  const adminUrl = adminNotificationUrl(process.env.BASE_URL, tenantSlug);
+  const adminButtonLabel = tenantSlug ? 'Zur Konsole' : 'Zum Admin-Bereich';
 
   const reportTypeLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Feature' };
   const reportTypeLabel = reportTypeLabels[reportMeta.type] || 'Feature';
@@ -817,7 +818,7 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
           ${severityLine}
           <p style="margin:4px 0;"><strong>Titel:</strong> ${htmlEscape(title)}</p>
           <p style="margin:4px 0;"><strong>Beschreibung:</strong> ${htmlEscape(description)}</p>
-          <p style="margin:20px 0 0;">${brandButton(adminUrl, 'Zum Admin-Bereich')}</p>`,
+          <p style="margin:20px 0 0;">${brandButton(adminUrl, adminButtonLabel)}</p>`,
       }),
     });
 
@@ -832,7 +833,7 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   }
 }
 
-async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, commentText, appName, to = null) {
+async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, commentText, appName, to = null, tenantSlug = null) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('Email not configured - RESEND_API_KEY missing');
     return;
@@ -845,7 +846,8 @@ async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, 
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
+  const adminUrl = adminNotificationUrl(process.env.BASE_URL, tenantSlug);
+  const adminButtonLabel = tenantSlug ? 'Zur Konsole' : 'Zum Admin-Bereich';
 
   try {
     const { data, error } = await resend.emails.send({
@@ -858,7 +860,7 @@ async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, 
           <p style="margin:4px 0;"><strong>App:</strong> ${htmlEscape(appName)}</p>
           <p style="margin:4px 0;"><strong>Eintrag:</strong> ${htmlEscape(suggestionTitle)}</p>
           <p style="margin:4px 0;"><strong>Kommentar:</strong> ${htmlEscape(commentText)}</p>
-          <p style="margin:20px 0 0;">${brandButton(adminUrl, 'Zum Admin-Bereich')}</p>`,
+          <p style="margin:20px 0 0;">${brandButton(adminUrl, adminButtonLabel)}</p>`,
       }),
     });
 
@@ -874,7 +876,7 @@ async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, 
 }
 
 // Helper function to send user notification email
-async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName, entryType = 'feature') {
+async function sendUserNotificationEmail(userEmail, suggestionId, title, status, comment, appName, entryType = 'feature', entryUrl = null) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('Email not configured - RESEND_API_KEY missing');
     return;
@@ -887,7 +889,9 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const suggestionUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
+  // Tenant-Boards liefern einen fertigen Deep-Link aufs öffentliche Board;
+  // der Legacy-Pfad (kein entryUrl) bleibt beim Anker auf der Legacy-Startseite.
+  const suggestionUrl = entryUrl || `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
 
   const statusTexts = {
     approved: 'Genehmigt',
@@ -1449,7 +1453,20 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
     });
     const loginLinkId = await persistLoginLink(loginLinkData);
     const signupLoginUrl = `${buildRequestBaseUrl(req)}/login.html?token=${encodeURIComponent(token)}`;
-    await sendLoginLinkEmail({ to: email, loginUrl: signupLoginUrl });
+    // Der Workspace ist an diesem Punkt bereits atomar angelegt. Scheitert nur
+    // der Mailversand, darf der Signup NICHT in einen 500 kippen — sonst
+    // existiert ein Workspace, den der Nutzer für gescheitert hält und (wegen
+    // "ein Workspace pro E-Mail") nicht per Re-Signup wiederholen kann. Wir
+    // liefern 201 mit delivery:'failed'; der Nutzer holt den Login-Link dann
+    // über "Anmelden".
+    let emailDelivered = true;
+    try {
+      await sendLoginLinkEmail({ to: email, loginUrl: signupLoginUrl });
+    } catch (mailError) {
+      emailDelivered = false;
+      console.error('Signup: Login-Mail konnte nicht gesendet werden:', mailError.message);
+    }
+    const delivery = emailDelivered ? 'email' : 'failed';
 
     res.status(201).json({
       tenant: {
@@ -1473,12 +1490,12 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
       loginLink: {
         id: loginLinkId,
         expiresAt: loginLinkData.expiresAt,
-        delivery: 'email',
+        delivery,
       },
       urls: {
         tenantAdmin: `/tenant-admin.html?tenant=${encodeURIComponent(config.tenantSlug)}`,
       },
-      delivery: 'email',
+      delivery,
     });
   } catch (error) {
     console.error('Error creating signup workspace:', error);
@@ -1865,7 +1882,8 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
         suggestion.description,
         tenantApp.name,
         { type: suggestion.type, severity: suggestion.severity || null },
-        recipients
+        recipients,
+        tenantSlug
       );
     } catch (emailError) {
       console.error('Error sending notification email:', emailError);
@@ -2317,7 +2335,7 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
         if (appDoc.exists) appName = appDoc.data().name;
       }
       const recipients = await resolveNotificationRecipients(tenant.id);
-      await sendAdminCommentNotificationEmail(suggestionId, suggestionData.title, validText, appName, recipients);
+      await sendAdminCommentNotificationEmail(suggestionId, suggestionData.title, validText, appName, recipients, tenantSlug);
     } catch (notificationError) {
       console.error('Error sending admin comment notification:', notificationError);
     }
@@ -4040,6 +4058,12 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/approve', req
       tenantId: getTenantId(suggestionData),
     });
 
+    try {
+      await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'approved');
+    } catch (notificationError) {
+      console.error('Error sending tenant approval notification:', notificationError);
+    }
+
     res.json({ success: true, message: 'Eintrag erfolgreich freigegeben' });
   } catch (error) {
     console.error('Error approving tenant suggestion:', error);
@@ -4096,6 +4120,12 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/status', requi
         detail: `Status geändert: ${previousStatus || 'keiner'} → ${normalizedStatus}`,
         tenantId: getTenantId(suggestionData),
       });
+
+      try {
+        await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'tag_updated', `Neuer Status: ${normalizedStatus}`);
+      } catch (notificationError) {
+        console.error('Error sending tenant status notification:', notificationError);
+      }
     }
 
     res.json({ success: true, message: 'Status erfolgreich aktualisiert' });
@@ -4630,7 +4660,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       return res.status(400).json({ error: screenshotValidation.error });
     }
 
-    const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -4664,6 +4694,12 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       detail: `Kommentar hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
       tenantId: tenant.id,
     });
+
+    try {
+      await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'commented', validText);
+    } catch (notificationError) {
+      console.error('Error sending tenant comment notification:', notificationError);
+    }
 
     res.status(201).json({
       id: commentId,
@@ -5696,6 +5732,51 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
     }
   } catch (error) {
     console.error('Error notifying suggestion creator:', error);
+  }
+}
+
+// Tenant-Pendant zu notifySuggestionCreator: benachrichtigt den Ersteller eines
+// Tenant-Eintrags (Postgres oder Firestore) und verlinkt auf das öffentliche
+// Tenant-Board statt auf die Legacy-Startseite. Nutzt ausschließlich die
+// Pro-Eintrag-Einstellungen (notificationEnabled/notificationEmail) — der
+// Fingerprint-Fallback aus dem Legacy-Pfad ist nicht tenant-scoped und würde
+// über Tenants hinweg fehlleiten.
+async function notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, status, comment = null) {
+  try {
+    if (!suggestionData || !suggestionData.notificationEnabled || !isValidEmail(suggestionData.notificationEmail)) {
+      return;
+    }
+
+    let appName = 'Unbekannte App';
+    let appSlug = null;
+    if (usePostgres()) {
+      const app = await repos.apps.findById(suggestionData.appId);
+      if (app) {
+        appName = app.name || appName;
+        appSlug = app.slug || null;
+      }
+    } else {
+      const appDoc = await db.collection('apps').doc(suggestionData.appId).get();
+      if (appDoc.exists) {
+        const appData = appDoc.data() || {};
+        appName = appData.name || appName;
+        appSlug = appData.slug || null;
+      }
+    }
+
+    const entryUrl = tenantBoardEntryUrl(process.env.BASE_URL, tenantSlug, appSlug, suggestionId);
+    await sendUserNotificationEmail(
+      suggestionData.notificationEmail.trim(),
+      suggestionId,
+      suggestionData.title,
+      status,
+      comment,
+      appName,
+      normalizeSuggestionType(suggestionData.type),
+      entryUrl
+    );
+  } catch (error) {
+    console.error('Error notifying tenant suggestion creator:', error);
   }
 }
 

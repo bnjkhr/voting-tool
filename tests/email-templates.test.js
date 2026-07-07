@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { senderAddress, brandButton, wrapEmail, htmlEscape } = require('../api/email-templates');
+const { senderAddress, brandButton, wrapEmail, htmlEscape, adminNotificationUrl, tenantBoardEntryUrl } = require('../api/email-templates');
 const apiSource = fs.readFileSync(path.join(__dirname, '..', 'api/index.js'), 'utf8');
 
 test('brandButton rendert einen Terracotta-CTA mit der Ziel-URL', () => {
@@ -39,6 +39,38 @@ test('htmlEscape neutralisiert HTML in Nutzereingaben', () => {
   assert.equal(htmlEscape('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
   assert.equal(htmlEscape('A & B "C" \'D\''), 'A &amp; B &quot;C&quot; &#39;D&#39;');
   assert.equal(htmlEscape(null), '');
+});
+
+test('adminNotificationUrl zeigt für Tenants auf die Konsole, sonst auf Legacy-Admin', () => {
+  assert.equal(
+    adminNotificationUrl('https://roadlight.pro', 'acme'),
+    'https://roadlight.pro/tenant-admin.html?tenant=acme'
+  );
+  // Kein Slug -> Legacy-Pfad unverändert.
+  assert.equal(adminNotificationUrl('https://roadlight.pro', null), 'https://roadlight.pro/admin.html');
+  // Trailing Slash der BASE_URL wird nicht dupliziert; Slug wird URL-enkodiert.
+  assert.equal(
+    adminNotificationUrl('https://roadlight.pro/', 'a b&c'),
+    'https://roadlight.pro/tenant-admin.html?tenant=a%20b%26c'
+  );
+  // Fallback ohne BASE_URL.
+  assert.equal(adminNotificationUrl(null, 'acme'), 'http://localhost:3000/tenant-admin.html?tenant=acme');
+});
+
+test('tenantBoardEntryUrl baut den Deep-Link aufs öffentliche Tenant-Board', () => {
+  assert.equal(
+    tenantBoardEntryUrl('https://roadlight.pro', 'acme', 'app-1', 'sug-123'),
+    'https://roadlight.pro/acme/app-1/t/sug-123'
+  );
+  // Ohne App-Slug bleibt nur die Board-Übersicht.
+  assert.equal(tenantBoardEntryUrl('https://roadlight.pro', 'acme', null, 'sug-123'), 'https://roadlight.pro/acme');
+  // Ohne Tenant-Slug gibt es keinen Link (Aufrufer nutzt Legacy-Default).
+  assert.equal(tenantBoardEntryUrl('https://roadlight.pro', null, 'app-1', 'sug-123'), null);
+  // Segmente werden einzeln enkodiert.
+  assert.equal(
+    tenantBoardEntryUrl('https://roadlight.pro/', 'a cme', 'b/oard', 'id 9'),
+    'https://roadlight.pro/a%20cme/b%2Foard/t/id%209'
+  );
 });
 
 test('keine E-Mail nennt mehr "Voting Tool" oder dupliziert die Absenderzeile', () => {

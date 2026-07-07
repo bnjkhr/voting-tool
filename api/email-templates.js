@@ -3,6 +3,10 @@
 // Gemeinsames, gebrandetes E-Mail-Layout (Roadlight). Inline-Styles + Arial-
 // Fallback für maximale Client-Kompatibilität; Marken-Terracotta als Akzent.
 
+// Isomorphe Single-Source-of-Truth für Board-Pfade (dieselbe Datei, die der
+// Browser lädt) — hält Mail-Deep-Links und SPA-Routing garantiert im Gleichlauf.
+const { buildUrlState } = require('../public/url-state');
+
 const BRAND = {
   primary: '#E06A3A',
   text: '#1A1A1A',
@@ -26,6 +30,26 @@ function htmlEscape(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Baut die Ziel-URL für Admin-Benachrichtigungen. Tenant-Boards zeigen auf die
+// Tenant-Konsole; der Legacy-Pfad (kein Slug) bleibt beim passwortgeschützten
+// /admin.html.
+function adminNotificationUrl(baseUrl, tenantSlug = null) {
+  const base = (baseUrl || 'http://localhost:3000').replace(/\/+$/, '');
+  return tenantSlug
+    ? `${base}/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`
+    : `${base}/admin.html`;
+}
+
+// Baut den Deep-Link auf einen einzelnen Eintrag im öffentlichen Tenant-Board.
+// Das Pfadschema (/{tenant}/{app}/t/{id}, Board-Übersicht ohne App-Slug) kommt
+// aus buildUrlState — kein zweites, driftgefährdetes Schema. Ohne Tenant-Slug
+// gibt es keinen Tenant-Link (der Aufrufer nutzt dann den Legacy-Default).
+function tenantBoardEntryUrl(baseUrl, tenantSlug, appSlug, suggestionId) {
+  if (!tenantSlug) return null;
+  const base = (baseUrl || 'http://localhost:3000').replace(/\/+$/, '');
+  return `${base}${buildUrlState({ tenantSlug, appSlug, suggestionId })}`;
 }
 
 function brandButton(url, label) {
@@ -54,4 +78,12 @@ function wrapEmail({ heading, bodyHtml, footnote }) {
     </div>`;
 }
 
-module.exports = { BRAND, senderAddress, brandButton, wrapEmail, htmlEscape };
+module.exports = {
+  BRAND,
+  senderAddress,
+  brandButton,
+  wrapEmail,
+  htmlEscape,
+  adminNotificationUrl,
+  tenantBoardEntryUrl,
+};

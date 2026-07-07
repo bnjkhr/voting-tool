@@ -69,11 +69,22 @@ class SignupApp {
 
             this.form.reset();
             this.slugTouched = false;
-            this.setStatus('Login-Link wurde per E-Mail verschickt.', 'success');
-            this.result.innerHTML = `
-                <p>Workspace <strong>${this.escapeHtml(data.tenant?.name || payload.workspaceName)}</strong> wurde erstellt.</p>
-                <p>Öffne den Login-Link aus deiner E-Mail, um als Owner in den Admin-Bereich zu gelangen.</p>
-            `;
+            const workspaceName = this.escapeHtml(data.tenant?.name || payload.workspaceName);
+            if (data.delivery === 'failed') {
+                // Workspace angelegt, aber die Login-Mail kam nicht raus. Nicht als
+                // Fehler darstellen — der Nutzer holt den Link über "Anmelden".
+                this.setStatus('Workspace erstellt – die Login-Mail konnte gerade nicht gesendet werden.', 'error');
+                this.result.innerHTML = `
+                    <p>Dein Workspace <strong>${workspaceName}</strong> wurde erstellt.</p>
+                    <p>Wir konnten dir die Login-Mail nicht senden. Gehe zu <a href="/login.html">Anmelden</a> und fordere einen neuen Login-Link an.</p>
+                `;
+            } else {
+                this.setStatus('Login-Link wurde per E-Mail verschickt.', 'success');
+                this.result.innerHTML = `
+                    <p>Workspace <strong>${workspaceName}</strong> wurde erstellt.</p>
+                    <p>Öffne den Login-Link aus deiner E-Mail, um als Owner in den Admin-Bereich zu gelangen.</p>
+                `;
+            }
         } catch (error) {
             this.setStatus(error.message || 'Workspace konnte nicht erstellt werden', 'error');
         } finally {
