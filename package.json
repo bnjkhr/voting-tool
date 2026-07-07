@@ -32,7 +32,8 @@
     "express": "^4.19.2",
     "firebase-admin": "^13.5.0",
     "pg": "^8.13.1",
-    "resend": "^4.8.0"
+    "resend": "^4.8.0",
+    "stripe": "^22.3.0"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -61,6 +61,7 @@ const { shouldServeAppShell } = require('./spa-fallback');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');
 const { usePostgres } = repos.backend;
+const billing = require('./billing');
 
 const app = express();
 
@@ -110,6 +111,9 @@ loadDotEnvFileIfPresent();
 
 // Middleware
 app.use(cors());
+// Stripe-Webhook braucht den Roh-Body zur Signaturprüfung -> VOR express.json
+// mit dem Raw-Parser bedienen (express.json überspringt danach dank req._body).
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -3698,6 +3702,150 @@ app.put('/api/admin/tenants/:tenantSlug/settings', requireTenantAccess(['owner',
   } catch (error) {
     console.error('Error updating tenant settings:', error);
     res.status(500).json({ error: 'Failed to update tenant settings' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Billing (Stripe). Aktiv nur mit STRIPE_SECRET_KEY; der Abo-Status wird per
+// Webhook nach `tenants` synchronisiert (Single Source of Truth = Stripe).
+// Nur im Postgres-Modus — Billing ist eine reine Neon/SaaS-Funktion.
+// ---------------------------------------------------------------------------
+
+async function applyBillingToTenant(tenantId, subscription, customerId) {
+  const fields = billing.mapSubscriptionToBilling(subscription);
+  if (customerId) {
+    fields.stripeCustomerId = typeof customerId === 'string' ? customerId : customerId.id;
+  }
+  // Reconciliation gegen verspätete Events eines ALTEN Abos: eine Herabstufung
+  // (Free) nur anwenden, wenn dieses Abo auch das aktuell hinterlegte ist.
+  // Sonst würde der Cancel eines abgelösten Abos einen Tenant herabstufen, der
+  // bereits auf ein neueres aktives Abo gewechselt ist. Upgrades (Pro) gelten
+  // immer und übernehmen die Führung.
+  if (fields.plan === billing.PLAN_FREE) {
+    const tenant = await repos.tenants.findById(tenantId);
+    if (tenant && tenant.stripeSubscriptionId && tenant.stripeSubscriptionId !== subscription.id) {
+      return; // Cancel eines nicht mehr aktuellen Abos -> ignorieren
+    }
+  }
+  await repos.tenants.update(tenantId, fields);
+}
+
+async function handleStripeEvent(stripe, event) {
+  if (!usePostgres()) return; // Billing lebt in Neon
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const tenantId = session.client_reference_id || session.metadata?.tenantId;
+    if (!tenantId || !session.subscription) return;
+    const subscription = await stripe.subscriptions.retrieve(session.subscription);
+    await applyBillingToTenant(tenantId, subscription, session.customer);
+    return;
+  }
+  if (event.type === 'customer.subscription.created'
+    || event.type === 'customer.subscription.updated'
+    || event.type === 'customer.subscription.deleted') {
+    const tenantId = event.data.object?.metadata?.tenantId;
+    if (!tenantId) return;
+    // Stripe garantiert keine Event-Reihenfolge. Statt dem (evtl. veralteten)
+    // Event-Payload den AKTUELLEN Stand von Stripe holen -> ein verspäteter
+    // alter Event überschreibt so keine neuere Kündigung.
+    const subscription = await stripe.subscriptions.retrieve(event.data.object.id);
+    await applyBillingToTenant(tenantId, subscription, subscription.customer);
+  }
+}
+
+// Stripe-Webhook (Roh-Body via express.raw, siehe Middleware oben).
+app.post('/api/stripe/webhook', async (req, res) => {
+  const stripe = billing.getStripe();
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!stripe || !webhookSecret) {
+    return res.status(503).json({ error: 'Billing not configured' });
+  }
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], webhookSecret);
+  } catch (err) {
+    console.error('Stripe webhook signature verification failed:', err.message);
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
+  try {
+    await handleStripeEvent(stripe, event);
+  } catch (err) {
+    console.error('Stripe webhook handler error:', err.message);
+    return res.status(500).json({ error: 'Webhook handler failed' });
+  }
+  res.json({ received: true });
+});
+
+// Tenant Admin: aktueller Plan/Abo-Status (für die Konsolen-UI).
+app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (req, res) => {
+  try {
+    if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+    res.json({
+      plan: tenant.plan || billing.PLAN_FREE,
+      subscriptionStatus: tenant.subscriptionStatus || null,
+      currentPeriodEnd: tenant.currentPeriodEnd || null,
+      trialEndsAt: tenant.trialEndsAt || null,
+      hasSubscription: !!tenant.stripeCustomerId,
+      billingEnabled: billing.billingEnabled(),
+    });
+  } catch (error) {
+    console.error('Error loading billing status:', error);
+    res.status(500).json({ error: 'Failed to load billing status' });
+  }
+});
+
+// Tenant Admin (Owner): Checkout für Pro starten.
+app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(['owner']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
+    const stripe = billing.getStripe();
+    const priceId = process.env.STRIPE_PRICE_PRO;
+    if (!stripe || !priceId) return res.status(503).json({ error: 'Billing ist nicht konfiguriert' });
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+    // Bereits ein aktives Abo? Kein zweites Checkout -> ins Portal verweisen.
+    if (billing.PRO_STATUSES.has(tenant.subscriptionStatus)) {
+      return res.status(409).json({ error: 'Es besteht bereits ein aktives Abo. Verwalte es über das Kundenportal.' });
+    }
+    const returnUrl = `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      client_reference_id: tenant.id,
+      metadata: { tenantId: tenant.id },
+      subscription_data: { metadata: { tenantId: tenant.id } },
+      customer: tenant.stripeCustomerId || undefined,
+      customer_email: tenant.stripeCustomerId ? undefined : (req.tenantAuth?.user?.email || undefined),
+      allow_promotion_codes: true,
+      success_url: `${returnUrl}&billing=success`,
+      cancel_url: `${returnUrl}&billing=cancelled`,
+    });
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Error creating checkout session:', error);
+    res.status(500).json({ error: 'Checkout konnte nicht gestartet werden' });
+  }
+});
+
+// Tenant Admin (Owner): Stripe Customer Portal öffnen (Abo verwalten/kündigen).
+app.post('/api/admin/tenants/:tenantSlug/billing/portal', requireTenantAccess(['owner']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
+    const stripe = billing.getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Billing ist nicht konfiguriert' });
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+    if (!tenant.stripeCustomerId) return res.status(400).json({ error: 'Kein aktives Abo vorhanden' });
+    const session = await stripe.billingPortal.sessions.create({
+      customer: tenant.stripeCustomerId,
+      return_url: `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`,
+    });
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Error creating portal session:', error);
+    res.status(500).json({ error: 'Portal konnte nicht geöffnet werden' });
   }
 });
 
