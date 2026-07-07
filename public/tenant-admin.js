@@ -25,6 +25,14 @@ class TenantAdminApp {
         const params = new URLSearchParams(window.location.search);
         this.tenantSlug = (params.get('tenant') || '').trim();
         this.onboardingRequested = params.get('onboarding') === '1';
+        // Rückkehr aus dem Stripe-Checkout (success|cancelled). Sofort aus der URL
+        // entfernen, damit ein Refresh nicht erneut eine Meldung auslöst.
+        this.billingReturn = params.get('billing');
+        if (this.billingReturn) {
+            params.delete('billing');
+            const query = params.toString();
+            history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+        }
 
         if (!this.tenantSlug) {
             document.getElementById('suggestionsList').innerHTML = '<div class="tenant-empty">Tenant fehlt. Öffne diese Seite mit ?tenant=tenant-slug.</div>';
@@ -80,6 +88,12 @@ class TenantAdminApp {
             const trigger = event.target.closest('[data-action="copy-api-key"]');
             if (!trigger) return;
             this.copyApiKeyToClipboard(trigger.dataset.token, trigger);
+        });
+        document.getElementById('billingStatus').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            if (trigger.dataset.action === 'billing-upgrade') this.startBillingCheckout(trigger);
+            else if (trigger.dataset.action === 'billing-portal') this.openBillingPortal(trigger);
         });
         document.getElementById('tenantTabs').addEventListener('click', event => {
             const trigger = event.target.closest('[data-action="switch-view"]');
@@ -165,6 +179,7 @@ class TenantAdminApp {
                 this.loadReleases(),
                 this.loadTeam(),
                 this.loadApiKeys(),
+                this.loadBilling(),
             ]);
         } catch (error) {
             console.error('Error loading tenant admin data:', error);
@@ -1294,6 +1309,154 @@ class TenantAdminApp {
         } catch (error) {
             console.error('Error revoking API key:', error);
             this.showToast(error.message || 'Schlüssel konnte nicht widerrufen werden', 'error');
+        }
+    }
+
+    async loadBilling() {
+        const host = document.getElementById('billingStatus');
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/billing'));
+            if (response.status === 404) {
+                // Billing lebt nur im Postgres-Backend — Panel ausblenden.
+                const panel = document.getElementById('billingPanel');
+                if (panel) panel.classList.add('is-hidden');
+                return;
+            }
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Plan konnte nicht geladen werden');
+
+            this.billing = data;
+            this.renderBilling();
+
+            // Rückmeldung aus dem Checkout einmalig anzeigen.
+            if (this.billingReturn === 'success') {
+                this.showToast('Willkommen bei Pro! Dein Abo wird aktiviert…', 'success');
+                this.pollBillingUntilPro(0); // Webhook ist async -> kurz nachladen
+            } else if (this.billingReturn === 'cancelled') {
+                this.showToast('Checkout abgebrochen — kein Abo abgeschlossen.', 'error');
+            }
+            this.billingReturn = null;
+        } catch (error) {
+            console.error('Error loading billing status:', error);
+            if (host) {
+                host.className = 'tenant-empty';
+                host.textContent = 'Plan konnte nicht geladen werden.';
+            }
+        }
+    }
+
+    // Nach erfolgreichem Checkout ist der Webhook-Sync asynchron; ein paar Mal
+    // sanft nachladen, bis der Plan auf Pro steht.
+    async pollBillingUntilPro(attempt) {
+        if (attempt >= 4) return;
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/billing'));
+            if (!response.ok) return;
+            const data = await response.json();
+            this.billing = data;
+            this.renderBilling();
+            if ((data.plan || 'free') !== 'pro') this.pollBillingUntilPro(attempt + 1);
+        } catch (error) {
+            console.error('Error polling billing status:', error);
+        }
+    }
+
+    renderBilling() {
+        const host = document.getElementById('billingStatus');
+        if (!host) return;
+
+        const b = this.billing || {};
+        const proStatuses = ['active', 'trialing', 'past_due'];
+        const isPro = (b.plan || 'free') === 'pro';
+        const status = b.subscriptionStatus || null;
+        const isOwner = this.currentRole === 'owner';
+
+        const statusBadge = !isPro
+            ? ''
+            : status === 'past_due'
+                ? '<span class="tenant-badge is-warning">Zahlung offen</span>'
+                : status === 'trialing'
+                    ? '<span class="tenant-badge is-success">Testphase</span>'
+                    : '<span class="tenant-badge is-success">Aktiv</span>';
+
+        let detail;
+        if (isPro) {
+            if (status === 'trialing' && b.trialEndsAt) detail = `Testphase bis ${this.formatDate(b.trialEndsAt)}.`;
+            else if (status === 'past_due') detail = 'Zahlung ausstehend — bitte im Kundenportal aktualisieren.';
+            else if (b.currentPeriodEnd) detail = `Verlängert sich am ${this.formatDate(b.currentPeriodEnd)}.`;
+            else detail = 'Aktiv.';
+        } else {
+            detail = 'Kostenlos — für kleine Workspaces.';
+        }
+
+        const features = isPro
+            ? ['Unbegrenzt Boards', 'Unbegrenzt Team-Mitglieder', 'Kein „Powered by Roadlight“-Badge']
+            : ['1 Board', '2 Team-Mitglieder', '„Powered by Roadlight“-Badge'];
+
+        let actions = '';
+        let note = '';
+        if (!b.billingEnabled) {
+            note = isPro ? '' : 'Der Pro-Plan wird in Kürze verfügbar.';
+        } else if (!isOwner) {
+            note = 'Nur der Owner kann das Abo verwalten.';
+        } else {
+            const buttons = [];
+            if (!proStatuses.includes(status)) {
+                buttons.push('<button class="primary-btn" type="button" data-action="billing-upgrade">Auf Pro upgraden</button>');
+            }
+            if (b.hasSubscription) {
+                buttons.push('<button class="secondary-btn" type="button" data-action="billing-portal">Abo verwalten</button>');
+            }
+            actions = buttons.length ? `<div class="billing-actions">${buttons.join('')}</div>` : '';
+        }
+
+        host.className = '';
+        host.innerHTML = `
+            <div class="billing-plan">
+                <span class="billing-plan-name">${isPro ? 'Pro' : 'Free'}-Plan</span>
+                ${statusBadge}
+            </div>
+            <p class="billing-detail">${this.escapeHtml(detail)}</p>
+            <ul class="billing-features">${features.map(feature => `<li>${this.escapeHtml(feature)}</li>`).join('')}</ul>
+            ${actions}
+            ${note ? `<p class="billing-note">${this.escapeHtml(note)}</p>` : ''}
+        `;
+    }
+
+    async startBillingCheckout(button) {
+        if (this.currentRole !== 'owner') {
+            this.showToast('Nur der Owner kann upgraden', 'error');
+            return;
+        }
+        if (button) button.disabled = true;
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/billing/checkout'), { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Checkout konnte nicht gestartet werden');
+            window.location.href = data.url;
+        } catch (error) {
+            console.error('Error starting checkout:', error);
+            this.showToast(error.message || 'Checkout konnte nicht gestartet werden', 'error');
+            if (button) button.disabled = false;
+        }
+    }
+
+    async openBillingPortal(button) {
+        if (this.currentRole !== 'owner') {
+            this.showToast('Nur der Owner kann das Abo verwalten', 'error');
+            return;
+        }
+        if (button) button.disabled = true;
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/billing/portal'), { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Portal konnte nicht geöffnet werden');
+            window.location.href = data.url;
+        } catch (error) {
+            console.error('Error opening billing portal:', error);
+            this.showToast(error.message || 'Portal konnte nicht geöffnet werden', 'error');
+            if (button) button.disabled = false;
         }
     }
 

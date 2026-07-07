@@ -438,6 +438,48 @@
             border-color: #10b981;
         }
 
+        .billing-plan {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .billing-plan-name {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .billing-detail {
+            margin: 0 0 4px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .billing-features {
+            margin: 10px 0 16px;
+            padding-left: 18px;
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .billing-features li {
+            margin: 3px 0;
+        }
+
+        .billing-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .billing-note {
+            margin: 10px 0 0;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
         .tenant-admin-controls {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -925,6 +967,12 @@
             </section>
 
             <section class="tenant-view" data-view="settings">
+                <div class="tenant-admin-panel" id="billingPanel">
+                    <h2>Abo &amp; Plan</h2>
+                    <div class="tenant-admin-panel-body">
+                        <div id="billingStatus" class="tenant-empty">Lade Plan…</div>
+                    </div>
+                </div>
                 <div class="tenant-admin-panel">
                     <h2>Workspace</h2>
                     <div class="tenant-admin-panel-body">
