@@ -35,7 +35,9 @@ test('login link API endpoints are exposed without global admin auth', () => {
   assert.ok(apiSource.includes('loadActiveUserTenants'));
   assert.ok(apiSource.includes('redirectUrl: req.body?.redirectUrl'));
   assert.ok(apiSource.includes('loginLink.redirectUrl'));
-  assert.equal(apiSource.includes('loginUrl,'), false);
+  // Der Magic-Link (enthält das Token) darf nie in Logs landen.
+  assert.equal(/console\.(log|error|warn)\([^)]*loginUrl/.test(apiSource), false,
+    'die Magic-Link-URL darf nicht geloggt werden');
 });
 
 test('login links prefer configured BASE_URL over request host (anti host header injection)', () => {

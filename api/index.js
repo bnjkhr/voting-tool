@@ -47,6 +47,7 @@ const {
   normalizeInviteEmail,
   normalizeMembershipRole,
 } = require('./team-utils');
+const { senderAddress, brandButton, wrapEmail } = require('./email-templates');
 const {
   API_KEY_SCOPES,
   buildApiKeyData,
@@ -795,31 +796,29 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
   const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
 
   const reportTypeLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Feature' };
   const reportTypeLabel = reportTypeLabels[reportMeta.type] || 'Feature';
   const severityLine = reportMeta.type === 'bug' && reportMeta.severity
-    ? `<p><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
+    ? `<p style="margin:4px 0;"><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
     : '';
 
   try {
     const { data, error } = await resend.emails.send({
-      from: fromEmail,
+      from: senderAddress(),
       to: recipients,
       subject: `Neuer ${reportTypeLabel}-Eintrag wartet auf Freigabe: ${title}`,
-      html: `
-        <h2>Neuer ${reportTypeLabel}-Eintrag eingereicht</h2>
-        <p><strong>App:</strong> ${appName}</p>
-        <p><strong>Typ:</strong> ${reportTypeLabel}</p>
-        ${severityLine}
-        <p><strong>Titel:</strong> ${title}</p>
-        <p><strong>Beschreibung:</strong> ${description}</p>
-        <p><strong>Suggestion ID:</strong> ${suggestionId}</p>
-        <br>
-        <p><a href="${adminUrl}">Zum Admin-Bereich</a></p>
-      `
+      html: wrapEmail({
+        heading: `Neuer ${reportTypeLabel}-Eintrag`,
+        bodyHtml: `
+          <p style="margin:4px 0;"><strong>App:</strong> ${appName}</p>
+          <p style="margin:4px 0;"><strong>Typ:</strong> ${reportTypeLabel}</p>
+          ${severityLine}
+          <p style="margin:4px 0;"><strong>Titel:</strong> ${title}</p>
+          <p style="margin:4px 0;"><strong>Beschreibung:</strong> ${description}</p>
+          <p style="margin:20px 0 0;">${brandButton(adminUrl, 'Zum Admin-Bereich')}</p>`,
+      }),
     });
 
     if (error) {
@@ -846,23 +845,21 @@ async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, 
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
   const adminUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/admin.html`;
 
   try {
     const { data, error } = await resend.emails.send({
-      from: fromEmail,
+      from: senderAddress(),
       to: recipients,
       subject: `Neuer Kommentar wartet auf Freigabe: ${suggestionTitle}`,
-      html: `
-        <h2>Neuer Kommentar wartet auf Freigabe</h2>
-        <p><strong>App:</strong> ${appName}</p>
-        <p><strong>Eintrag:</strong> ${suggestionTitle}</p>
-        <p><strong>Suggestion ID:</strong> ${suggestionId}</p>
-        <p><strong>Kommentar:</strong> ${commentText}</p>
-        <br>
-        <p><a href="${adminUrl}">Zum Admin-Bereich</a></p>
-      `
+      html: wrapEmail({
+        heading: 'Neuer Kommentar wartet auf Freigabe',
+        bodyHtml: `
+          <p style="margin:4px 0;"><strong>App:</strong> ${appName}</p>
+          <p style="margin:4px 0;"><strong>Eintrag:</strong> ${suggestionTitle}</p>
+          <p style="margin:4px 0;"><strong>Kommentar:</strong> ${commentText}</p>
+          <p style="margin:20px 0 0;">${brandButton(adminUrl, 'Zum Admin-Bereich')}</p>`,
+      }),
     });
 
     if (error) {
@@ -890,44 +887,34 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
   const suggestionUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/#suggestion-${suggestionId}`;
 
-  let statusText = '';
-  let statusColor = '';
-  switch (status) {
-    case 'approved':    statusText = 'Genehmigt';          statusColor = '#28a745'; break;
-    case 'rejected':    statusText = 'Abgelehnt';           statusColor = '#dc3545'; break;
-    case 'commented':   statusText = 'Neuer Kommentar';     statusColor = '#007bff'; break;
-    case 'tag_updated': statusText = 'Status aktualisiert'; statusColor = '#6366f1'; break;
-    default:            statusText = 'Status aktualisiert'; statusColor = '#6c757d';
-  }
+  const statusTexts = {
+    approved: 'Genehmigt',
+    rejected: 'Abgelehnt',
+    commented: 'Neuer Kommentar',
+    tag_updated: 'Status aktualisiert',
+  };
+  const statusText = statusTexts[status] || 'Status aktualisiert';
 
   const entryLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Vorschlag' };
   const entryLabel = entryLabels[entryType] || 'Eintrag';
 
   try {
     const { data, error } = await resend.emails.send({
-      from: fromEmail,
+      from: senderAddress(),
       to: userEmail,
-      subject: `Ihr ${entryLabel} "${title}" - ${statusText}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Update zu Ihrem ${entryLabel}</h2>
-          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: ${statusColor};">${statusText}</h3>
-            <p><strong>${entryLabel}:</strong> ${title}</p>
-            <p><strong>App:</strong> ${appName}</p>
-            <p><strong>Typ:</strong> ${entryLabel}</p>
-            ${comment ? `<p><strong>Kommentar:</strong> ${comment}</p>` : ''}
-          </div>
-          <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Eintrag ansehen</a></p>
-          <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
-          <p style="color: #6c757d; font-size: 12px;">
-            Sie erhalten diese E-Mail, weil Sie Benachrichtigungen für diesen Eintrag aktiviert haben.
-          </p>
-        </div>
-      `
+      subject: `Dein ${entryLabel} "${title}" – ${statusText}`,
+      html: wrapEmail({
+        heading: `Update zu deinem ${entryLabel}`,
+        bodyHtml: `
+          <p style="margin:0 0 12px;font-weight:bold;color:#E06A3A;">${statusText}</p>
+          <p style="margin:4px 0;"><strong>${entryLabel}:</strong> ${title}</p>
+          <p style="margin:4px 0;"><strong>App:</strong> ${appName}</p>
+          ${comment ? `<p style="margin:4px 0;"><strong>Kommentar:</strong> ${comment}</p>` : ''}
+          <p style="margin:20px 0 0;">${brandButton(suggestionUrl, 'Eintrag ansehen')}</p>`,
+        footnote: 'Du erhältst diese E-Mail, weil du Benachrichtigungen für diesen Eintrag aktiviert hast.',
+      }),
     });
 
     if (error) {
@@ -968,20 +955,18 @@ async function sendLoginLinkEmail({ to, loginUrl }) {
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 
   const { data, error } = await resend.emails.send({
-    from: fromEmail,
+    from: senderAddress(),
     to,
-    subject: 'Dein Login-Link fürs Voting Tool',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto;">
-        <h2>Einloggen</h2>
-        <p>Nutze diesen Link, um dich im Voting Tool anzumelden.</p>
-        <p><a href="${loginUrl}" style="background:#111;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Einloggen</a></p>
-        <p style="color:#666;font-size:13px;">Der Link ist 15 Minuten gültig und kann nur einmal verwendet werden.</p>
-      </div>
-    `,
+    subject: 'Dein Login-Link für Roadlight',
+    html: wrapEmail({
+      heading: 'Bei Roadlight einloggen',
+      bodyHtml: `
+        <p style="margin:0 0 20px;">Klick auf den Button, um dich anzumelden:</p>
+        <p style="margin:0;">${brandButton(loginUrl, 'Einloggen')}</p>`,
+      footnote: 'Der Link ist 15 Minuten gültig und kann nur einmal verwendet werden. Falls du das nicht angefordert hast, ignoriere diese E-Mail.',
+    }),
   });
 
   if (error) {
@@ -1000,21 +985,19 @@ async function sendTenantInviteEmail({ to, tenantName, role, acceptUrl }) {
   }
 
   const resend = new Resend(process.env.RESEND_API_KEY);
-  const fromEmail = process.env.EMAIL_FROM || 'onboarding@resend.dev';
   const roleLabel = normalizeMembershipRole(role);
 
   const { data, error } = await resend.emails.send({
-    from: fromEmail,
+    from: senderAddress(),
     to,
-    subject: `Einladung zu ${tenantName}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto;">
-        <h2>Einladung annehmen</h2>
-        <p>Du wurdest als <strong>${roleLabel}</strong> in den Workspace <strong>${tenantName}</strong> eingeladen.</p>
-        <p><a href="${acceptUrl}" style="background:#111;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Einladung annehmen</a></p>
-        <p style="color:#666;font-size:13px;">Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.</p>
-      </div>
-    `,
+    subject: `Einladung zu ${tenantName} auf Roadlight`,
+    html: wrapEmail({
+      heading: 'Du wurdest eingeladen',
+      bodyHtml: `
+        <p style="margin:0 0 20px;">Du wurdest als <strong>${roleLabel}</strong> in den Workspace <strong>${tenantName}</strong> eingeladen.</p>
+        <p style="margin:0;">${brandButton(acceptUrl, 'Einladung annehmen')}</p>`,
+      footnote: 'Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.',
+    }),
   });
 
   if (error) {
