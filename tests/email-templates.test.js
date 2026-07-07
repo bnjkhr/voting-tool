@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { senderAddress, brandButton, wrapEmail } = require('../api/email-templates');
+const { senderAddress, brandButton, wrapEmail, htmlEscape } = require('../api/email-templates');
 const apiSource = fs.readFileSync(path.join(__dirname, '..', 'api/index.js'), 'utf8');
 
 test('brandButton rendert einen Terracotta-CTA mit der Ziel-URL', () => {
@@ -24,11 +24,21 @@ test('wrapEmail umschließt den Body mit Roadlight-Header/Footer', () => {
 
 test('senderAddress nutzt EMAIL_FROM, sonst einen Roadlight-Fallback', () => {
   const prev = process.env.EMAIL_FROM;
-  process.env.EMAIL_FROM = 'Roadlight <hallo@roadlight.pro>';
-  assert.equal(senderAddress(), 'Roadlight <hallo@roadlight.pro>');
-  delete process.env.EMAIL_FROM;
-  assert.ok(/Roadlight/.test(senderAddress()));
-  if (prev !== undefined) process.env.EMAIL_FROM = prev;
+  try {
+    process.env.EMAIL_FROM = 'Roadlight <hallo@roadlight.pro>';
+    assert.equal(senderAddress(), 'Roadlight <hallo@roadlight.pro>');
+    delete process.env.EMAIL_FROM;
+    assert.ok(/Roadlight/.test(senderAddress()));
+  } finally {
+    if (prev !== undefined) process.env.EMAIL_FROM = prev;
+    else delete process.env.EMAIL_FROM;
+  }
+});
+
+test('htmlEscape neutralisiert HTML in Nutzereingaben', () => {
+  assert.equal(htmlEscape('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
+  assert.equal(htmlEscape('A & B "C"'), 'A &amp; B &quot;C&quot;');
+  assert.equal(htmlEscape(null), '');
 });
 
 test('keine E-Mail nennt mehr "Voting Tool" oder dupliziert die Absenderzeile', () => {

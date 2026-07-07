@@ -47,7 +47,7 @@ const {
   normalizeInviteEmail,
   normalizeMembershipRole,
 } = require('./team-utils');
-const { senderAddress, brandButton, wrapEmail } = require('./email-templates');
+const { senderAddress, brandButton, wrapEmail, htmlEscape } = require('./email-templates');
 const {
   API_KEY_SCOPES,
   buildApiKeyData,
@@ -801,7 +801,7 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
   const reportTypeLabels = { bug: 'Bug', ticket: 'Ticket', feature: 'Feature' };
   const reportTypeLabel = reportTypeLabels[reportMeta.type] || 'Feature';
   const severityLine = reportMeta.type === 'bug' && reportMeta.severity
-    ? `<p style="margin:4px 0;"><strong>Schweregrad:</strong> ${reportMeta.severity}</p>`
+    ? `<p style="margin:4px 0;"><strong>Schweregrad:</strong> ${htmlEscape(reportMeta.severity)}</p>`
     : '';
 
   try {
@@ -812,11 +812,11 @@ async function sendAdminNotificationEmail(suggestionId, title, description, appN
       html: wrapEmail({
         heading: `Neuer ${reportTypeLabel}-Eintrag`,
         bodyHtml: `
-          <p style="margin:4px 0;"><strong>App:</strong> ${appName}</p>
+          <p style="margin:4px 0;"><strong>App:</strong> ${htmlEscape(appName)}</p>
           <p style="margin:4px 0;"><strong>Typ:</strong> ${reportTypeLabel}</p>
           ${severityLine}
-          <p style="margin:4px 0;"><strong>Titel:</strong> ${title}</p>
-          <p style="margin:4px 0;"><strong>Beschreibung:</strong> ${description}</p>
+          <p style="margin:4px 0;"><strong>Titel:</strong> ${htmlEscape(title)}</p>
+          <p style="margin:4px 0;"><strong>Beschreibung:</strong> ${htmlEscape(description)}</p>
           <p style="margin:20px 0 0;">${brandButton(adminUrl, 'Zum Admin-Bereich')}</p>`,
       }),
     });
@@ -855,9 +855,9 @@ async function sendAdminCommentNotificationEmail(suggestionId, suggestionTitle, 
       html: wrapEmail({
         heading: 'Neuer Kommentar wartet auf Freigabe',
         bodyHtml: `
-          <p style="margin:4px 0;"><strong>App:</strong> ${appName}</p>
-          <p style="margin:4px 0;"><strong>Eintrag:</strong> ${suggestionTitle}</p>
-          <p style="margin:4px 0;"><strong>Kommentar:</strong> ${commentText}</p>
+          <p style="margin:4px 0;"><strong>App:</strong> ${htmlEscape(appName)}</p>
+          <p style="margin:4px 0;"><strong>Eintrag:</strong> ${htmlEscape(suggestionTitle)}</p>
+          <p style="margin:4px 0;"><strong>Kommentar:</strong> ${htmlEscape(commentText)}</p>
           <p style="margin:20px 0 0;">${brandButton(adminUrl, 'Zum Admin-Bereich')}</p>`,
       }),
     });
@@ -909,9 +909,9 @@ async function sendUserNotificationEmail(userEmail, suggestionId, title, status,
         heading: `Update zu deinem ${entryLabel}`,
         bodyHtml: `
           <p style="margin:0 0 12px;font-weight:bold;color:#E06A3A;">${statusText}</p>
-          <p style="margin:4px 0;"><strong>${entryLabel}:</strong> ${title}</p>
-          <p style="margin:4px 0;"><strong>App:</strong> ${appName}</p>
-          ${comment ? `<p style="margin:4px 0;"><strong>Kommentar:</strong> ${comment}</p>` : ''}
+          <p style="margin:4px 0;"><strong>${entryLabel}:</strong> ${htmlEscape(title)}</p>
+          <p style="margin:4px 0;"><strong>App:</strong> ${htmlEscape(appName)}</p>
+          ${comment ? `<p style="margin:4px 0;"><strong>Kommentar:</strong> ${htmlEscape(comment)}</p>` : ''}
           <p style="margin:20px 0 0;">${brandButton(suggestionUrl, 'Eintrag ansehen')}</p>`,
         footnote: 'Du erhältst diese E-Mail, weil du Benachrichtigungen für diesen Eintrag aktiviert hast.',
       }),
@@ -994,7 +994,7 @@ async function sendTenantInviteEmail({ to, tenantName, role, acceptUrl }) {
     html: wrapEmail({
       heading: 'Du wurdest eingeladen',
       bodyHtml: `
-        <p style="margin:0 0 20px;">Du wurdest als <strong>${roleLabel}</strong> in den Workspace <strong>${tenantName}</strong> eingeladen.</p>
+        <p style="margin:0 0 20px;">Du wurdest als <strong>${htmlEscape(roleLabel)}</strong> in den Workspace <strong>${htmlEscape(tenantName)}</strong> eingeladen.</p>
         <p style="margin:0;">${brandButton(acceptUrl, 'Einladung annehmen')}</p>`,
       footnote: 'Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.',
     }),

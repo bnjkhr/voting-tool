@@ -17,6 +17,16 @@ function senderAddress() {
   return process.env.EMAIL_FROM || 'Roadlight <onboarding@resend.dev>';
 }
 
+// Escaped von Nutzern stammende Werte, bevor sie in Mail-HTML interpoliert
+// werden (verhindert kaputtes HTML / HTML-Injektion in Transaktions-Mails).
+function htmlEscape(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function brandButton(url, label) {
   return `<a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#ffffff;`
     + `padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:bold;`
@@ -43,4 +53,4 @@ function wrapEmail({ heading, bodyHtml, footnote }) {
     </div>`;
 }
 
-module.exports = { BRAND, senderAddress, brandButton, wrapEmail };
+module.exports = { BRAND, senderAddress, brandButton, wrapEmail, htmlEscape };
