@@ -1512,17 +1512,18 @@ app.post('/api/auth/login-links/:token/consume', rateLimit(60000, 10), async (re
     }
 
     const now = new Date();
-    // Erst den Link atomar claimen, DANN die Session erzeugen — sonst könnten
-    // konkurrierende Consume-Requests mehrere gültige Sessions aus einem Link
-    // erzeugen.
+    // Session zuerst, dann den Link atomar claimen. So bleibt der Link bei einem
+    // Fehler der Session-Erzeugung pending (retrybar); ein konkurrierender
+    // Request, der den Link zuerst claimt, führt hier zu 410 + Rücknahme der
+    // gerade erzeugten (verwaisten) Session.
+    const { sessionToken, session } = await createUserSession(resolved.user.id, now);
     if (usePostgres()) {
       const claimed = await repos.loginLinks.consume(resolved.loginLinkId);
       if (!claimed) {
+        await repos.sessions.revoke(session.id);
         return res.status(410).json({ error: 'Login link is no longer pending' });
       }
-    }
-    const { sessionToken, session } = await createUserSession(resolved.user.id, now);
-    if (!usePostgres()) {
+    } else {
       await resolved.loginLinkDoc.ref.set({
         status: 'consumed',
         consumedAt: now,
@@ -1636,15 +1637,23 @@ app.post('/api/invites/:token/accept', rateLimit(60000, 10), async (req, res) =>
     let userId, membershipId;
 
     if (usePostgres()) {
-      // Atomar (User-Upsert + Membership-Upsert + Invite-Status) — in db/ gekapselt.
+      // Atomar (Invite-Claim + User-Upsert + Membership-Upsert) — in db/ gekapselt.
       // Reaktiviert einen ggf. deaktivierten User, damit die Session gültig ist.
-      const accepted = await repos.provisioning.acceptInvite({
-        tenantId: tenant.id,
-        inviteId: resolved.inviteId,
-        email: invite.email,
-        displayName,
-        role: membershipRole,
-      });
+      let accepted;
+      try {
+        accepted = await repos.provisioning.acceptInvite({
+          tenantId: tenant.id,
+          inviteId: resolved.inviteId,
+          email: invite.email,
+          displayName,
+          role: membershipRole,
+        });
+      } catch (error) {
+        if (error.code === 'INVITE_NOT_PENDING') {
+          return res.status(410).json({ error: 'Invite is no longer pending' });
+        }
+        throw error;
+      }
       userId = accepted.userId;
       membershipId = accepted.membershipId;
     } else {

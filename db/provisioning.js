@@ -15,6 +15,13 @@ class WorkspaceExistsError extends Error {
   }
 }
 
+class InviteNotPendingError extends Error {
+  constructor() {
+    super('Invite is no longer pending');
+    this.code = 'INVITE_NOT_PENDING';
+  }
+}
+
 // Signup: Tenant + Board + (Owner-)User + Owner-Membership atomar anlegen.
 // Wirft WorkspaceExistsError, wenn der User bereits ein aktives Membership hat
 // (dann existiert schon ein Workspace). Tenant/Slug-Kollisionen schlagen über
@@ -63,6 +70,16 @@ async function provisionWorkspace({
 async function acceptInvite({ tenantId, inviteId, email, displayName, role }) {
   const dn = (displayName || '').trim();
   return withTransaction(async (client) => {
+    // Invite zuerst atomar claimen (single-use). Ein konkurrierender Request,
+    // der den Token vor dem Commit auflöste, findet ihn hier nicht mehr pending
+    // -> throw rollt die ganze Transaktion (inkl. User/Membership) zurück.
+    const claim = await client.query(
+      `update invites set status = 'accepted', accepted_at = now(), updated_at = now()
+       where id = $1 and status = 'pending' returning id`,
+      [inviteId]
+    );
+    if (claim.rowCount === 0) throw new InviteNotPendingError();
+
     const u = await client.query(
       `insert into users (id, email, display_name) values ($1, $2, $3)
        on conflict (email) do update
@@ -83,12 +100,8 @@ async function acceptInvite({ tenantId, inviteId, email, displayName, role }) {
       [crypto.randomUUID(), tenantId, userId, role]
     );
     const membershipId = m.rows[0].id;
-    await client.query(
-      `update invites set status = 'accepted', accepted_at = now(), updated_at = now() where id = $1`,
-      [inviteId]
-    );
     return { userId, membershipId };
   });
 }
 
-module.exports = { provisionWorkspace, acceptInvite, WorkspaceExistsError };
+module.exports = { provisionWorkspace, acceptInvite, WorkspaceExistsError, InviteNotPendingError };
