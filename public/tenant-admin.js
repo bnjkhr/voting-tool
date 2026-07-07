@@ -33,7 +33,7 @@ class TenantAdminApp {
 
         document.getElementById('tenantTitle').textContent = `Workspace Admin: ${this.tenantSlug}`;
         document.getElementById('tenantSubtitle').textContent = 'Tenant-Konsole mit klarer Rollen- und Rechteanzeige.';
-        document.getElementById('publicBoardLink').href = `/?tenant=${encodeURIComponent(this.tenantSlug)}`;
+        document.getElementById('publicBoardLink').href = this.boardUrl(this.tenantSlug);
         document.getElementById('tenantContext').textContent = `Workspace: ${this.tenantSlug}`;
         document.getElementById('workspaceTenantLabel').textContent = this.tenantSlug;
 
@@ -253,8 +253,7 @@ class TenantAdminApp {
 
         const firstApp = apps[0];
         if (firstApp) {
-            document.getElementById('publicBoardLink').href =
-                `/?tenant=${encodeURIComponent(this.tenantSlug)}&app=${encodeURIComponent(firstApp.slug || '')}`;
+            document.getElementById('publicBoardLink').href = this.boardUrl(this.tenantSlug, firstApp.slug);
         }
     }
 
@@ -266,7 +265,7 @@ class TenantAdminApp {
         }
 
         host.innerHTML = this.apps.map(app => {
-            const publicUrl = `/?tenant=${encodeURIComponent(this.tenantSlug)}${app.slug ? `&app=${encodeURIComponent(app.slug)}` : ''}`;
+            const publicUrl = this.boardUrl(this.tenantSlug, app.slug);
             return `
                 <article class="tenant-board-item">
                     <strong>${this.escapeHtml(app.name || app.slug || app.id)}</strong>
@@ -335,10 +334,8 @@ class TenantAdminApp {
         document.getElementById('tenantTitle').textContent = `Workspace Admin: ${workspaceName}`;
         document.getElementById('tenantContext').textContent = `Workspace: ${workspaceSlug}`;
         document.getElementById('workspaceTenantLabel').textContent = workspaceSlug;
-        document.getElementById('publicBoardLink').href =
-            `/?tenant=${encodeURIComponent(workspaceSlug)}${board.slug ? `&app=${encodeURIComponent(board.slug)}` : ''}`;
-        document.getElementById('onboardingBoardLink').href =
-            `/?tenant=${encodeURIComponent(workspaceSlug)}${board.slug ? `&app=${encodeURIComponent(board.slug)}` : ''}`;
+        document.getElementById('publicBoardLink').href = this.boardUrl(workspaceSlug, board.slug);
+        document.getElementById('onboardingBoardLink').href = this.boardUrl(workspaceSlug, board.slug);
 
         const form = document.getElementById('workspaceSettingsForm');
         form.elements.workspaceName.value = workspaceName;
@@ -1304,6 +1301,18 @@ class TenantAdminApp {
         const div = document.createElement('div');
         div.textContent = value == null ? '' : String(value);
         return div.innerHTML;
+    }
+
+    // Öffentliche Board-URL: pfad-basiert (/{tenant}/{board}) auf der Hauptdomain.
+    // Die Konsole läuft auf app.roadlight.pro; die Boards leben auf roadlight.pro
+    // — daher das "app."-Präfix des aktuellen Hosts entfernen (funktioniert auch
+    // auf localhost, wo es kein Präfix gibt).
+    boardUrl(tenantSlug, appSlug) {
+        const host = window.location.host.replace(/^app\./, '');
+        const path = appSlug
+            ? `/${encodeURIComponent(tenantSlug)}/${encodeURIComponent(appSlug)}`
+            : `/${encodeURIComponent(tenantSlug)}`;
+        return `${window.location.protocol}//${host}${path}`;
     }
 
     toDate(timestamp) {
