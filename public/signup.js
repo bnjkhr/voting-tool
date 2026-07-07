@@ -73,7 +73,7 @@ class SignupApp {
             if (data.delivery === 'failed') {
                 // Workspace angelegt, aber die Login-Mail kam nicht raus. Nicht als
                 // Fehler darstellen — der Nutzer holt den Link über "Anmelden".
-                this.setStatus('Workspace erstellt – die Login-Mail konnte gerade nicht gesendet werden.', 'error');
+                this.setStatus('Workspace erstellt – die Login-Mail konnte gerade nicht gesendet werden.', 'warning');
                 this.result.innerHTML = `
                     <p>Dein Workspace <strong>${workspaceName}</strong> wurde erstellt.</p>
                     <p>Wir konnten dir die Login-Mail nicht senden. Gehe zu <a href="/login.html">Anmelden</a> und fordere einen neuen Login-Link an.</p>
