@@ -210,6 +210,12 @@ test('tenant admin exposes a billing panel wired to the tenant-scoped billing en
   assert.ok(tenantAdminScript.includes("this.currentRole !== 'owner'"),
     'expected checkout/portal actions to be gated on owner role');
 
+  // Upgrade nur bei voller Checkout-Bereitschaft (Key UND Preis), sonst 503.
+  assert.ok(apiSource.includes('checkoutReady'), 'billing GET exposes checkoutReady');
+  assert.ok(apiSource.includes('STRIPE_PRICE_PRO'), 'checkoutReady prueft den Preis');
+  assert.ok(tenantAdminScript.includes('b.checkoutReady'),
+    'expected the upgrade button to be gated on checkoutReady');
+
   // Checkout-Rückkehr wird einmalig ausgewertet und aus der URL entfernt.
   assert.ok(tenantAdminScript.includes("params.get('billing')"));
   assert.ok(tenantAdminScript.includes("this.billingReturn === 'success'"));

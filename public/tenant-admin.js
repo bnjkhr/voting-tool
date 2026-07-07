@@ -1348,18 +1348,22 @@ class TenantAdminApp {
     // Nach erfolgreichem Checkout ist der Webhook-Sync asynchron; ein paar Mal
     // sanft nachladen, bis der Plan auf Pro steht.
     async pollBillingUntilPro(attempt) {
-        if (attempt >= 4) return;
+        if (attempt >= 5) return;
         await new Promise(resolve => setTimeout(resolve, 2500));
         try {
             const response = await this.adminFetch(this.tenantAdminPath('/billing'));
-            if (!response.ok) return;
-            const data = await response.json();
-            this.billing = data;
-            this.renderBilling();
-            if ((data.plan || 'free') !== 'pro') this.pollBillingUntilPro(attempt + 1);
+            if (response.ok) {
+                const data = await response.json();
+                this.billing = data;
+                this.renderBilling();
+                if ((data.plan || 'free') === 'pro') return; // Sync durch -> fertig
+            }
         } catch (error) {
             console.error('Error polling billing status:', error);
         }
+        // Auch bei transientem Fehler / Non-OK weiter versuchen — der Webhook kann
+        // ein paar Sekunden brauchen; ein einzelner 502/503 darf nicht einfrieren.
+        this.pollBillingUntilPro(attempt + 1);
     }
 
     renderBilling() {
@@ -1402,13 +1406,19 @@ class TenantAdminApp {
             note = 'Nur der Owner kann das Abo verwalten.';
         } else {
             const buttons = [];
-            if (!proStatuses.includes(status)) {
+            // Upgrade nur, wenn Checkout wirklich startbar ist (Secret-Key UND
+            // Preis konfiguriert) — sonst liefe der Button in ein sicheres 503.
+            if (!proStatuses.includes(status) && b.checkoutReady) {
                 buttons.push('<button class="primary-btn" type="button" data-action="billing-upgrade">Auf Pro upgraden</button>');
             }
             if (b.hasSubscription) {
                 buttons.push('<button class="secondary-btn" type="button" data-action="billing-portal">Abo verwalten</button>');
             }
             actions = buttons.length ? `<div class="billing-actions">${buttons.join('')}</div>` : '';
+            // Owner, aber Upgrade (noch) nicht möglich und kein Abo -> Hinweis.
+            if (!buttons.length && !isPro) {
+                note = 'Der Pro-Plan wird in Kürze verfügbar.';
+            }
         }
 
         host.className = '';
