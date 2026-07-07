@@ -95,8 +95,8 @@ test('legacy appId state builds root query url (unchanged legacy behaviour)', ()
 });
 
 test('public app loads url state helper before the main app script', () => {
-    const urlStateScriptIndex = indexHtml.indexOf('src="url-state.js"');
-    const mainScriptIndex = indexHtml.indexOf('src="script.js"');
+    const urlStateScriptIndex = indexHtml.indexOf('src="/url-state.js"');
+    const mainScriptIndex = indexHtml.indexOf('src="/script.js"');
     assert.notEqual(urlStateScriptIndex, -1);
     assert.notEqual(mainScriptIndex, -1);
     assert.ok(urlStateScriptIndex < mainScriptIndex);
