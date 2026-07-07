@@ -385,7 +385,9 @@ class VotingApp {
     // same-origin (Session-Token aus localStorage, Konsole auf gleicher Domain).
     async checkConsoleAccess(tenantSlug) {
         const link = document.getElementById('adminConsoleLink');
-        if (!link || !tenantSlug) return;
+        if (!link) return;
+        link.hidden = true; // bei jedem Tenant-Wechsel zurücksetzen
+        if (!tenantSlug) return;
         let token = null;
         try { token = localStorage.getItem('userSessionToken'); } catch (e) { /* Storage blockiert */ }
         if (!token) return; // nicht eingeloggt -> Link bleibt versteckt
@@ -393,6 +395,8 @@ class VotingApp {
             const res = await fetch('/api/auth/session', { headers: { 'x-user-session': token } });
             if (!res.ok) return;
             const data = await res.json();
+            // Zwischenzeitlicher Tenant-Wechsel? Dann dieses (veraltete) Ergebnis verwerfen.
+            if (this.consoleAccessTenant !== tenantSlug) return;
             const canManage = (data.memberships || []).some(m =>
                 m.tenantSlug === tenantSlug && (m.role === 'owner' || m.role === 'admin'));
             if (canManage) {
@@ -406,10 +410,10 @@ class VotingApp {
         const state = UrlState.parseUrlState(window.location.pathname, window.location.search);
         const nextTenantSlug = state.tenantSlug || null;
 
-        // Einmalig prüfen, ob ein eingeloggter Owner/Admin dieses Workspaces
-        // den Konsolen-Link angezeigt bekommt.
-        if (nextTenantSlug && !this.consoleAccessChecked) {
-            this.consoleAccessChecked = true;
+        // Bei jedem Tenant-Wechsel (auch SPA-intern) neu prüfen, ob ein
+        // eingeloggter Owner/Admin dieses Workspaces den Konsolen-Link sieht.
+        if (nextTenantSlug !== this.consoleAccessTenant) {
+            this.consoleAccessTenant = nextTenantSlug;
             this.checkConsoleAccess(nextTenantSlug);
         }
 

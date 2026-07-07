@@ -21,12 +21,22 @@ test('Konsolen-Link ist standardmäßig versteckt und session-gated', () => {
 });
 
 test('Link erscheint nur für owner/admin dieses Tenants und zeigt auf die Konsole', () => {
-  const idx = script.indexOf('checkConsoleAccess');
-  const block = script.slice(idx, idx + 900);
+  // Ganzer Methodenkörper (großzügiges Fenster, damit spätere Zeilen nicht rausfallen).
+  const idx = script.indexOf('async checkConsoleAccess(');
+  const block = script.slice(idx, idx + 1400);
   assert.ok(block.includes('m.tenantSlug === tenantSlug'), 'nur passender Tenant');
   assert.ok(block.includes("m.role === 'owner'") && block.includes("m.role === 'admin'"), 'nur owner/admin');
   assert.ok(block.includes('/tenant-admin.html?tenant='), 'verlinkt die Tenant-Konsole');
+  assert.ok(block.includes('encodeURIComponent(tenantSlug)'), 'Slug muss URL-encoded sein');
   assert.ok(block.includes('link.hidden = false'), 'blendet den Link ein');
+  assert.ok(block.includes('link.hidden = true'), 'setzt den Link bei Tenant-Wechsel zurück');
+});
+
+test('Konsolen-Link wird bei jedem Tenant-Wechsel neu geprüft (nicht nur einmal)', () => {
+  assert.ok(script.includes('nextTenantSlug !== this.consoleAccessTenant'),
+    're-check pro Tenant, kein Einmal-Guard');
+  // Veraltete async-Antwort nach zwischenzeitlichem Wechsel wird verworfen.
+  assert.ok(script.includes('this.consoleAccessTenant !== tenantSlug'), 'stale-Ergebnis-Schutz');
 });
 
 test('Konsolen-Link ist gestylt und respektiert hidden', () => {
