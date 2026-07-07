@@ -37,7 +37,7 @@ test('senderAddress nutzt EMAIL_FROM, sonst einen Roadlight-Fallback', () => {
 
 test('htmlEscape neutralisiert HTML in Nutzereingaben', () => {
   assert.equal(htmlEscape('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
-  assert.equal(htmlEscape('A & B "C"'), 'A &amp; B &quot;C&quot;');
+  assert.equal(htmlEscape('A & B "C" \'D\''), 'A &amp; B &quot;C&quot; &#39;D&#39;');
   assert.equal(htmlEscape(null), '');
 });
 
