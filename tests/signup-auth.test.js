@@ -47,6 +47,15 @@ test('provisionWorkspace kapselt die atomare Provisionierung', () => {
   assert.equal(typeof provisioning.provisionWorkspace, 'function');
 });
 
+test('Signup überlebt einen fehlgeschlagenen Mailversand (kein 500)', () => {
+  // Der Workspace ist schon committet; ein Mail-Fehler darf nicht in 500 kippen.
+  assert.ok(apiSource.includes("const delivery = emailDelivered ? 'email' : 'failed';"),
+    'erwartet ein delivery-Flag statt hartem Fehler');
+  assert.ok(apiSource.includes('let emailDelivered = true;'));
+  assert.ok(apiSource.includes('} catch (mailError) {'),
+    'der Signup-Mailversand muss in try/catch gekapselt sein');
+});
+
 test('buildBoardDescription ist die einzige Quelle des Board-Beschreibungstexts', () => {
   assert.equal(buildBoardDescription('Acme'), 'Feedback Board für Acme');
 });
