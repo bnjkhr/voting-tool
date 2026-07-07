@@ -80,6 +80,9 @@ test('Billing härtet gegen Out-of-Order-Events, Doppel-Abos und Nicht-Postgres'
   // Out-of-Order: Subscription-Events holen den aktuellen Stand frisch.
   assert.ok(apiSource.includes('stripe.subscriptions.retrieve(event.data.object.id)'),
     'Subscription-Events re-fetchen den aktuellen Stand');
+  // Herabstufung nur, wenn das Event-Abo auch das aktuell hinterlegte ist.
+  assert.ok(apiSource.includes('tenant.stripeSubscriptionId !== subscription.id'),
+    'Cancel eines abgelösten Abos stuft nicht mehr herab');
   // Doppel-Abo: aktives Abo -> 409 statt zweitem Checkout.
   assert.ok(apiSource.includes('billing.PRO_STATUSES.has(tenant.subscriptionStatus)'),
     'Checkout kurzschließt bei aktivem Abo');

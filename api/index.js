@@ -3716,6 +3716,17 @@ async function applyBillingToTenant(tenantId, subscription, customerId) {
   if (customerId) {
     fields.stripeCustomerId = typeof customerId === 'string' ? customerId : customerId.id;
   }
+  // Reconciliation gegen verspätete Events eines ALTEN Abos: eine Herabstufung
+  // (Free) nur anwenden, wenn dieses Abo auch das aktuell hinterlegte ist.
+  // Sonst würde der Cancel eines abgelösten Abos einen Tenant herabstufen, der
+  // bereits auf ein neueres aktives Abo gewechselt ist. Upgrades (Pro) gelten
+  // immer und übernehmen die Führung.
+  if (fields.plan === billing.PLAN_FREE) {
+    const tenant = await repos.tenants.findById(tenantId);
+    if (tenant && tenant.stripeSubscriptionId && tenant.stripeSubscriptionId !== subscription.id) {
+      return; // Cancel eines nicht mehr aktuellen Abos -> ignorieren
+    }
+  }
   await repos.tenants.update(tenantId, fields);
 }
 
