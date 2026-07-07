@@ -18,4 +18,5 @@ module.exports = {
   loginLinks: require('./login-links'),
   apiKeys: require('./api-keys'),
   attachments: require('./attachments'),
+  provisioning: require('./provisioning'),
 };

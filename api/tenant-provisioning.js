@@ -63,6 +63,10 @@ function buildTenantProvisionConfig(options = {}) {
   };
 }
 
+function buildBoardDescription(tenantName) {
+  return `Feedback Board für ${tenantName}`;
+}
+
 function buildTenantProvisionDocuments(config, timestampValue) {
   return {
     tenant: {
@@ -77,7 +81,7 @@ function buildTenantProvisionDocuments(config, timestampValue) {
     app: {
       tenantId: config.tenantId,
       name: config.appName,
-      description: `Feedback Board für ${config.tenantName}`,
+      description: buildBoardDescription(config.tenantName),
       slug: config.appSlug,
       ticketPrefix: config.ticketPrefix,
       labels: [],
@@ -96,5 +100,6 @@ function buildTenantProvisionDocuments(config, timestampValue) {
 module.exports = {
   buildTenantProvisionConfig,
   buildTenantProvisionDocuments,
+  buildBoardDescription,
   buildTicketPrefix,
 };

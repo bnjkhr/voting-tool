@@ -28,6 +28,7 @@ const {
 const {
   buildTenantProvisionConfig,
   buildTenantProvisionDocuments,
+  buildBoardDescription,
   buildTicketPrefix,
 } = require('./tenant-provisioning');
 const {
@@ -1034,25 +1035,77 @@ function generateUserFingerprint(req) {
 
 async function createUserSession(userId, now = new Date()) {
   const sessionToken = buildInviteToken();
-  const sessionRef = db.collection('sessions').doc();
   const sessionData = buildSessionData({
     userId,
     token: sessionToken,
     now,
   });
 
-  await sessionRef.create(sessionData);
+  let sessionId;
+  if (usePostgres()) {
+    sessionId = crypto.randomUUID();
+    await repos.sessions.create({
+      id: sessionId,
+      userId,
+      tokenHash: sessionData.tokenHash,
+      expiresAt: sessionData.expiresAt,
+    });
+  } else {
+    const sessionRef = db.collection('sessions').doc();
+    await sessionRef.create(sessionData);
+    sessionId = sessionRef.id;
+  }
   return {
     sessionToken,
     session: {
-      id: sessionRef.id,
+      id: sessionId,
       userId,
       expiresAt: sessionData.expiresAt,
     },
   };
 }
 
+// Persistiert einen Magic-Link und liefert dessen id (Backend-agnostisch).
+async function persistLoginLink(loginLinkData) {
+  if (usePostgres()) {
+    const id = crypto.randomUUID();
+    await repos.loginLinks.create({
+      id,
+      email: loginLinkData.email,
+      tokenHash: loginLinkData.tokenHash,
+      redirectUrl: loginLinkData.redirectUrl,
+      expiresAt: loginLinkData.expiresAt,
+    });
+    return id;
+  }
+  const docRef = await db.collection('loginLinks').add(loginLinkData);
+  return docRef.id;
+}
+
 async function loadActiveUserTenants(userId) {
+  if (usePostgres()) {
+    const memberships = await repos.memberships.listByUser(userId); // nur status='active'
+    const tenantIds = [...new Set(memberships.map((m) => m.tenantId).filter(Boolean))];
+    const tenants = await Promise.all(tenantIds.map((id) => repos.tenants.findById(id)));
+    const tenantsById = {};
+    tenants.forEach((t) => { if (t && isActiveTenant(t)) tenantsById[t.id] = t; });
+    return memberships
+      .filter((m) => tenantsById[m.tenantId])
+      .map((m) => {
+        const tenant = tenantsById[m.tenantId];
+        return {
+          membershipId: m.id,
+          role: normalizeMembershipRole(m.role),
+          tenant: {
+            id: tenant.id,
+            slug: tenant.slug || tenant.id,
+            name: tenant.displayName || tenant.name || tenant.id,
+          },
+        };
+      })
+      .sort((a, b) => (a.tenant.name || '').localeCompare(b.tenant.name || ''));
+  }
+
   const membershipsSnapshot = await db.collection('memberships')
     .where('userId', '==', userId)
     .where('status', '==', 'active')
@@ -1090,6 +1143,25 @@ async function loadActiveUserTenants(userId) {
 
 async function resolvePendingInviteByToken(token) {
   const tokenHash = buildInviteTokenHash(token || '');
+
+  if (usePostgres()) {
+    const invite = await repos.invites.findByTokenHash(tokenHash);
+    if (!invite) {
+      return { errorStatus: 404, error: 'Invite not found' };
+    }
+    if (invite.status !== 'pending') {
+      return { errorStatus: 410, error: 'Invite is no longer pending' };
+    }
+    if (isInviteExpired(invite)) {
+      return { errorStatus: 410, error: 'Invite has expired' };
+    }
+    const tenant = await repos.tenants.findById(invite.tenantId);
+    if (!tenant || !isActiveTenant(tenant)) {
+      return { errorStatus: 404, error: 'Tenant not found' };
+    }
+    return { inviteId: invite.id, invite, tenant };
+  }
+
   const snapshot = await db.collection('invites')
     .where('tokenHash', '==', tokenHash)
     .limit(2)
@@ -1161,6 +1233,25 @@ function buildSignupWorkspaceConfig(body = {}) {
 
 async function resolvePendingLoginLinkByToken(token) {
   const tokenHash = buildInviteTokenHash(token || '');
+
+  if (usePostgres()) {
+    const loginLink = await repos.loginLinks.findByTokenHash(tokenHash); // nur status='pending'
+    if (!loginLink) {
+      return { errorStatus: 404, error: 'Login link not found' };
+    }
+    if (isLoginLinkExpired(loginLink)) {
+      return { errorStatus: 410, error: 'Login link has expired' };
+    }
+    const user = await repos.users.findByEmail(loginLink.email);
+    if (!user) {
+      return { errorStatus: 404, error: 'User not found' };
+    }
+    if (user.status && user.status !== 'active') {
+      return { errorStatus: 403, error: 'User is disabled' };
+    }
+    return { loginLinkId: loginLink.id, loginLink, user };
+  }
+
   const snapshot = await db.collection('loginLinks')
     .where('tokenHash', '==', tokenHash)
     .limit(2)
@@ -1212,16 +1303,17 @@ app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
       return res.status(400).json({ error: error.message || 'Invalid email' });
     }
 
-    const userSnapshot = await db.collection('users')
-      .where('email', '==', email)
-      .limit(1)
-      .get();
-
-    if (userSnapshot.empty) {
-      return res.status(404).json({ error: 'No user found for this email' });
+    let user;
+    if (usePostgres()) {
+      user = await repos.users.findByEmail(email);
+    } else {
+      const userSnapshot = await db.collection('users').where('email', '==', email).limit(1).get();
+      user = userSnapshot.empty ? null : { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() };
     }
 
-    const user = { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() };
+    if (!user) {
+      return res.status(404).json({ error: 'No user found for this email' });
+    }
     if (user.status && user.status !== 'active') {
       return res.status(403).json({ error: 'User is disabled' });
     }
@@ -1234,12 +1326,12 @@ app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
       now: new Date(),
     });
 
-    const docRef = await db.collection('loginLinks').add(loginLinkData);
+    const loginLinkId = await persistLoginLink(loginLinkData);
     const loginUrl = `${buildRequestBaseUrl(req)}/login.html?token=${encodeURIComponent(token)}`;
     await sendLoginLinkEmail({ to: email, loginUrl });
 
     res.status(201).json({
-      id: docRef.id,
+      id: loginLinkId,
       email,
       expiresAt: loginLinkData.expiresAt,
       delivery: 'email',
@@ -1262,68 +1354,99 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
       return res.status(400).json({ error: error.message || 'Invalid signup data' });
     }
 
-    const [tenantDoc, slugSnapshot, existingUserSnapshot] = await Promise.all([
-      db.collection('tenants').doc(config.tenantId).get(),
-      db.collection('tenants').where('slug', '==', config.tenantSlug).limit(1).get(),
-      db.collection('users').where('email', '==', email).limit(1).get(),
-    ]);
-
-    if (tenantDoc.exists || !slugSnapshot.empty) {
-      return res.status(409).json({ error: 'Workspace slug already exists' });
-    }
-
-    if (!existingUserSnapshot.empty) {
-      const existingUserId = existingUserSnapshot.docs[0].id;
-      const existingMemberships = await db.collection('memberships')
-        .where('userId', '==', existingUserId)
-        .where('status', '==', 'active')
-        .limit(1)
-        .get();
-
-      if (!existingMemberships.empty) {
-        return res.status(409).json({ error: 'A workspace already exists for this email' });
-      }
-    }
-
-    const timestamp = admin.firestore.FieldValue.serverTimestamp();
     const now = new Date();
-    const docs = buildTenantProvisionDocuments(config, timestamp);
-    const tenantRef = db.collection('tenants').doc(config.tenantId);
-    const appRef = db.collection('apps').doc();
-    const counterRef = db.collection('counters').doc(appRef.id);
-    const userRef = existingUserSnapshot.empty
-      ? db.collection('users').doc()
-      : existingUserSnapshot.docs[0].ref;
-    const membershipRef = db.collection('memberships').doc();
+    let appId, userId, membershipId;
 
-    const batch = db.batch();
-    batch.create(tenantRef, docs.tenant);
-    batch.create(appRef, docs.app);
-    batch.create(counterRef, docs.counter);
+    if (usePostgres()) {
+      const [byId, bySlug, existingUser] = await Promise.all([
+        repos.tenants.findById(config.tenantId),
+        repos.tenants.findBySlug(config.tenantSlug),
+        repos.users.findByEmail(email),
+      ]);
+      if (byId || bySlug) {
+        return res.status(409).json({ error: 'Workspace slug already exists' });
+      }
+      if (existingUser) {
+        const memberships = await repos.memberships.listByUser(existingUser.id); // nur active
+        if (memberships.length > 0) {
+          return res.status(409).json({ error: 'A workspace already exists for this email' });
+        }
+      }
 
-    if (existingUserSnapshot.empty) {
-      batch.create(userRef, buildUserData({
-        email,
-        displayName: email,
-        now,
-      }));
-    } else {
-      batch.set(userRef, {
-        status: 'active',
-        updatedAt: now,
-      }, { merge: true });
-    }
+      appId = crypto.randomUUID();
+      userId = existingUser ? existingUser.id : crypto.randomUUID();
+      membershipId = crypto.randomUUID();
 
-    batch.create(membershipRef, {
-      ...buildMembershipData({
+      // Atomar (Tenant + Board + User + Owner-Membership) — in db/ gekapselt.
+      await repos.provisioning.provisionWorkspace({
         tenantId: config.tenantId,
-        userId: userRef.id,
-        role: 'owner',
-        now,
-      }),
-      email,
-    });
-    await batch.commit();
+        tenantName: config.tenantName,
+        tenantSlug: config.tenantSlug,
+        appId,
+        appName: config.appName,
+        appDescription: buildBoardDescription(config.tenantName),
+        appSlug: config.appSlug,
+        ticketPrefix: config.ticketPrefix,
+        userId,
+        email,
+        userExists: !!existingUser,
+        membershipId,
+      });
+    } else {
+      const [tenantDoc, slugSnapshot, existingUserSnapshot] = await Promise.all([
+        db.collection('tenants').doc(config.tenantId).get(),
+        db.collection('tenants').where('slug', '==', config.tenantSlug).limit(1).get(),
+        db.collection('users').where('email', '==', email).limit(1).get(),
+      ]);
+
+      if (tenantDoc.exists || !slugSnapshot.empty) {
+        return res.status(409).json({ error: 'Workspace slug already exists' });
+      }
+
+      if (!existingUserSnapshot.empty) {
+        const existingUserId = existingUserSnapshot.docs[0].id;
+        const existingMemberships = await db.collection('memberships')
+          .where('userId', '==', existingUserId)
+          .where('status', '==', 'active')
+          .limit(1)
+          .get();
+
+        if (!existingMemberships.empty) {
+          return res.status(409).json({ error: 'A workspace already exists for this email' });
+        }
+      }
+
+      const timestamp = admin.firestore.FieldValue.serverTimestamp();
+      const docs = buildTenantProvisionDocuments(config, timestamp);
+      const tenantRef = db.collection('tenants').doc(config.tenantId);
+      const appRef = db.collection('apps').doc();
+      const counterRef = db.collection('counters').doc(appRef.id);
+      const userRef = existingUserSnapshot.empty
+        ? db.collection('users').doc()
+        : existingUserSnapshot.docs[0].ref;
+      const membershipRef = db.collection('memberships').doc();
+
+      const batch = db.batch();
+      batch.create(tenantRef, docs.tenant);
+      batch.create(appRef, docs.app);
+      batch.create(counterRef, docs.counter);
+
+      if (existingUserSnapshot.empty) {
+        batch.create(userRef, buildUserData({ email, displayName: email, now }));
+      } else {
+        batch.set(userRef, { status: 'active', updatedAt: now }, { merge: true });
+      }
+
+      batch.create(membershipRef, {
+        ...buildMembershipData({ tenantId: config.tenantId, userId: userRef.id, role: 'owner', now }),
+        email,
+      });
+      await batch.commit();
+
+      appId = appRef.id;
+      userId = userRef.id;
+      membershipId = membershipRef.id;
+    }
 
     const token = buildInviteToken();
     const loginLinkData = buildLoginLinkData({
@@ -1332,7 +1455,7 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
       redirectUrl: `/tenant-admin.html?tenant=${encodeURIComponent(config.tenantSlug)}&onboarding=1`,
       now,
     });
-    const loginLinkRef = await db.collection('loginLinks').add(loginLinkData);
+    const loginLinkId = await persistLoginLink(loginLinkData);
     const signupLoginUrl = `${buildRequestBaseUrl(req)}/login.html?token=${encodeURIComponent(token)}`;
     await sendLoginLinkEmail({ to: email, loginUrl: signupLoginUrl });
 
@@ -1343,20 +1466,20 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
         name: config.tenantName,
       },
       app: {
-        id: appRef.id,
+        id: appId,
         slug: config.appSlug,
         name: config.appName,
       },
       user: {
-        id: userRef.id,
+        id: userId,
         email,
       },
       membership: {
-        id: membershipRef.id,
+        id: membershipId,
         role: 'owner',
       },
       loginLink: {
-        id: loginLinkRef.id,
+        id: loginLinkId,
         expiresAt: loginLinkData.expiresAt,
         delivery: 'email',
       },
@@ -1381,12 +1504,16 @@ app.post('/api/auth/login-links/:token/consume', rateLimit(60000, 10), async (re
 
     const now = new Date();
     const { sessionToken, session } = await createUserSession(resolved.user.id, now);
-    await resolved.loginLinkDoc.ref.set({
-      status: 'consumed',
-      consumedAt: now,
-      updatedAt: now,
-      consumedUserId: resolved.user.id,
-    }, { merge: true });
+    if (usePostgres()) {
+      await repos.loginLinks.consume(resolved.loginLinkId);
+    } else {
+      await resolved.loginLinkDoc.ref.set({
+        status: 'consumed',
+        consumedAt: now,
+        updatedAt: now,
+        consumedUserId: resolved.user.id,
+      }, { merge: true });
+    }
 
     const tenants = await loadActiveUserTenants(resolved.user.id);
     const firstTenant = tenants[0]?.tenant || null;
@@ -1489,64 +1616,80 @@ app.post('/api/invites/:token/accept', rateLimit(60000, 10), async (req, res) =>
       ? req.body.displayName.trim().replace(/\s+/g, ' ')
       : '';
 
-    const existingUser = await db.collection('users')
-      .where('email', '==', invite.email)
-      .limit(1)
-      .get();
+    const membershipRole = normalizeMembershipRole(invite.role);
+    let userId, membershipId;
 
-    const userRef = existingUser.empty
-      ? db.collection('users').doc()
-      : existingUser.docs[0].ref;
-    const userId = userRef.id;
+    if (usePostgres()) {
+      const existingUser = await repos.users.findByEmail(invite.email);
+      if (existingUser) {
+        userId = existingUser.id;
+        if (displayName && !existingUser.displayName) {
+          await repos.users.update(userId, { displayName });
+        }
+      } else {
+        userId = crypto.randomUUID();
+        await repos.users.create({ id: userId, email: invite.email, displayName: displayName || invite.email });
+      }
 
-    const existingMembership = await db.collection('memberships')
-      .where('tenantId', '==', tenant.id)
-      .where('userId', '==', userId)
-      .limit(1)
-      .get();
+      // Ein frisch angelegter User hat garantiert keine Membership -> Lookup sparen.
+      const existingMembership = existingUser
+        ? await repos.memberships.findByTenantAndUser(tenant.id, userId)
+        : null;
+      if (existingMembership) {
+        membershipId = existingMembership.id;
+        await repos.memberships.update(membershipId, { role: membershipRole, status: 'active' });
+      } else {
+        membershipId = crypto.randomUUID();
+        await repos.memberships.create({ id: membershipId, tenantId: tenant.id, userId, role: membershipRole });
+      }
 
-    const membershipRef = existingMembership.empty
-      ? db.collection('memberships').doc()
-      : existingMembership.docs[0].ref;
-
-    const batch = db.batch();
-    if (existingUser.empty) {
-      batch.create(userRef, buildUserData({
-        email: invite.email,
-        displayName,
-        now,
-      }));
-    } else if (displayName && !existingUser.docs[0].data()?.displayName) {
-      batch.set(userRef, {
-        displayName,
-        updatedAt: now,
-      }, { merge: true });
-    }
-
-    const membershipData = buildMembershipData({
-      tenantId: tenant.id,
-      userId,
-      role: invite.role,
-      now,
-    });
-    if (existingMembership.empty) {
-      batch.create(membershipRef, membershipData);
+      await repos.invites.update(resolved.inviteId, { status: 'accepted', acceptedAt: now });
     } else {
-      batch.set(membershipRef, {
-        role: membershipData.role,
-        status: 'active',
+      const existingUser = await db.collection('users')
+        .where('email', '==', invite.email)
+        .limit(1)
+        .get();
+
+      const userRef = existingUser.empty
+        ? db.collection('users').doc()
+        : existingUser.docs[0].ref;
+      userId = userRef.id;
+
+      const existingMembership = await db.collection('memberships')
+        .where('tenantId', '==', tenant.id)
+        .where('userId', '==', userId)
+        .limit(1)
+        .get();
+
+      const membershipRef = existingMembership.empty
+        ? db.collection('memberships').doc()
+        : existingMembership.docs[0].ref;
+
+      const batch = db.batch();
+      if (existingUser.empty) {
+        batch.create(userRef, buildUserData({ email: invite.email, displayName, now }));
+      } else if (displayName && !existingUser.docs[0].data()?.displayName) {
+        batch.set(userRef, { displayName, updatedAt: now }, { merge: true });
+      }
+
+      const membershipData = buildMembershipData({ tenantId: tenant.id, userId, role: invite.role, now });
+      if (existingMembership.empty) {
+        batch.create(membershipRef, membershipData);
+      } else {
+        batch.set(membershipRef, { role: membershipData.role, status: 'active', updatedAt: now }, { merge: true });
+      }
+
+      batch.set(inviteDoc.ref, {
+        status: 'accepted',
+        acceptedAt: now,
         updatedAt: now,
+        acceptedUserId: userId,
       }, { merge: true });
+
+      await batch.commit();
+      membershipId = membershipRef.id;
     }
 
-    batch.set(inviteDoc.ref, {
-      status: 'accepted',
-      acceptedAt: now,
-      updatedAt: now,
-      acceptedUserId: userId,
-    }, { merge: true });
-
-    await batch.commit();
     const { sessionToken, session } = await createUserSession(userId, new Date());
 
     res.json({
@@ -1559,9 +1702,9 @@ app.post('/api/invites/:token/accept', rateLimit(60000, 10), async (req, res) =>
         displayName: displayName || invite.email,
       },
       membership: {
-        id: membershipRef.id,
+        id: membershipId,
         tenantId: tenant.id,
-        role: membershipData.role,
+        role: membershipRole,
         status: 'active',
       },
       tenant: {
