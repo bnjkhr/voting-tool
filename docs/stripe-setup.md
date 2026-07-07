@@ -35,8 +35,12 @@ STRIPE_PRICE_PRO=price_…
 stripe login
 stripe listen --forward-to localhost:3000/api/stripe/webhook   # liefert ein whsec_ für lokal
 # in einem Board als Owner: "Upgrade" -> Checkout mit Test-Karte 4242 4242 4242 4242
-stripe trigger checkout.session.completed                       # optional: Event manuell
 ```
+Der zuverlässige Test ist ein **echter Checkout** (Test-Karte) — nur er trägt die
+Tenant-Zuordnung (`client_reference_id` / `subscription_data.metadata.tenantId`),
+die der Webhook-Handler zum Update von `tenants` braucht. Ein blankes
+`stripe trigger checkout.session.completed` läuft dagegen **ins Leere** (kein
+Tenant-Bezug → der Handler macht `return`, ohne einen Tenant zu ändern).
 Nach erfolgreichem Checkout sollte in Neon `tenants.plan = 'pro'`,
 `subscription_status = 'active'`, `stripe_customer_id`/`current_period_end`
 gesetzt sein.

@@ -75,3 +75,15 @@ test('Billing-Endpoints existieren mit korrekten Guards', () => {
   // Abo-Sync läuft nur in Postgres.
   assert.ok(/handleStripeEvent[\s\S]{0,120}usePostgres\(\)/.test(apiSource), 'Webhook-Handler ist postgres-gescopt');
 });
+
+test('Billing härtet gegen Out-of-Order-Events, Doppel-Abos und Nicht-Postgres', () => {
+  // Out-of-Order: Subscription-Events holen den aktuellen Stand frisch.
+  assert.ok(apiSource.includes('stripe.subscriptions.retrieve(event.data.object.id)'),
+    'Subscription-Events re-fetchen den aktuellen Stand');
+  // Doppel-Abo: aktives Abo -> 409 statt zweitem Checkout.
+  assert.ok(apiSource.includes('billing.PRO_STATUSES.has(tenant.subscriptionStatus)'),
+    'Checkout kurzschließt bei aktivem Abo');
+  // Alle Billing-Admin-Endpoints sind postgres-gescopt.
+  const guards = apiSource.split("if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon").length - 1;
+  assert.ok(guards >= 3, `erwartet Postgres-Guard in GET/checkout/portal (gefunden ${guards})`);
+});

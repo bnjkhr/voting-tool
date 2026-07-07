@@ -3732,9 +3732,12 @@ async function handleStripeEvent(stripe, event) {
   if (event.type === 'customer.subscription.created'
     || event.type === 'customer.subscription.updated'
     || event.type === 'customer.subscription.deleted') {
-    const subscription = event.data.object;
-    const tenantId = subscription.metadata?.tenantId;
+    const tenantId = event.data.object?.metadata?.tenantId;
     if (!tenantId) return;
+    // Stripe garantiert keine Event-Reihenfolge. Statt dem (evtl. veralteten)
+    // Event-Payload den AKTUELLEN Stand von Stripe holen -> ein verspäteter
+    // alter Event überschreibt so keine neuere Kündigung.
+    const subscription = await stripe.subscriptions.retrieve(event.data.object.id);
     await applyBillingToTenant(tenantId, subscription, subscription.customer);
   }
 }
@@ -3765,6 +3768,7 @@ app.post('/api/stripe/webhook', async (req, res) => {
 // Tenant Admin: aktueller Plan/Abo-Status (für die Konsolen-UI).
 app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (req, res) => {
   try {
+    if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
     res.json({
@@ -3784,11 +3788,16 @@ app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (
 // Tenant Admin (Owner): Checkout für Pro starten.
 app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(['owner']), rateLimit(60000, 10), async (req, res) => {
   try {
+    if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
     const stripe = billing.getStripe();
     const priceId = process.env.STRIPE_PRICE_PRO;
     if (!stripe || !priceId) return res.status(503).json({ error: 'Billing ist nicht konfiguriert' });
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
+    // Bereits ein aktives Abo? Kein zweites Checkout -> ins Portal verweisen.
+    if (billing.PRO_STATUSES.has(tenant.subscriptionStatus)) {
+      return res.status(409).json({ error: 'Es besteht bereits ein aktives Abo. Verwalte es über das Kundenportal.' });
+    }
     const returnUrl = `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`;
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -3812,6 +3821,7 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
 // Tenant Admin (Owner): Stripe Customer Portal öffnen (Abo verwalten/kündigen).
 app.post('/api/admin/tenants/:tenantSlug/billing/portal', requireTenantAccess(['owner']), rateLimit(60000, 10), async (req, res) => {
   try {
+    if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
     const stripe = billing.getStripe();
     if (!stripe) return res.status(503).json({ error: 'Billing ist nicht konfiguriert' });
     const tenant = await resolveAdminTenantFromParam(req, res);
