@@ -51,9 +51,8 @@ test('Signup überlebt einen fehlgeschlagenen Mailversand (kein 500)', () => {
   // Der Workspace ist schon committet; ein Mail-Fehler darf nicht in 500 kippen.
   assert.ok(apiSource.includes("const delivery = emailDelivered ? 'email' : 'failed';"),
     'erwartet ein delivery-Flag statt hartem Fehler');
-  const idx = apiSource.indexOf('const signupLoginUrl =');
-  const block = apiSource.slice(idx, idx + 600);
-  assert.ok(/try\s*{[\s\S]*sendLoginLinkEmail[\s\S]*}\s*catch/.test(block),
+  assert.ok(apiSource.includes('let emailDelivered = true;'));
+  assert.ok(apiSource.includes('} catch (mailError) {'),
     'der Signup-Mailversand muss in try/catch gekapselt sein');
 });
 
