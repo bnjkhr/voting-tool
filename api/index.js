@@ -4058,10 +4058,12 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/approve', req
       tenantId: getTenantId(suggestionData),
     });
 
-    try {
+    // Nur bei der tatsächlichen Freigabe benachrichtigen: suggestionData ist der
+    // Pre-Update-Stand, `approved` also false, wenn dieser Aufruf freigibt. Ein
+    // erneuter Approve (Refresh/Doppelklick) auf einen bereits freigegebenen
+    // Eintrag löst so keine zweite Mail aus.
+    if (!suggestionData.approved) {
       await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'approved');
-    } catch (notificationError) {
-      console.error('Error sending tenant approval notification:', notificationError);
     }
 
     res.json({ success: true, message: 'Eintrag erfolgreich freigegeben' });
@@ -4121,11 +4123,7 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/status', requi
         tenantId: getTenantId(suggestionData),
       });
 
-      try {
-        await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'tag_updated', `Neuer Status: ${normalizedStatus}`);
-      } catch (notificationError) {
-        console.error('Error sending tenant status notification:', notificationError);
-      }
+      await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'tag_updated', `Neuer Status: ${normalizedStatus}`);
     }
 
     res.json({ success: true, message: 'Status erfolgreich aktualisiert' });
@@ -4695,11 +4693,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       tenantId: tenant.id,
     });
 
-    try {
-      await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'commented', validText);
-    } catch (notificationError) {
-      console.error('Error sending tenant comment notification:', notificationError);
-    }
+    await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'commented', validText);
 
     res.status(201).json({
       id: commentId,
@@ -5741,6 +5735,9 @@ async function notifySuggestionCreator(suggestionId, status, comment = null) {
 // Pro-Eintrag-Einstellungen (notificationEnabled/notificationEmail) — der
 // Fingerprint-Fallback aus dem Legacy-Pfad ist nicht tenant-scoped und würde
 // über Tenants hinweg fehlleiten.
+// Wirft nie: Fehler werden intern geloggt (wie notifySuggestionCreator), damit
+// ein Mail-Fehler die auslösende Admin-Aktion nicht in einen 500 kippt. Die
+// Call-Sites brauchen daher kein eigenes try/catch.
 async function notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, status, comment = null) {
   try {
     if (!suggestionData || !suggestionData.notificationEnabled || !isValidEmail(suggestionData.notificationEmail)) {
