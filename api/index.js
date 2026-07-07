@@ -1358,6 +1358,8 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
     let appId, userId, membershipId;
 
     if (usePostgres()) {
+      // Fast-Path-Checks für freundliche 409 (die Transaktion ist die autoritäre
+      // Absicherung gegen Races).
       const [byId, bySlug, existingUser] = await Promise.all([
         repos.tenants.findById(config.tenantId),
         repos.tenants.findBySlug(config.tenantSlug),
@@ -1374,24 +1376,31 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
       }
 
       appId = crypto.randomUUID();
-      userId = existingUser ? existingUser.id : crypto.randomUUID();
       membershipId = crypto.randomUUID();
-
-      // Atomar (Tenant + Board + User + Owner-Membership) — in db/ gekapselt.
-      await repos.provisioning.provisionWorkspace({
-        tenantId: config.tenantId,
-        tenantName: config.tenantName,
-        tenantSlug: config.tenantSlug,
-        appId,
-        appName: config.appName,
-        appDescription: buildBoardDescription(config.tenantName),
-        appSlug: config.appSlug,
-        ticketPrefix: config.ticketPrefix,
-        userId,
-        email,
-        userExists: !!existingUser,
-        membershipId,
-      });
+      try {
+        // Atomar; löst User auf + erzwingt "ein Workspace pro E-Mail" in der Transaktion.
+        const provisioned = await repos.provisioning.provisionWorkspace({
+          tenantId: config.tenantId,
+          tenantName: config.tenantName,
+          tenantSlug: config.tenantSlug,
+          appId,
+          appName: config.appName,
+          appDescription: buildBoardDescription(config.tenantName),
+          appSlug: config.appSlug,
+          ticketPrefix: config.ticketPrefix,
+          email,
+          membershipId,
+        });
+        userId = provisioned.userId;
+      } catch (error) {
+        if (error.code === 'WORKSPACE_EXISTS') {
+          return res.status(409).json({ error: 'A workspace already exists for this email' });
+        }
+        if (error.code === '23505') { // unique_violation (Tenant-Slug/E-Mail-Race)
+          return res.status(409).json({ error: 'Workspace slug already exists' });
+        }
+        throw error;
+      }
     } else {
       const [tenantDoc, slugSnapshot, existingUserSnapshot] = await Promise.all([
         db.collection('tenants').doc(config.tenantId).get(),
@@ -1503,10 +1512,17 @@ app.post('/api/auth/login-links/:token/consume', rateLimit(60000, 10), async (re
     }
 
     const now = new Date();
-    const { sessionToken, session } = await createUserSession(resolved.user.id, now);
+    // Erst den Link atomar claimen, DANN die Session erzeugen — sonst könnten
+    // konkurrierende Consume-Requests mehrere gültige Sessions aus einem Link
+    // erzeugen.
     if (usePostgres()) {
-      await repos.loginLinks.consume(resolved.loginLinkId);
-    } else {
+      const claimed = await repos.loginLinks.consume(resolved.loginLinkId);
+      if (!claimed) {
+        return res.status(410).json({ error: 'Login link is no longer pending' });
+      }
+    }
+    const { sessionToken, session } = await createUserSession(resolved.user.id, now);
+    if (!usePostgres()) {
       await resolved.loginLinkDoc.ref.set({
         status: 'consumed',
         consumedAt: now,
@@ -1620,30 +1636,17 @@ app.post('/api/invites/:token/accept', rateLimit(60000, 10), async (req, res) =>
     let userId, membershipId;
 
     if (usePostgres()) {
-      const existingUser = await repos.users.findByEmail(invite.email);
-      if (existingUser) {
-        userId = existingUser.id;
-        if (displayName && !existingUser.displayName) {
-          await repos.users.update(userId, { displayName });
-        }
-      } else {
-        userId = crypto.randomUUID();
-        await repos.users.create({ id: userId, email: invite.email, displayName: displayName || invite.email });
-      }
-
-      // Ein frisch angelegter User hat garantiert keine Membership -> Lookup sparen.
-      const existingMembership = existingUser
-        ? await repos.memberships.findByTenantAndUser(tenant.id, userId)
-        : null;
-      if (existingMembership) {
-        membershipId = existingMembership.id;
-        await repos.memberships.update(membershipId, { role: membershipRole, status: 'active' });
-      } else {
-        membershipId = crypto.randomUUID();
-        await repos.memberships.create({ id: membershipId, tenantId: tenant.id, userId, role: membershipRole });
-      }
-
-      await repos.invites.update(resolved.inviteId, { status: 'accepted', acceptedAt: now });
+      // Atomar (User-Upsert + Membership-Upsert + Invite-Status) — in db/ gekapselt.
+      // Reaktiviert einen ggf. deaktivierten User, damit die Session gültig ist.
+      const accepted = await repos.provisioning.acceptInvite({
+        tenantId: tenant.id,
+        inviteId: resolved.inviteId,
+        email: invite.email,
+        displayName,
+        role: membershipRole,
+      });
+      userId = accepted.userId;
+      membershipId = accepted.membershipId;
     } else {
       const existingUser = await db.collection('users')
         .where('email', '==', invite.email)

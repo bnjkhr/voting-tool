@@ -27,10 +27,13 @@ async function create({ id, email, tokenHash, redirectUrl, expiresAt }) {
   return mapRow(rows[0]);
 }
 
+// Atomares "Claim": nur einen noch pending Link konsumieren. Rückgabe null,
+// wenn er bereits konsumiert wurde (z.B. konkurrierender Request) -> verhindert
+// mehrere gültige Sessions aus einem einzigen Magic Link.
 async function consume(id) {
   const { rows } = await query(
     `update login_links set status = 'consumed', consumed_at = now(), updated_at = now()
-     where id = $1 returning ${COLUMNS}`,
+     where id = $1 and status = 'pending' returning ${COLUMNS}`,
     [id]
   );
   return mapRow(rows[0]);
