@@ -190,6 +190,37 @@ test('tenant admin wires suggestion and team actions through delegation', () => 
   });
 });
 
+test('tenant admin exposes a billing panel wired to the tenant-scoped billing endpoints', () => {
+  // Panel + Mount-Punkt im Settings-Tab.
+  assert.ok(tenantAdminHtml.includes('id="billingPanel"'));
+  assert.ok(tenantAdminHtml.includes('id="billingStatus"'));
+
+  // Laden + Rendern.
+  assert.ok(tenantAdminScript.includes('loadBilling'));
+  assert.ok(tenantAdminScript.includes('renderBilling'));
+  assert.ok(tenantAdminScript.includes("this.tenantAdminPath('/billing')"));
+  assert.ok(tenantAdminScript.includes("this.tenantAdminPath('/billing/checkout')"));
+  assert.ok(tenantAdminScript.includes("this.tenantAdminPath('/billing/portal')"));
+
+  // Delegation der Buttons.
+  assert.ok(tenantAdminScript.includes('data-action="billing-upgrade"'));
+  assert.ok(tenantAdminScript.includes('data-action="billing-portal"'));
+
+  // Aktionen sind Owner-only (Endpoints verlangen Owner-Mitgliedschaft).
+  assert.ok(tenantAdminScript.includes("this.currentRole !== 'owner'"),
+    'expected checkout/portal actions to be gated on owner role');
+
+  // Upgrade nur bei voller Checkout-Bereitschaft (Key UND Preis), sonst 503.
+  assert.ok(apiSource.includes('checkoutReady'), 'billing GET exposes checkoutReady');
+  assert.ok(apiSource.includes('STRIPE_PRICE_PRO'), 'checkoutReady prueft den Preis');
+  assert.ok(tenantAdminScript.includes('b.checkoutReady'),
+    'expected the upgrade button to be gated on checkoutReady');
+
+  // Checkout-Rückkehr wird einmalig ausgewertet und aus der URL entfernt.
+  assert.ok(tenantAdminScript.includes("params.get('billing')"));
+  assert.ok(tenantAdminScript.includes("this.billingReturn === 'success'"));
+});
+
 test('tenant admin shows dismissible onboarding for signup redirects', () => {
   assert.ok(tenantAdminHtml.includes('id="workspaceOnboarding"'));
   assert.ok(tenantAdminHtml.includes('id="dismissOnboardingBtn"'));

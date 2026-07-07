@@ -3789,6 +3789,10 @@ app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (
       trialEndsAt: tenant.trialEndsAt || null,
       hasSubscription: !!tenant.stripeCustomerId,
       billingEnabled: billing.billingEnabled(),
+      // Checkout braucht zusätzlich zum Secret-Key einen konfigurierten Preis —
+      // sonst würde "Upgrade" garantiert in ein 503 laufen. Das Portal (Abo
+      // verwalten) genügt der Secret-Key allein.
+      checkoutReady: billing.billingEnabled() && !!process.env.STRIPE_PRICE_PRO,
     });
   } catch (error) {
     console.error('Error loading billing status:', error);
