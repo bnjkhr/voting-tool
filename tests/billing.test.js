@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const billing = require('../api/billing');
+const billing = require('../lib/billing');
 const apiSource = fs.readFileSync(path.join(__dirname, '..', 'api/index.js'), 'utf8');
 
 // ---------------------------------------------------------------------------

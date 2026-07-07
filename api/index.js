@@ -61,7 +61,7 @@ const { shouldServeAppShell } = require('./spa-fallback');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');
 const { usePostgres } = repos.backend;
-const billing = require('./billing');
+const billing = require('../lib/billing');
 
 const app = express();
 
