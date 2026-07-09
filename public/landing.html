@@ -27,6 +27,77 @@
     <!-- Selbst gehostete Schriften (kein Drittland-Transfer an Google, DSGVO-konform) -->
     <link rel="stylesheet" href="/fonts/fonts.css">
     <link rel="stylesheet" href="/landing.css">
+
+    <!-- Structured Data (Schema.org) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://roadlight.pro/#organization",
+          "name": "Roadlight",
+          "url": "https://roadlight.pro/",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://roadlight.pro/og-image.png",
+            "width": 1200,
+            "height": 630
+          },
+          "email": "hallo@roadlight.pro",
+          "contactPoint": {
+            "@type": "ContactPoint",
+            "email": "hallo@roadlight.pro",
+            "contactType": "customer support",
+            "availableLanguage": ["German"]
+          },
+          "areaServed": "EU",
+          "description": "Feedback-Board, öffentliche Roadmap und Changelog für europäische Produktteams – DSGVO-konform, Hosting in Frankfurt."
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://roadlight.pro/#website",
+          "name": "Roadlight",
+          "url": "https://roadlight.pro/",
+          "inLanguage": "de-DE",
+          "publisher": { "@id": "https://roadlight.pro/#organization" },
+          "description": "Feedback-Board, öffentliche Roadmap & Changelog – alles in einem. DSGVO-konform, Hosting in Frankfurt."
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://roadlight.pro/#software",
+          "name": "Roadlight",
+          "url": "https://roadlight.pro/",
+          "applicationCategory": "BusinessApplication",
+          "operatingSystem": "Web",
+          "inLanguage": "de-DE",
+          "description": "Sammle Feedback, priorisiere nach echten Votes, zeig deine öffentliche Roadmap und feiere jedes Release – alles in einem. DSGVO-konform, Hosting in Frankfurt.",
+          "publisher": { "@id": "https://roadlight.pro/#organization" },
+          "featureList": [
+            "Feedback-Board mit Voting",
+            "Öffentliche Roadmap",
+            "Changelog",
+            "Bug-Reports mit Screenshots",
+            "Moderation",
+            "Team-Rollen",
+            "REST-API mit API-Schlüsseln",
+            "MCP-Server für KI-Assistenten",
+            "DSGVO-konform",
+            "Hosting in Frankfurt"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "name": "Free",
+            "price": "0",
+            "priceCurrency": "EUR",
+            "priceValidUntil": "2027-12-31",
+            "availability": "https://schema.org/InStock",
+            "url": "https://roadlight.pro/signup.html"
+          }
+        }
+      ]
+    }
+    </script>
 </head>
 <body>
 
@@ -434,7 +505,7 @@
                         <a href="/signup.html" class="btn btn-secondary">Kostenlos starten</a>
                     </div>
                     <div class="price-card featured">
-                        <span class="price-badge">Beliebt</span>
+                        <span class="price-badge">Demnächst</span>
                         <h3>Pro</h3>
                         <p class="price-tagline">Für wachsende Produktteams</p>
                         <div class="price-amount">bald<span> &nbsp;</span></div>

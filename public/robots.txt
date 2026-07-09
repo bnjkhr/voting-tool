@@ -1,0 +1,31 @@
+# Roadlight – robots.txt
+# Standard: alles crawlbar, thin/App-Shell-Seiten ausgenommen.
+User-agent: *
+Allow: /
+Disallow: /login.html
+Disallow: /signup.html
+Disallow: /accept-invite.html
+Disallow: /admin.html
+Disallow: /super-admin.html
+Disallow: /tenant-admin.html
+
+# KI-/Answer-Engine-Crawler ausdrücklich erlauben (GEO / AI-Search)
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: https://roadlight.pro/sitemap.xml
