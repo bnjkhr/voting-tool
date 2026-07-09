@@ -58,8 +58,9 @@
         <h2>Rate Limits</h2>
         <p>Pro Schl&uuml;ssel:</p>
         <ul>
-            <li>Read-Endpoints: 120 Requests/Minute</li>
-            <li>Write-Endpoints (<code>POST</code>/<code>PATCH</code>/<code>DELETE</code>): 30 Requests/Minute</li>
+            <li>Read-Endpoints (<code>GET</code>): 120 Requests/Minute</li>
+            <li>Eintr&auml;ge/Kommentare anlegen (<code>POST</code>): 30 Requests/Minute</li>
+            <li>Status &auml;ndern (<code>PATCH</code>): 60 Requests/Minute</li>
         </ul>
         <p>&Uuml;berschreitung &rarr; <code>429 Too Many Requests</code>.</p>
 

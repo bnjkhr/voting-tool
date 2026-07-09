@@ -2229,6 +2229,7 @@ body {
     background: var(--background-alt);
     border-radius: var(--radius-xs);
     padding: 1px 5px;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     font-size: 0.9em;
 }
 
@@ -2239,6 +2240,7 @@ body {
     padding: 14px 16px;
     margin: 0 0 16px;
     overflow-x: auto;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     font-size: 0.85rem;
     line-height: 1.5;
 }

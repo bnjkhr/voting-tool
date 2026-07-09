@@ -42,8 +42,9 @@ Fehlt ein erforderlicher Scope, gibt der Endpoint `403` zurück.
 
 Pro Schlüssel:
 
-- Read-Endpoints: 120 Requests/Minute
-- Write-Endpoints (`POST`/`PATCH`/`DELETE`): 30 Requests/Minute
+- Read-Endpoints (`GET`): 120 Requests/Minute
+- Einträge/Kommentare anlegen (`POST`): 30 Requests/Minute
+- Status ändern (`PATCH`): 60 Requests/Minute
 
 Überschreitung → `429 Too Many Requests`.
 
