@@ -41,6 +41,7 @@
             </a>
             <nav class="nav-links" aria-label="Hauptnavigation">
                 <a href="#funktionen">Funktionen</a>
+                <a href="#api-ki">API &amp; KI</a>
                 <a href="#preise">Preise</a>
                 <a href="#vorschau">Beispiel-Board</a>
             </nav>
@@ -153,7 +154,7 @@
                                 </div>
                                 <div class="release-items">
                                     <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">CSV-Export der Abstimmungsergebnisse</span><span class="tag tag-grey">geplant</span></div>
-                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">API-Zugriff für eigene Workflows</span><span class="tag tag-grey">geplant</span></div>
+                                    <div class="release-item"><span class="release-item-icon" aria-hidden="true">✨</span><span class="release-item-title">Export der Abstimmungsergebnisse als PDF</span><span class="tag tag-grey">geplant</span></div>
                                 </div>
                             </div>
                         </div>
@@ -269,7 +270,7 @@
                         <div class="rank-row"><span class="rank-votes">248</span><span class="rank-bar"><span style="width:100%"></span></span><span class="rank-label">Dunkelmodus</span></div>
                         <div class="rank-row"><span class="rank-votes">176</span><span class="rank-bar"><span style="width:71%"></span></span><span class="rank-label">CSV-Export</span></div>
                         <div class="rank-row"><span class="rank-votes">92</span><span class="rank-bar"><span style="width:37%"></span></span><span class="rank-label">Slack-Alerts</span></div>
-                        <div class="rank-row"><span class="rank-votes">54</span><span class="rank-bar"><span style="width:22%"></span></span><span class="rank-label">API-Zugriff</span></div>
+                        <div class="rank-row"><span class="rank-votes">54</span><span class="rank-bar"><span style="width:22%"></span></span><span class="rank-label">Mobile App</span></div>
                     </div>
                 </div>
 
@@ -289,7 +290,7 @@
                             <div class="roadmap-col">
                                 <h5>Geplant</h5>
                                 <div class="roadmap-card">CSV-Export</div>
-                                <div class="roadmap-card">API-Zugriff</div>
+                                <div class="roadmap-card">Mobile App</div>
                             </div>
                             <div class="roadmap-col">
                                 <h5>In Arbeit</h5>
@@ -328,6 +329,51 @@
                         <span class="cap-icon"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
                         <h3>Team-Rollen</h3>
                         <p>Owner, Admins und Team arbeiten zusammen, jeder mit genau den richtigen Rechten.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ API & KI ============ -->
+        <section id="api-ki">
+            <div class="wrap">
+                <div class="section-head reveal">
+                    <span class="eyebrow">API &amp; KI</span>
+                    <h2>Offen für deine Workflows und für KI-Assistenten</h2>
+                    <p>Roadlight ist kein geschlossenes Silo. Hol dir dein Feedback per API in eigene Tools oder lass eine KI direkt damit arbeiten.</p>
+                </div>
+                <div class="deepdive reveal">
+                    <div class="dd-text">
+                        <h2>Deine Daten, deine Automatisierung</h2>
+                        <p>Eine dokumentierte REST-API mit eigenen API-Schlüsseln gibt dir vollen Zugriff auf Boards, Einträge und Kommentare. Schlüssel erstellst du selbst im Admin-Bereich, mit fein abgestuften Rechten.</p>
+                        <ul class="dd-list">
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Einträge lesen, anlegen und Status ändern</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Eigene API-Schlüssel mit granularen Rechten</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Rate-Limits und Audit-Trail inklusive</li>
+                        </ul>
+                    </div>
+                    <div class="dd-visual">
+                        <div class="rank-row"><span class="rank-label">GET&nbsp;&nbsp;&nbsp;/api/v1/apps</span></div>
+                        <div class="rank-row"><span class="rank-label">GET&nbsp;&nbsp;&nbsp;/api/v1/apps/:slug/suggestions</span></div>
+                        <div class="rank-row"><span class="rank-label">POST&nbsp;&nbsp;/api/v1/apps/:slug/suggestions</span></div>
+                        <div class="rank-row"><span class="rank-label">PATCH&nbsp;/api/v1/suggestions/:id</span></div>
+                    </div>
+                </div>
+
+                <div class="deepdive reverse reveal">
+                    <div class="dd-text">
+                        <h2>Bereit für deinen KI-Assistenten</h2>
+                        <p>Über einen mitgelieferten MCP-Server sprechen KI-Tools wie Claude direkt mit deinem Board. Lass dein Feedback zusammenfassen, Einträge anlegen oder Status pflegen, im Dialog, ohne selbst zu klicken.</p>
+                        <ul class="dd-list">
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Model Context Protocol (MCP), sofort einsatzbereit</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Gleiche Rechte und Schlüssel wie die API</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Funktioniert mit Claude und kompatiblen Clients</li>
+                        </ul>
+                    </div>
+                    <div class="dd-visual">
+                        <div class="roadmap-card">„Fasse das offene Feedback der letzten Woche zusammen."</div>
+                        <div class="roadmap-card">„Setze Dunkelmodus auf <em>In Arbeit</em>."</div>
+                        <div class="roadmap-card">„Lege einen Bug-Report aus dieser Mail an."</div>
                     </div>
                 </div>
             </div>
