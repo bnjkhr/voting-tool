@@ -144,6 +144,7 @@ img { max-width: 100%; display: block; }
     display: inline-flex; align-items: center; justify-content: center;
     color: #fff; flex-shrink: 0;
 }
+.nav-menu { display: contents; }
 .nav-links { display: flex; align-items: center; gap: 28px; }
 .nav-links a { color: var(--secondary); font-weight: 500; font-size: 0.95rem; transition: color 0.15s ease; }
 .nav-links a:hover { color: var(--text); }
@@ -566,19 +567,31 @@ h3 { font-size: 1.2rem; }
     .deepdive { grid-template-columns: 1fr; gap: 28px; margin-bottom: 52px; }
     .deepdive.reverse .dd-visual { order: 0; }
     .grid-pricing { grid-template-columns: 1fr; }
-    .nav-links { display: none; }
+    .nav-menu { display: none; }
     .nav-toggle { display: inline-flex; }
-    .nav.open .nav-links {
+    .nav.open .nav-menu {
         display: flex;
         position: absolute;
         top: 64px; left: 0; right: 0;
         flex-direction: column;
-        gap: 4px;
+        gap: 16px;
         background: var(--surface);
         border-bottom: 1px solid var(--border);
         padding: 12px 24px 18px;
     }
+    .nav.open .nav-links {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
     .nav.open .nav-links a { padding: 10px 0; }
+    .nav.open .nav-actions {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .nav.open .nav-actions .btn { width: 100%; }
     section { padding: 60px 0; }
     .roadmap-cols { grid-template-columns: 1fr; }
 }
