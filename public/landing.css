@@ -472,7 +472,8 @@ h3 { font-size: 1.2rem; }
 .cta-inner p { color: rgba(255, 255, 255, 0.82); font-size: 1.1rem; margin: 14px auto 28px; max-width: 520px; }
 .cta-inner .btn-primary { background: var(--accent); color: #fff; }
 .cta-inner .btn-primary:hover { background: var(--accent-hover); }
-.cta-reassure { color: rgba(255, 255, 255, 0.7); font-size: 0.9rem; margin: 16px 0 0; }
+/* Höhere Spezifität als .cta-inner p, damit die Notiz wirklich kleiner rendert. */
+.cta-inner .cta-reassure { color: rgba(255, 255, 255, 0.7); font-size: 0.9rem; margin: 16px auto 0; max-width: none; }
 
 /* ---------- Weitere Fähigkeiten (bricht die Zigzag-Serie) ---------- */
 .capabilities .section-head { margin-bottom: 44px; }
