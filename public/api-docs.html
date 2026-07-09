@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API-Dokumentation &ndash; Roadlight</title>
+    <!-- Selbst gehostete Schriften (kein Drittland-Transfer an Google, DSGVO-konform) -->
+    <link rel="stylesheet" href="/fonts/fonts.css">
+    <script>
+      (function(){var t=localStorage.getItem('theme');if(!t)t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);})();
+    </script>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <main class="legal-page">
+        <a href="/" class="legal-back">&larr; Zur&uuml;ck</a>
+        <h1>Public API v1</h1>
+        <p>
+            Tenant-scoped REST-API f&uuml;r externe Tools (z.&nbsp;B. Claude Code, CLIs, Scripts), um Eintr&auml;ge auf
+            Boards zu lesen, anzulegen und zu aktualisieren. Dieselben Schl&uuml;ssel bedienen auch den
+            <a href="https://github.com/bnjkhr/voting-tool/tree/main/mcp" target="_blank" rel="noopener">MCP-Server</a>,
+            mit dem KI-Assistenten direkt mit deinem Board sprechen.
+        </p>
+
+        <h2>Base URL</h2>
+        <pre><code>https://roadlight.pro/api/v1</code></pre>
+        <p>Lokal:</p>
+        <pre><code>http://localhost:3000/api/v1</code></pre>
+
+        <h2>Authentifizierung</h2>
+        <p>Jeder Request braucht einen API-Schl&uuml;ssel im <code>Authorization</code>-Header:</p>
+        <pre><code>Authorization: Bearer vt_live_&lt;token&gt;</code></pre>
+        <p>
+            API-Schl&uuml;ssel werden im Tenant-Admin-UI unter &bdquo;API-Schl&uuml;ssel&ldquo; erstellt
+            (<code>/tenant-admin.html?tenant=&lt;slug&gt;</code>). Der Klartext-Token wird nur einmal beim Erstellen
+            angezeigt &ndash; danach speichert die Datenbank nur einen SHA-256-Hash.
+        </p>
+        <p>
+            Jeder Schl&uuml;ssel ist auf genau einen Tenant gescoped &ndash; er sieht ausschlie&szlig;lich Boards und
+            Eintr&auml;ge dieses Workspaces.
+        </p>
+
+        <h3>Scopes</h3>
+        <table>
+            <thead>
+                <tr><th>Scope</th><th>Erlaubt</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>suggestions:read</code></td><td>Boards und Eintr&auml;ge lesen</td></tr>
+                <tr><td><code>suggestions:write</code></td><td>Eintr&auml;ge anlegen (auto-freigegeben)</td></tr>
+                <tr><td><code>suggestions:status</code></td><td>Status, Priorit&auml;t und Labels &auml;ndern</td></tr>
+                <tr><td><code>comments:read</code></td><td>Kommentare lesen</td></tr>
+                <tr><td><code>comments:write</code></td><td>Admin-Kommentare schreiben (auto-freigegeben)</td></tr>
+            </tbody>
+        </table>
+        <p>Fehlt ein erforderlicher Scope, gibt der Endpoint <code>403</code> zur&uuml;ck.</p>
+
+        <h2>Rate Limits</h2>
+        <p>Pro Schl&uuml;ssel:</p>
+        <ul>
+            <li>Read-Endpoints (<code>GET</code>): 120 Requests/Minute</li>
+            <li>Eintr&auml;ge/Kommentare anlegen (<code>POST</code>): 30 Requests/Minute</li>
+            <li>Status &auml;ndern (<code>PATCH</code>): 60 Requests/Minute</li>
+        </ul>
+        <p>&Uuml;berschreitung &rarr; <code>429 Too Many Requests</code>.</p>
+
+        <h2>Fehler-Format</h2>
+        <pre><code>{ "error": "human-readable message" }</code></pre>
+
+        <h2>Endpoints</h2>
+
+        <h3><code>GET /me</code></h3>
+        <p>Sanity-Check f&uuml;r den Schl&uuml;ssel. Gibt Tenant- und Scope-Info zur&uuml;ck.</p>
+        <pre><code>curl -H "Authorization: Bearer vt_live_&hellip;" \
+  https://roadlight.pro/api/v1/me</code></pre>
+        <p>Response:</p>
+        <pre><code>{
+  "tenant": { "id": "tenant_abc", "slug": "acme", "name": "Acme Workspace" },
+  "key": { "name": "Claude Code lokal", "scopes": ["suggestions:read", "suggestions:write"] }
+}</code></pre>
+
+        <h3><code>GET /apps</code></h3>
+        <p>Liste der Boards im Tenant. Ben&ouml;tigt <code>suggestions:read</code>.</p>
+        <pre><code>curl -H "Authorization: Bearer vt_live_&hellip;" \
+  https://roadlight.pro/api/v1/apps</code></pre>
+        <p>Response:</p>
+        <pre><code>[
+  {
+    "id": "app_xyz",
+    "slug": "customer-feedback",
+    "name": "Customer Feedback",
+    "description": "W&uuml;nsche und Bugs unserer Kund:innen",
+    "ticketPrefix": "CF"
+  }
+]</code></pre>
+
+        <h3><code>GET /apps/:appSlug/suggestions</code></h3>
+        <p>
+            Liste aller Eintr&auml;ge in einem Board (auch nicht-freigegebene). Ben&ouml;tigt
+            <code>suggestions:read</code>.
+        </p>
+        <p>Query-Filter (optional):</p>
+        <ul>
+            <li><code>type</code> &ndash; <code>feature</code>, <code>bug</code>, <code>ticket</code></li>
+            <li><code>status</code> &ndash; beliebiger g&uuml;ltiger Status (siehe Konstanten unten)</li>
+            <li><code>approved</code> &ndash; <code>true</code> / <code>false</code></li>
+        </ul>
+        <pre><code>curl -H "Authorization: Bearer vt_live_&hellip;" \
+  "https://roadlight.pro/api/v1/apps/customer-feedback/suggestions?type=bug&amp;status=offen"</code></pre>
+
+        <h3><code>POST /apps/:appSlug/suggestions</code></h3>
+        <p>Neuen Eintrag erstellen &ndash; <strong>automatisch freigegeben</strong>. Ben&ouml;tigt <code>suggestions:write</code>.</p>
+        <p>Body:</p>
+        <pre><code>{
+  "type": "feature",
+  "title": "Dark mode f&uuml;r die Mobile App",
+  "description": "Auf dem iPhone fehlt aktuell der Dark-Mode-Schalter."
+}</code></pre>
+        <p>Bug-Variante:</p>
+        <pre><code>{
+  "type": "bug",
+  "title": "Login schl&auml;gt mit 500 fehl",
+  "description": "Beim Login mit Google kommt 500.",
+  "severity": "high",
+  "stepsToReproduce": "1. /login &ouml;ffnen\n2. Google-Button klicken",
+  "expectedBehavior": "Erfolgreicher Login",
+  "actualBehavior": "500 Internal Server Error",
+  "environment": { "platform": "iOS 17.4", "browser": "Safari 17" }
+}</code></pre>
+        <p>Ticket-Variante:</p>
+        <pre><code>{
+  "type": "ticket",
+  "title": "Domain umziehen",
+  "description": "DNS-Records auf Cloudflare migrieren",
+  "priority": "hoch"
+}</code></pre>
+        <p>Response (<code>201</code>):</p>
+        <pre><code>{
+  "id": "sug_abc123",
+  "ticketNumber": "CF-042",
+  "type": "feature",
+  "title": "Dark mode f&uuml;r die Mobile App",
+  "description": "&hellip;",
+  "status": "neu",
+  "priority": "mittel",
+  "labels": [],
+  "approved": true,
+  "votes": 0,
+  "appId": "app_xyz",
+  "tenantId": "tenant_abc",
+  "severity": null,
+  "createdAt": "2026-05-21T14:12:33.000Z"
+}</code></pre>
+
+        <h3><code>GET /suggestions/:id</code></h3>
+        <p>
+            Einzelnen Eintrag laden. Ben&ouml;tigt <code>suggestions:read</code>. 404, wenn Eintrag nicht zum Tenant
+            des Schl&uuml;ssels geh&ouml;rt.
+        </p>
+
+        <h3><code>PATCH /suggestions/:id</code></h3>
+        <p>Status, Priorit&auml;t und/oder Labels &auml;ndern. Ben&ouml;tigt <code>suggestions:status</code>.</p>
+        <p>Body (alle Felder optional, mindestens eines erforderlich):</p>
+        <pre><code>{
+  "status": "wird umgesetzt",
+  "priority": "hoch",
+  "labels": ["mobile", "ux"]
+}</code></pre>
+        <p>Setzt automatisch <code>approved: true</code>, falls ein Status &ne; <code>neu</code> gesetzt wird.</p>
+
+        <h3><code>GET /suggestions/:id/comments</code></h3>
+        <p>Liste aller Kommentare (auch pending). Ben&ouml;tigt <code>comments:read</code>.</p>
+
+        <h3><code>POST /suggestions/:id/comments</code></h3>
+        <p>Admin-Kommentar hinzuf&uuml;gen (auto-freigegeben). Ben&ouml;tigt <code>comments:write</code>.</p>
+        <pre><code>{
+  "text": "Wir haben das in Sprint 42 eingeplant.",
+  "screenshots": []
+}</code></pre>
+        <p>
+            <code>screenshots</code> ist optional und akzeptiert Base64-Data-URLs
+            (<code>data:image/png;base64,&hellip;</code>), max. 5 Bilder, je max. 300&nbsp;KB, gesamt max. 800&nbsp;KB.
+        </p>
+
+        <h2>Konstanten</h2>
+        <p><strong>Suggestion-Typen:</strong> <code>feature</code>, <code>bug</code>, <code>ticket</code></p>
+        <p><strong>Status (Feature):</strong> <code>neu</code>, <code>wird gepr&uuml;ft</code>, <code>wird umgesetzt</code>, <code>im Test</code>, <code>ist umgesetzt</code>, <code>wird nicht umgesetzt</code></p>
+        <p><strong>Status (Bug/Ticket):</strong> <code>neu</code>, <code>offen</code>, <code>in Bearbeitung</code>, <code>im Test</code>, <code>wartend</code>, <code>gel&ouml;st</code>, <code>geschlossen</code></p>
+        <p><strong>Priorit&auml;ten:</strong> <code>niedrig</code>, <code>mittel</code>, <code>hoch</code>, <code>kritisch</code></p>
+        <p><strong>Bug-Severities:</strong> <code>low</code>, <code>medium</code>, <code>high</code>, <code>critical</code> (wird beim Erstellen automatisch in <code>priority</code> gemappt)</p>
+
+        <h2>Audit</h2>
+        <p>
+            Jeder Write-Call (POST/PATCH/DELETE) wird mit <code>actor: "api:&lt;keyId&gt;"</code> protokolliert. Im
+            Tenant-Admin-UI sind die Aktionen in der Eintrags-Historie sichtbar.
+        </p>
+
+        <h2>Beispiel: Eintrag aus einem Bash-Script anlegen</h2>
+        <pre><code>#!/usr/bin/env bash
+set -euo pipefail
+
+: "${VOTING_TOOL_API_KEY:?Bitte API-Schl&uuml;ssel in VOTING_TOOL_API_KEY setzen}"
+
+curl -fsS -X POST \
+  -H "Authorization: Bearer $VOTING_TOOL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "bug",
+    "title": "CI rot nach Merge",
+    "description": "PR #42 hat E2E-Tests ger&ouml;tet",
+    "severity": "medium",
+    "stepsToReproduce": "main pullen, npm test",
+    "expectedBehavior": "alle Tests gr&uuml;n",
+    "actualBehavior": "tenant-admin.spec.js schl&auml;gt fehl"
+  }' \
+  https://roadlight.pro/api/v1/apps/customer-feedback/suggestions</code></pre>
+
+        <p class="legal-meta">Stand: Juli 2026</p>
+    </main>
+</body>
+</html>
