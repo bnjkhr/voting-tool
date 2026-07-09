@@ -472,6 +472,23 @@ h3 { font-size: 1.2rem; }
 .cta-inner p { color: rgba(255, 255, 255, 0.82); font-size: 1.1rem; margin: 14px auto 28px; max-width: 520px; }
 .cta-inner .btn-primary { background: var(--accent); color: #fff; }
 .cta-inner .btn-primary:hover { background: var(--accent-hover); }
+/* Höhere Spezifität als .cta-inner p, damit die Notiz wirklich kleiner rendert. */
+.cta-inner .cta-reassure { color: rgba(255, 255, 255, 0.7); font-size: 0.9rem; margin: 16px auto 0; max-width: none; }
+
+/* ---------- Weitere Fähigkeiten (bricht die Zigzag-Serie) ---------- */
+.capabilities .section-head { margin-bottom: 44px; }
+.cap-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; max-width: 960px; margin: 0 auto; }
+.cap { text-align: center; padding: 0 8px; }
+.cap-icon {
+    width: 52px; height: 52px;
+    border-radius: var(--radius-md);
+    background: var(--accent-light);
+    color: var(--accent);
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-bottom: 16px;
+}
+.cap h3 { font-size: 1.08rem; margin-bottom: 8px; }
+.cap p { color: var(--secondary); font-size: 0.95rem; max-width: 30ch; margin: 0 auto; }
 
 /* ---------- Footer ---------- */
 .footer { padding: 48px 0; border-top: 1px solid var(--border); }
@@ -510,10 +527,28 @@ h3 { font-size: 1.2rem; }
     .cookie-banner .btn { align-self: auto; flex-shrink: 0; }
 }
 
+/* ---------- Motion: Hero-Entrance + Scroll-Reveal (reduced-motion-sicher) ---------- */
+@media (prefers-reduced-motion: no-preference) {
+    @keyframes rl-rise { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+    .hero h1 { animation: rl-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    .hero .subline { animation: rl-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both; }
+    .hero-ctas { animation: rl-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both; }
+    .hero .trust { animation: rl-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.24s both; }
+
+    /* .reveal versteckt sich nur, wenn JS die Einblendung übernimmt (reveal-ready). */
+    .reveal-ready .reveal {
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .reveal-ready .reveal.is-visible { opacity: 1; transform: none; }
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
-    .grid-3, .grid-steps, .grid-4 { grid-template-columns: 1fr; }
+    .grid-3, .grid-steps, .grid-4, .cap-row { grid-template-columns: 1fr; }
     .grid-4 { gap: 16px; }
+    .cap-row { gap: 28px; max-width: 420px; }
     .deepdive { grid-template-columns: 1fr; gap: 28px; margin-bottom: 52px; }
     .deepdive.reverse .dd-visual { order: 0; }
     .grid-pricing { grid-template-columns: 1fr; }
