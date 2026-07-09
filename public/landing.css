@@ -384,6 +384,7 @@ h3 { font-size: 1.2rem; }
 .dd-list { list-style: none; display: grid; gap: 12px; }
 .dd-list li { display: flex; gap: 11px; align-items: flex-start; font-size: 0.98rem; }
 .dd-list svg { color: var(--success); flex-shrink: 0; margin-top: 3px; }
+.dd-cta { margin-top: 22px; margin-bottom: 0; }
 .dd-visual {
     background: var(--surface);
     border: 1px solid var(--border);

@@ -2232,6 +2232,45 @@ body {
     font-size: 0.9em;
 }
 
+.legal-page pre {
+    background: var(--background-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin: 0 0 16px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.legal-page pre code {
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: inherit;
+}
+
+.legal-page table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 16px;
+    font-size: 0.9rem;
+}
+
+.legal-page th,
+.legal-page td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    vertical-align: top;
+}
+
+.legal-page th {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
 .legal-note {
     background: var(--warning-light);
     border: 1px solid var(--border);
