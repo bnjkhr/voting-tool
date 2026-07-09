@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#FAF8F5">
     <title>Roadlight – Feedback-Board, öffentliche Roadmap & Changelog</title>
-    <meta name="description" content="Sammle Feedback, priorisiere nach echten Votes, zeig deine öffentliche Roadmap und feiere jedes Release – alles in einem. DSGVO-konform, Hosting in Frankfurt.">
+    <meta name="description" content="Feedback-Board, Roadmap und Changelog in einem – DSGVO-konform, Hosting in Frankfurt. Sammle Votes, priorisiere Ideen und feiere jedes Release.">
     <link rel="canonical" href="https://roadlight.pro/">
 
     <!-- Open Graph / Social Preview -->
@@ -27,6 +27,77 @@
     <!-- Selbst gehostete Schriften (kein Drittland-Transfer an Google, DSGVO-konform) -->
     <link rel="stylesheet" href="/fonts/fonts.css">
     <link rel="stylesheet" href="/landing.css">
+
+    <!-- Structured Data (Schema.org) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://roadlight.pro/#organization",
+          "name": "Roadlight",
+          "url": "https://roadlight.pro/",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://roadlight.pro/og-image.png",
+            "width": 1200,
+            "height": 630
+          },
+          "email": "hallo@roadlight.pro",
+          "contactPoint": {
+            "@type": "ContactPoint",
+            "email": "hallo@roadlight.pro",
+            "contactType": "customer support",
+            "availableLanguage": ["German"]
+          },
+          "areaServed": "EU",
+          "description": "Feedback-Board, öffentliche Roadmap und Changelog für europäische Produktteams – DSGVO-konform, Hosting in Frankfurt."
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://roadlight.pro/#website",
+          "name": "Roadlight",
+          "url": "https://roadlight.pro/",
+          "inLanguage": "de-DE",
+          "publisher": { "@id": "https://roadlight.pro/#organization" },
+          "description": "Feedback-Board, öffentliche Roadmap & Changelog – alles in einem. DSGVO-konform, Hosting in Frankfurt."
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://roadlight.pro/#software",
+          "name": "Roadlight",
+          "url": "https://roadlight.pro/",
+          "applicationCategory": "BusinessApplication",
+          "operatingSystem": "Web",
+          "inLanguage": "de-DE",
+          "description": "Sammle Feedback, priorisiere nach echten Votes, zeig deine öffentliche Roadmap und feiere jedes Release – alles in einem. DSGVO-konform, Hosting in Frankfurt.",
+          "publisher": { "@id": "https://roadlight.pro/#organization" },
+          "featureList": [
+            "Feedback-Board mit Voting",
+            "Öffentliche Roadmap",
+            "Changelog",
+            "Bug-Reports mit Screenshots",
+            "Moderation",
+            "Team-Rollen",
+            "REST-API mit API-Schlüsseln",
+            "MCP-Server für KI-Assistenten",
+            "DSGVO-konform",
+            "Hosting in Frankfurt"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "name": "Free",
+            "price": "0",
+            "priceCurrency": "EUR",
+            "priceValidUntil": "2027-12-31",
+            "availability": "https://schema.org/InStock",
+            "url": "https://roadlight.pro/signup.html"
+          }
+        }
+      ]
+    }
+    </script>
 </head>
 <body>
 
@@ -59,6 +130,7 @@
         <!-- ============ HERO ============ -->
         <section class="hero">
             <div class="wrap">
+                <span class="eyebrow">Feedback-Board · Roadmap · Changelog</span>
                 <h1>Sammle Feedback. Zeig deine Roadmap. Feiere jedes Release.</h1>
                 <p class="subline">Sammle Ideen, priorisiere nach echten Votes und halte deine Community mit Roadmap und Changelog auf dem Laufenden.</p>
                 <div class="hero-ctas">
@@ -412,6 +484,73 @@
             </div>
         </section>
 
+        <!-- ============ VERGLEICH / ALTERNATIVE ============ -->
+        <section class="compare">
+            <div class="wrap">
+                <div class="section-head reveal">
+                    <span class="eyebrow">Vergleich</span>
+                    <h2>Die DSGVO-konforme Alternative zu Canny &amp; UserVoice</h2>
+                    <p>Feedback-Board, Roadmap und Changelog in einem – gehostet in Frankfurt statt in den USA.</p>
+                </div>
+                <div class="compare-table-wrap reveal">
+                    <table class="compare-table">
+                        <caption class="visually-hidden">Vergleich der Funktionen von Roadlight, Canny und UserVoice</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Funktion</th>
+                                <th scope="col" class="is-roadlight">Roadlight</th>
+                                <th scope="col">Canny</th>
+                                <th scope="col">UserVoice</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <th scope="row">Hosting in der EU (Frankfurt)</th>
+                                <td class="is-roadlight">Frankfurt</td>
+                                <td class="compare-no">USA</td>
+                                <td class="compare-no">USA</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Feedback, Roadmap &amp; Changelog in einem</th>
+                                <td class="is-roadlight compare-yes">Ja</td>
+                                <td class="compare-yes">Ja</td>
+                                <td class="compare-no">Teilweise</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">KI-Anbindung per MCP-Server</th>
+                                <td class="is-roadlight compare-yes">Ja</td>
+                                <td class="compare-no">Nein</td>
+                                <td class="compare-no">Nein</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Dauerhaft kostenloser Plan</th>
+                                <td class="is-roadlight compare-yes">Ja</td>
+                                <td class="compare-no">Begrenzt</td>
+                                <td class="compare-no">Nein</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Sofort startklar, kein DNS-Setup</th>
+                                <td class="is-roadlight compare-yes">Ja</td>
+                                <td class="compare-no">Nein</td>
+                                <td class="compare-no">Nein</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="compare-note">Vergleich nach öffentlich verfügbaren Informationen (Stand Juli 2026). Angaben zu Drittanbietern ohne Gewähr.</p>
+            </div>
+        </section>
+
+        <!-- ============ EARLY ACCESS ============ -->
+        <section class="early-access">
+            <div class="wrap">
+                <div class="ea-inner reveal">
+                    <span class="ea-badge">Early Access</span>
+                    <p>Roadlight ist frisch gestartet. Wer jetzt einsteigt, nutzt alles kostenlos – und prägt die Roadmap von Anfang an mit.</p>
+                </div>
+            </div>
+        </section>
+
         <!-- ============ PREISE ============ -->
         <section class="pricing" id="preise">
             <div class="wrap">
@@ -434,7 +573,7 @@
                         <a href="/signup.html" class="btn btn-secondary">Kostenlos starten</a>
                     </div>
                     <div class="price-card featured">
-                        <span class="price-badge">Beliebt</span>
+                        <span class="price-badge">Demnächst</span>
                         <h3>Pro</h3>
                         <p class="price-tagline">Für wachsende Produktteams</p>
                         <div class="price-amount">bald<span> &nbsp;</span></div>

@@ -111,6 +111,17 @@ loadDotEnvFileIfPresent();
 
 // Middleware
 app.use(cors());
+
+// Sicherheits-Baseline-Header auf allen Responses. CSP bewusst ausgelassen
+// (braucht sorgfältiges Testen gegen Inline-Skripte/-Styles) -> Folge-Ticket.
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 // Stripe-Webhook braucht den Roh-Body zur Signaturprüfung -> VOR express.json
 // mit dem Raw-Parser bedienen (express.json überspringt danach dank req._body).
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
@@ -126,7 +137,21 @@ app.get('/', (req, res) => {
 });
 
 // Serve static files from public directory
-app.use(express.static(path.join(__dirname, '../public')));
+app.use(express.static(path.join(__dirname, '../public'), {
+  setHeaders: (res, filePath) => {
+    if (/\.(woff2?|ttf|otf|eot)$/i.test(filePath)) {
+      // Schriften sind stabil -> aggressiv cachen.
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (/\.(png|jpe?g|gif|svg|webp|avif|ico)$/i.test(filePath)) {
+      // Bilder moderat cachen (1 Woche).
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+    } else if (/\.(css|js)$/i.test(filePath)) {
+      // CSS/JS sind (noch) nicht content-gehasht -> nur revalidieren, damit
+      // Deploys sofort greifen. ETag/Last-Modified liefern 304s.
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    }
+  },
+}));
 
 // Convenience routes (people tend to type /admin instead of /admin.html)
 app.get(['/admin', '/admin/'], (req, res) => {
