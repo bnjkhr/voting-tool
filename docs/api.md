@@ -2,6 +2,10 @@
 
 Tenant-scoped REST API für externe Tools (z.B. Claude Code, CLIs, Scripts), um Einträge auf Boards zu lesen, anzulegen und zu aktualisieren.
 
+> **Pro-Feature:** API- und MCP-Zugriff sind Teil des Pro-Plans. Free-Workspaces können dann keine API-Schlüssel erstellen; bestehende Schlüssel liefern nach einem Downgrade `402 Payment Required` (`code: "upgrade_required"`), bis der Workspace wieder auf Pro upgradet.
+>
+> **Aktueller Stand:** Das Gating ist über den Master-Schalter `BILLING_ENFORCED` gesteuert und standardmäßig **aus**. Solange Premium nicht live geschaltet ist (`BILLING_ENFORCED` ≠ `true`), haben **alle** Workspaces vollen API-/MCP-Zugriff.
+
 ## Base URL
 
 ```

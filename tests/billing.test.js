@@ -44,6 +44,55 @@ test('Period-Ende auch vom ersten Item lesen (neuere Stripe-API)', () => {
   assert.equal(b.currentPeriodEnd.getTime(), 1795000000 * 1000);
 });
 
+test('billingEnforced ist per Default aus (alle haben Premium bis zum Live-Schalten)', () => {
+  const prev = process.env.BILLING_ENFORCED;
+  try {
+    delete process.env.BILLING_ENFORCED;
+    assert.equal(billing.billingEnforced(), false, 'ohne Env => nicht erzwungen');
+    process.env.BILLING_ENFORCED = 'false';
+    assert.equal(billing.billingEnforced(), false, "'false' => nicht erzwungen");
+    process.env.BILLING_ENFORCED = '1';
+    assert.equal(billing.billingEnforced(), false, "nur exakt 'true' schaltet scharf");
+    process.env.BILLING_ENFORCED = 'true';
+    assert.equal(billing.billingEnforced(), true, "'true' => Gating aktiv");
+  } finally {
+    if (prev === undefined) delete process.env.BILLING_ENFORCED;
+    else process.env.BILLING_ENFORCED = prev;
+  }
+});
+
+test('isProPlan: nur plan="pro" ist Pro; fehlend/leer => Free', () => {
+  assert.equal(billing.isProPlan({ plan: 'pro' }), true);
+  assert.equal(billing.isProPlan({ plan: 'free' }), false);
+  assert.equal(billing.isProPlan({}), false);
+  assert.equal(billing.isProPlan(null), false);
+  assert.equal(billing.isProPlan(undefined), false);
+});
+
+test('requiresProUpgrade: sperrt nur bei live Gating (enforced+stripe+postgres) und Nicht-Pro', () => {
+  const prevEnforced = process.env.BILLING_ENFORCED;
+  const prevStripe = process.env.STRIPE_SECRET_KEY;
+  try {
+    // Gating vollständig live:
+    process.env.BILLING_ENFORCED = 'true';
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    assert.equal(billing.requiresProUpgrade({ plan: 'free' }, { postgres: true }), true, 'Free + alles live => gesperrt');
+    assert.equal(billing.requiresProUpgrade({ plan: 'pro' }, { postgres: true }), false, 'Pro => nie gesperrt');
+
+    // Jede fehlende Bedingung öffnet den Zugriff (alle sind effektiv Pro):
+    assert.equal(billing.requiresProUpgrade({ plan: 'free' }, { postgres: false }), false, 'ohne Postgres offen');
+    assert.equal(billing.requiresProUpgrade({ plan: 'free' }, {}), false, 'ohne postgres-Flag offen');
+    process.env.BILLING_ENFORCED = 'false';
+    assert.equal(billing.requiresProUpgrade({ plan: 'free' }, { postgres: true }), false, 'ohne Enforce offen');
+    process.env.BILLING_ENFORCED = 'true';
+    delete process.env.STRIPE_SECRET_KEY;
+    assert.equal(billing.requiresProUpgrade({ plan: 'free' }, { postgres: true }), false, 'ohne Stripe offen');
+  } finally {
+    if (prevEnforced === undefined) delete process.env.BILLING_ENFORCED; else process.env.BILLING_ENFORCED = prevEnforced;
+    if (prevStripe === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = prevStripe;
+  }
+});
+
 test('billingEnabled/getStripe sind ohne STRIPE_SECRET_KEY inaktiv', () => {
   const prev = process.env.STRIPE_SECRET_KEY;
   try {

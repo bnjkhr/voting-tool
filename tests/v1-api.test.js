@@ -293,3 +293,60 @@ test('docs/api.md documents every v1 endpoint, scope and rate limit', () => {
   assert.ok(apiDocs.includes('https://votingtool.benkohler.de/api/v1'));
   assert.ok(apiDocs.includes('Authorization: Bearer vt_live_'));
 });
+
+// ---------------------------------------------------------------------------
+// Pro-Gating: API-Schlüssel & MCP sind ein Pro-Feature
+// ---------------------------------------------------------------------------
+
+test('apiAccessRequiresUpgrade delegiert an das feature-unabhängige Gate in lib/billing', () => {
+  assert.ok(apiSource.includes('function apiAccessRequiresUpgrade(tenant) {'), 'apiAccessRequiresUpgrade muss existieren');
+  // Die 3-Bedingungs-Logik (enforced + stripe + postgres) lebt in lib/billing;
+  // hier wird nur der usePostgres-Flag reingereicht. Verhalten deckt
+  // tests/billing.test.js ab.
+  assert.ok(
+    apiSource.includes('return billing.requiresProUpgrade(tenant, { postgres: usePostgres() });'),
+    'nutzt billing.requiresProUpgrade mit dem usePostgres-Flag als Plan-Quelle'
+  );
+});
+
+test('API-Key-Erstellung ist hinter Pro gegated (402 upgrade_required)', () => {
+  const createHandler = apiSource
+    .split("app.post('/api/admin/tenants/:tenantSlug/api-keys'")[1]
+    ?.split('app.delete')[0] || '';
+  assert.ok(createHandler.length > 0, 'Create-Handler muss gefunden werden');
+  assert.ok(createHandler.includes('apiAccessRequiresUpgrade(tenant)'), 'Create prüft das Entitlement');
+  assert.ok(createHandler.includes("code: 'upgrade_required'"), 'liefert maschinenlesbaren Code');
+  assert.ok(/res\.status\(402\)/.test(createHandler), 'gated mit 402 Payment Required');
+});
+
+test('requireApiKey sperrt die Nutzung bei Nicht-Pro (bestehende Keys, Downgrade)', () => {
+  const middleware = apiSource
+    .split('function requireApiKey(')[1]
+    ?.split('async function loadApiKeySuggestionById')[0] || '';
+  assert.ok(middleware.length > 0, 'requireApiKey muss gefunden werden');
+  assert.ok(middleware.includes('apiAccessRequiresUpgrade(tenant)'), 'Usage-Gate im Middleware-Pfad');
+  assert.ok(/res\.status\(402\)/.test(middleware), 'gated Requests liefern 402');
+});
+
+test('Tenant-Admin-UI sperrt die Key-Erstellung im Free-Plan', () => {
+  assert.ok(tenantAdminScript.includes('isApiAccessGated()'), 'Frontend-Gate-Helper existiert');
+  assert.ok(
+    /this\.billing\.billingEnforced\) && !this\.isProPlan\(this\.billing\)/.test(tenantAdminScript),
+    'Gate greift erst bei live Premium (billingEnforced) und Nicht-Pro'
+  );
+  assert.ok(tenantAdminScript.includes("this.isApiAccessGated()"), 'createApiKey nutzt den Gate-Check');
+  assert.ok(tenantAdminHtml.includes('id="apiKeyProNotice"'), 'Pro-Hinweis-Element im Markup');
+});
+
+test('docs/api.md und api-docs.html weisen API/MCP als Pro-Feature aus', () => {
+  assert.ok(/Pro-Feature/.test(apiDocs), 'docs/api.md nennt das Pro-Feature');
+  assert.ok(apiDocs.includes('upgrade_required'), 'docs/api.md dokumentiert den 402-Code');
+});
+
+test('/billing meldet den Enforce-Status an die UI (Master-Schalter)', () => {
+  const handler = apiSource
+    .split("app.get('/api/admin/tenants/:tenantSlug/billing'")[1]
+    ?.split('app.post')[0] || '';
+  assert.ok(handler.includes('billingEnforced: billing.billingEnforced()'),
+    '/billing gibt billingEnforced zurück, damit die UI vor dem Live-Schalten offen bleibt');
+});
