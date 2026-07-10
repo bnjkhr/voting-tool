@@ -6661,7 +6661,16 @@ function requireApiKey(requiredScopes = []) {
       // API-/MCP-Zugriff ist ein Pro-Feature. Bei einem Downgrade auf Free
       // liefern bestehende Keys 402 (die Keys bleiben erhalten, ein erneutes
       // Upgrade reaktiviert sie sofort). Greift nur bei aktivem Billing.
-      if (apiAccessRequiresUpgrade(tenant)) {
+      //
+      // Der oben aus Firestore geladene Tenant trägt kein `plan` — das lebt in
+      // Postgres, wohin der Stripe-Webhook synct. Für die Entitlement-Prüfung
+      // daher den maßgeblichen Tenant aus der Plan-Quelle laden, aber nur wenn
+      // das Gating überhaupt live ist (sonst kein Extra-Query auf dem Hot-Path).
+      let planTenant = tenant;
+      if (billing.proGatingActive({ postgres: usePostgres() })) {
+        planTenant = (await repos.tenants.findById(data.tenantId)) || tenant;
+      }
+      if (apiAccessRequiresUpgrade(planTenant)) {
         return res.status(402).json({
           error: 'Dieser Workspace hat keinen aktiven Pro-Plan. API- und MCP-Zugriff sind Pro-Features.',
           code: 'upgrade_required',

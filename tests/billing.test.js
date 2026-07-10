@@ -69,6 +69,26 @@ test('isProPlan: nur plan="pro" ist Pro; fehlend/leer => Free', () => {
   assert.equal(billing.isProPlan(undefined), false);
 });
 
+test('proGatingActive: nur wenn enforced + stripe + postgres alle zutreffen', () => {
+  const prevEnforced = process.env.BILLING_ENFORCED;
+  const prevStripe = process.env.STRIPE_SECRET_KEY;
+  try {
+    process.env.BILLING_ENFORCED = 'true';
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    assert.equal(billing.proGatingActive({ postgres: true }), true, 'alle drei => aktiv');
+    assert.equal(billing.proGatingActive({ postgres: false }), false, 'ohne Postgres => inaktiv');
+    assert.equal(billing.proGatingActive({}), false, 'ohne postgres-Flag => inaktiv');
+    process.env.BILLING_ENFORCED = 'false';
+    assert.equal(billing.proGatingActive({ postgres: true }), false, 'ohne Enforce => inaktiv');
+    process.env.BILLING_ENFORCED = 'true';
+    delete process.env.STRIPE_SECRET_KEY;
+    assert.equal(billing.proGatingActive({ postgres: true }), false, 'ohne Stripe => inaktiv');
+  } finally {
+    if (prevEnforced === undefined) delete process.env.BILLING_ENFORCED; else process.env.BILLING_ENFORCED = prevEnforced;
+    if (prevStripe === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = prevStripe;
+  }
+});
+
 test('requiresProUpgrade: sperrt nur bei live Gating (enforced+stripe+postgres) und Nicht-Pro', () => {
   const prevEnforced = process.env.BILLING_ENFORCED;
   const prevStripe = process.env.STRIPE_SECRET_KEY;

@@ -1184,11 +1184,13 @@ class TenantAdminApp {
     }
 
     // API-/MCP-Zugriff ist ein Pro-Feature. Gesperrt wird erst, wenn Premium
-    // live geschaltet ist (billingEnforced) und der Plan nicht Pro ist. Bis
-    // dahin haben alle Zugriff. Ohne aktives Billing (Legacy/Firestore) liefert
-    // /billing 404 -> this.billing bleibt leer -> offen, analog zum Backend.
+    // live geschaltet ist (billingEnforced) UND Stripe konfiguriert ist
+    // (billingEnabled) — dieselben Bedingungen wie das Backend-Gate; Postgres ist
+    // implizit, da /billing ohne Postgres 404 liefert und this.billing leer
+    // bleibt. Ohne aktives Billing (Legacy/Firestore) also offen, analog Backend.
     isApiAccessGated() {
-        return !!(this.billing && this.billing.billingEnforced) && !this.isProPlan(this.billing);
+        const b = this.billing;
+        return !!(b && b.billingEnforced && b.billingEnabled) && !this.isProPlan(b);
     }
 
     renderApiKeys() {
@@ -1200,8 +1202,12 @@ class TenantAdminApp {
         const form = document.getElementById('apiKeyForm');
         if (notice) notice.classList.toggle('is-hidden', !gated || !this.canManageWorkspace());
         if (form) {
-            form.classList.toggle('is-hidden', gated);
-            form.querySelectorAll('input, button').forEach(el => { el.disabled = gated; });
+            // Auch die Admin-only-Sichtbarkeit erhalten — sonst zeigt renderApiKeys
+            // das Formular Nicht-Admins, weil es das gemeinsame is-hidden-Toggle
+            // aus applyRolePermissions überschreibt.
+            const hideForm = gated || !this.canManageWorkspace();
+            form.classList.toggle('is-hidden', hideForm);
+            form.querySelectorAll('input, button').forEach(el => { el.disabled = hideForm; });
         }
 
         if (!this.canManageWorkspace()) {
