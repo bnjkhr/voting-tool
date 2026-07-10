@@ -30,6 +30,13 @@ STRIPE_WEBHOOK_SECRET=whsec_…
 STRIPE_PRICE_PRO=price_…
 ```
 
+> **Master-Schalter `BILLING_ENFORCED`** (Default: aus): Steuert, ob Pro-Features
+> (aktuell API-/MCP-Zugriff) tatsächlich gesperrt werden. Bewusst **getrennt**
+> von `STRIPE_SECRET_KEY`, damit das Anbinden/Testen von Stripe das Gating nicht
+> versehentlich scharf schaltet. Solange `BILLING_ENFORCED` ≠ `true`, haben
+> **alle** Workspaces vollen Zugriff auf Pro-Features (jeder ist effektiv Pro).
+> Erst beim offiziellen Premium-Launch `BILLING_ENFORCED=true` setzen.
+
 ## 4. Lokal testen (Stripe CLI)
 ```
 stripe login
@@ -51,7 +58,13 @@ gesetzt sein.
 - `POST /api/admin/tenants/:slug/billing/checkout` — Checkout-Session (Owner).
 - `POST /api/admin/tenants/:slug/billing/portal` — Customer Portal (Owner).
 
+## Gating (Pro-Features)
+- **API & MCP:** hinter Pro gegatet — Erstellung *und* Nutzung von API-Schlüsseln.
+  Aktiv erst mit `BILLING_ENFORCED=true` (+ Stripe + Postgres). Bis dahin offen.
+- Beim Live-Schalten `BILLING_ENFORCED=true` setzen; Downgrade sperrt bestehende
+  Keys mit `402` (Keys bleiben erhalten, Upgrade reaktiviert sie).
+
 ## Noch offen (Folge-PRs)
 - **UI:** „Upgrade"/„Abo verwalten" in der Tenant-Konsole, Plan-Anzeige.
-- **Gating:** Free-Limits durchsetzen (1 Board, 2 Team-Mitglieder,
+- **Gating:** weitere Free-Limits durchsetzen (1 Board, 2 Team-Mitglieder,
   „Powered by Roadlight"-Badge); Pro hebt sie auf.

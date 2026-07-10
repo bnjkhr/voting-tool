@@ -3801,6 +3801,13 @@ app.post('/api/stripe/webhook', async (req, res) => {
   res.json({ received: true });
 });
 
+// API-Schlüssel & MCP sind ein Pro-Feature. Das feature-unabhängige Gate lebt in
+// lib/billing.js (billing.requiresProUpgrade); hier nur der usePostgres-Flag als
+// Plan-Quelle reingereicht. Bis Premium live ist, hat jeder vollen Zugriff.
+function apiAccessRequiresUpgrade(tenant) {
+  return billing.requiresProUpgrade(tenant, { postgres: usePostgres() });
+}
+
 // Tenant Admin: aktueller Plan/Abo-Status (für die Konsolen-UI).
 app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (req, res) => {
   try {
@@ -3814,6 +3821,9 @@ app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (
       trialEndsAt: tenant.trialEndsAt || null,
       hasSubscription: !!tenant.stripeCustomerId,
       billingEnabled: billing.billingEnabled(),
+      // Steuert, ob Pro-Features (API/MCP) tatsächlich gesperrt werden. Solange
+      // false, haben alle vollen Zugriff — Premium ist noch nicht live.
+      billingEnforced: billing.billingEnforced(),
       // Checkout braucht zusätzlich zum Secret-Key einen konfigurierten Preis —
       // sonst würde "Upgrade" garantiert in ein 503 laufen. Das Portal (Abo
       // verwalten) genügt der Secret-Key allein.
@@ -6647,10 +6657,30 @@ function requireApiKey(requiredScopes = []) {
         return res.status(403).json({ error: 'API key tenant inactive or missing' });
       }
 
+      const tenant = { id: tenantDoc.id, ...tenantDoc.data() };
+      // API-/MCP-Zugriff ist ein Pro-Feature. Bei einem Downgrade auf Free
+      // liefern bestehende Keys 402 (die Keys bleiben erhalten, ein erneutes
+      // Upgrade reaktiviert sie sofort). Greift nur bei aktivem Billing.
+      //
+      // Der oben aus Firestore geladene Tenant trägt kein `plan` — das lebt in
+      // Postgres, wohin der Stripe-Webhook synct. Für die Entitlement-Prüfung
+      // daher den maßgeblichen Tenant aus der Plan-Quelle laden, aber nur wenn
+      // das Gating überhaupt live ist (sonst kein Extra-Query auf dem Hot-Path).
+      let planTenant = tenant;
+      if (billing.proGatingActive({ postgres: usePostgres() })) {
+        planTenant = (await repos.tenants.findById(data.tenantId)) || tenant;
+      }
+      if (apiAccessRequiresUpgrade(planTenant)) {
+        return res.status(402).json({
+          error: 'Dieser Workspace hat keinen aktiven Pro-Plan. API- und MCP-Zugriff sind Pro-Features.',
+          code: 'upgrade_required',
+        });
+      }
+
       req.apiAuth = {
         keyId: data.id,
         tenantId: data.tenantId,
-        tenant: { id: tenantDoc.id, ...tenantDoc.data() },
+        tenant,
         scopes: grantedScopes,
         keyName: data.name,
       };
@@ -7042,6 +7072,13 @@ app.post('/api/admin/tenants/:tenantSlug/api-keys', requireTenantAccess(['owner'
   try {
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
+
+    if (apiAccessRequiresUpgrade(tenant)) {
+      return res.status(402).json({
+        error: 'API-Schlüssel und MCP-Zugriff sind ein Pro-Feature. Bitte upgrade den Workspace auf Pro.',
+        code: 'upgrade_required',
+      });
+    }
 
     const name = (req.body?.name || '').toString().trim();
     if (!name) return res.status(400).json({ error: 'Name ist erforderlich' });

@@ -1178,9 +1178,37 @@ class TenantAdminApp {
         this.renderApiKeys();
     }
 
+    // Einheitlicher Pro-Plan-Check über ein Plan-tragendes Objekt (z.B. this.billing).
+    isProPlan(source) {
+        return ((source || {}).plan || 'free') === 'pro';
+    }
+
+    // API-/MCP-Zugriff ist ein Pro-Feature. Gesperrt wird erst, wenn Premium
+    // live geschaltet ist (billingEnforced) UND Stripe konfiguriert ist
+    // (billingEnabled) — dieselben Bedingungen wie das Backend-Gate; Postgres ist
+    // implizit, da /billing ohne Postgres 404 liefert und this.billing leer
+    // bleibt. Ohne aktives Billing (Legacy/Firestore) also offen, analog Backend.
+    isApiAccessGated() {
+        const b = this.billing;
+        return !!(b && b.billingEnforced && b.billingEnabled) && !this.isProPlan(b);
+    }
+
     renderApiKeys() {
         const host = document.getElementById('apiKeysList');
         if (!host) return;
+
+        const gated = this.isApiAccessGated();
+        const notice = document.getElementById('apiKeyProNotice');
+        const form = document.getElementById('apiKeyForm');
+        if (notice) notice.classList.toggle('is-hidden', !gated || !this.canManageWorkspace());
+        if (form) {
+            // Auch die Admin-only-Sichtbarkeit erhalten — sonst zeigt renderApiKeys
+            // das Formular Nicht-Admins, weil es das gemeinsame is-hidden-Toggle
+            // aus applyRolePermissions überschreibt.
+            const hideForm = gated || !this.canManageWorkspace();
+            form.classList.toggle('is-hidden', hideForm);
+            form.querySelectorAll('input, button').forEach(el => { el.disabled = hideForm; });
+        }
 
         if (!this.canManageWorkspace()) {
             host.innerHTML = '<div class="tenant-empty">API-Schlüssel sind nur für Admins sichtbar.</div>';
@@ -1216,6 +1244,11 @@ class TenantAdminApp {
     async createApiKey() {
         if (!this.canManageWorkspace()) {
             this.showToast('Keine Berechtigung für API-Schlüssel', 'error');
+            return;
+        }
+
+        if (this.isApiAccessGated()) {
+            this.showToast('API-Schlüssel sind ein Pro-Feature. Bitte upgrade auf Pro.', 'error');
             return;
         }
 
@@ -1327,6 +1360,9 @@ class TenantAdminApp {
 
             this.billing = data;
             this.renderBilling();
+            // Plan bestimmt das Pro-Gating der API-Schlüssel; beide Loader laufen
+            // parallel, daher hier neu rendern, sobald der Plan bekannt ist.
+            this.renderApiKeys();
 
             // Rückmeldung aus dem Checkout einmalig anzeigen.
             if (this.billingReturn === 'success') {
@@ -1356,7 +1392,8 @@ class TenantAdminApp {
                 const data = await response.json();
                 this.billing = data;
                 this.renderBilling();
-                if ((data.plan || 'free') === 'pro') return; // Sync durch -> fertig
+                this.renderApiKeys();
+                if (this.isProPlan(data)) return; // Sync durch -> fertig
             }
         } catch (error) {
             console.error('Error polling billing status:', error);
@@ -1372,7 +1409,7 @@ class TenantAdminApp {
 
         const b = this.billing || {};
         const proStatuses = ['active', 'trialing', 'past_due'];
-        const isPro = (b.plan || 'free') === 'pro';
+        const isPro = this.isProPlan(b);
         const status = b.subscriptionStatus || null;
         const isOwner = this.currentRole === 'owner';
 
@@ -1395,8 +1432,8 @@ class TenantAdminApp {
         }
 
         const features = isPro
-            ? ['Unbegrenzt Boards', 'Unbegrenzt Team-Mitglieder', 'Kein „Powered by Roadlight“-Badge']
-            : ['1 Board', '2 Team-Mitglieder', '„Powered by Roadlight“-Badge'];
+            ? ['Unbegrenzt Boards', 'Unbegrenzt Team-Mitglieder', 'API-Zugriff & MCP-Server', 'Kein „Powered by Roadlight“-Badge']
+            : ['1 Board', '2 Team-Mitglieder', 'API & MCP (nur Pro)', '„Powered by Roadlight“-Badge'];
 
         let actions = '';
         let note = '';
