@@ -1435,6 +1435,14 @@ class TenantAdminApp {
             ? ['Unbegrenzt Boards', 'Unbegrenzt Team-Mitglieder', 'API-Zugriff & MCP-Server', 'Kein „Powered by Roadlight“-Badge']
             : ['1 Board', '2 Team-Mitglieder', 'API & MCP (nur Pro)', '„Powered by Roadlight“-Badge'];
 
+        // Nutzung vs. Limit — der Server liefert `usage` nur, wenn das Gating
+        // live ist; im Free-Plan zeigen wir daraus „1/1 Board, 2/2 Mitglieder".
+        let usageLine = '';
+        if (!isPro && b.usage) {
+            const u = b.usage;
+            usageLine = `<p class="billing-detail">Genutzt: ${u.boards}/${u.boardLimit} Board, ${u.members}/${u.memberLimit} Mitglieder.</p>`;
+        }
+
         let actions = '';
         let note = '';
         if (!b.billingEnabled) {
@@ -1465,6 +1473,7 @@ class TenantAdminApp {
                 ${statusBadge}
             </div>
             <p class="billing-detail">${this.escapeHtml(detail)}</p>
+            ${usageLine}
             <ul class="billing-features">${features.map(feature => `<li>${this.escapeHtml(feature)}</li>`).join('')}</ul>
             ${actions}
             ${note ? `<p class="billing-note">${this.escapeHtml(note)}</p>` : ''}

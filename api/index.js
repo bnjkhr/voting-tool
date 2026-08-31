@@ -62,6 +62,7 @@ const { shouldServeAppShell } = require('./spa-fallback');
 const repos = require('../db');
 const { usePostgres } = repos.backend;
 const billing = require('../lib/billing');
+const planLimits = require('../lib/plan-limits');
 
 const app = express();
 
@@ -1776,7 +1777,20 @@ app.get('/api/tenants/:tenantSlug', async (req, res) => {
       return res.status(404).json({ error: 'Tenant not found' });
     }
 
-    res.json(tenant);
+    // Reduziertes, öffentliches Shape — Billing-/Stripe-Felder (Kunden-/Abo-IDs
+    // und -Status) gehören NICHT in eine öffentliche Antwort.
+    // Badge nur, wenn Premium live ist UND der Workspace nicht Pro ist — dieselbe
+    // Gate-Logik wie die übrigen Pro-Features (respektiert BILLING_ENFORCED), also
+    // in der Beta kein Badge.
+    res.json({
+      id: tenant.id,
+      name: tenant.name,
+      displayName: tenant.displayName,
+      slug: tenant.slug,
+      status: tenant.status,
+      plan: tenant.plan || 'free',
+      showBadge: billing.requiresProUpgrade(tenant, { postgres: usePostgres() }),
+    });
   } catch (error) {
     console.error('Error fetching tenant:', error);
     res.status(500).json({ error: 'Failed to fetch tenant' });
@@ -3564,6 +3578,43 @@ app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'a
       return res.status(400).json({ error: 'Invalid board slug' });
     }
 
+    const ticketPrefix = buildTicketPrefix(req.body?.boardTicketPrefix || req.body?.ticketPrefix, boardName);
+    const description = validateInput(req.body?.description, 500) || `Feedback Board für ${tenant.displayName || tenant.name || tenant.slug || tenant.id}`;
+
+    if (usePostgres()) {
+      // Slug-Konflikt innerhalb des Tenants.
+      const existing = await repos.apps.findBySlug(tenant.id, boardSlug);
+      if (existing) {
+        return res.status(409).json({ error: 'Tenant app slug already exists' });
+      }
+      // Free-Plan: max. 1 Board. Gate greift nur, wenn Premium live ist
+      // (billing.requiresProUpgrade respektiert BILLING_ENFORCED) und der Plan
+      // nicht Pro ist. Bestehende Boards bleiben immer erhalten — nur die
+      // Neu-Anlage über dem Limit wird blockiert (kulanter Downgrade).
+      if (billing.requiresProUpgrade(tenant, { postgres: usePostgres() })) {
+        const boards = await repos.apps.listByTenant(tenant.id);
+        if (boards.length >= planLimits.FREE_MAX_BOARDS) {
+          return res.status(402).json({
+            error: `Der Free-Plan erlaubt nur ${planLimits.FREE_MAX_BOARDS} Board. Upgrade auf Pro für unbegrenzte Boards.`,
+            code: 'upgrade_required',
+            resource: 'boards',
+            limit: planLimits.FREE_MAX_BOARDS,
+          });
+        }
+      }
+      const created = await repos.apps.create({
+        id: crypto.randomUUID(),
+        tenantId: tenant.id,
+        name: boardName,
+        description,
+        slug: boardSlug,
+        ticketPrefix,
+        labels: [],
+      });
+      return res.status(201).json(created);
+    }
+
+    // Firestore (Legacy) — unverändert.
     const slugSnapshot = await db.collection('apps')
       .where('slug', '==', boardSlug)
       .get();
@@ -3573,8 +3624,6 @@ app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'a
       return res.status(409).json({ error: 'Tenant app slug already exists' });
     }
 
-    const ticketPrefix = buildTicketPrefix(req.body?.boardTicketPrefix || req.body?.ticketPrefix, boardName);
-    const description = validateInput(req.body?.description, 500) || `Feedback Board für ${tenant.displayName || tenant.name || tenant.slug || tenant.id}`;
     const timestamp = admin.firestore.FieldValue.serverTimestamp();
     const appRef = db.collection('apps').doc();
     const appData = {
@@ -3814,12 +3863,31 @@ app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (
     if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
+    // Nutzung vs. Limits — nur zählen, wenn das Gating überhaupt live ist
+    // (sonst kein Extra-Query in der Beta). Die Konsole zeigt daraus „1/1 Board".
+    let usage = null;
+    if (billing.proGatingActive({ postgres: usePostgres() })) {
+      const [boards, members, invites] = await Promise.all([
+        repos.apps.listByTenant(tenant.id),
+        repos.memberships.listByTenant(tenant.id),
+        repos.invites.listByTenant(tenant.id),
+      ]);
+      const memberCount = members.filter(m => (m.status || 'active') === 'active').length
+        + invites.filter(i => (i.status || 'pending') === 'pending').length;
+      usage = {
+        boards: boards.length,
+        members: memberCount,
+        boardLimit: planLimits.FREE_MAX_BOARDS,
+        memberLimit: planLimits.FREE_MAX_MEMBERS,
+      };
+    }
     res.json({
       plan: tenant.plan || billing.PLAN_FREE,
       subscriptionStatus: tenant.subscriptionStatus || null,
       currentPeriodEnd: tenant.currentPeriodEnd || null,
       trialEndsAt: tenant.trialEndsAt || null,
       hasSubscription: !!tenant.stripeCustomerId,
+      usage,
       billingEnabled: billing.billingEnabled(),
       // Steuert, ob Pro-Features (API/MCP) tatsächlich gesperrt werden. Solange
       // false, haben alle vollen Zugriff — Premium ist noch nicht live.
@@ -4025,6 +4093,24 @@ app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner',
         const membership = await repos.memberships.findByTenantAndUser(tenant.id, existing.id);
         if (membership) {
           return res.status(409).json({ error: 'User is already a member of this tenant' });
+        }
+      }
+      // Free-Plan: max. 2 Team-Mitglieder (aktive Memberships + offene Invites).
+      // Gate nur bei aktivem Premium (respektiert BILLING_ENFORCED).
+      if (billing.requiresProUpgrade(tenant, { postgres: usePostgres() })) {
+        const [members, invites] = await Promise.all([
+          repos.memberships.listByTenant(tenant.id),
+          repos.invites.listByTenant(tenant.id),
+        ]);
+        const active = members.filter(m => (m.status || 'active') === 'active').length;
+        const pending = invites.filter(i => (i.status || 'pending') === 'pending').length;
+        if (active + pending >= planLimits.FREE_MAX_MEMBERS) {
+          return res.status(402).json({
+            error: `Der Free-Plan erlaubt nur ${planLimits.FREE_MAX_MEMBERS} Team-Mitglieder. Upgrade auf Pro für ein unbegrenztes Team.`,
+            code: 'upgrade_required',
+            resource: 'members',
+            limit: planLimits.FREE_MAX_MEMBERS,
+          });
         }
       }
     } else {

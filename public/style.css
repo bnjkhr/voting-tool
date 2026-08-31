@@ -2307,3 +2307,24 @@ body {
 .site-footer a:hover {
     color: var(--primary-color);
 }
+
+/* „Powered by Roadlight"-Badge (Free-Plan). Dezente Pill, hebt sich leicht von
+   den Rechts-Links ab. [hidden] respektieren, sonst würde flex es zeigen. */
+.powered-by-badge {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--background-alt, transparent);
+}
+
+.powered-by-badge[hidden] {
+    display: none;
+}
+
+.powered-by-badge:hover {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}

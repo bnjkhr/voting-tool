@@ -59,12 +59,22 @@ gesetzt sein.
 - `POST /api/admin/tenants/:slug/billing/portal` — Customer Portal (Owner).
 
 ## Gating (Pro-Features)
-- **API & MCP:** hinter Pro gegatet — Erstellung *und* Nutzung von API-Schlüsseln.
-  Aktiv erst mit `BILLING_ENFORCED=true` (+ Stripe + Postgres). Bis dahin offen.
-- Beim Live-Schalten `BILLING_ENFORCED=true` setzen; Downgrade sperrt bestehende
-  Keys mit `402` (Keys bleiben erhalten, Upgrade reaktiviert sie).
+Alle Pro-Gates laufen über `billing.requiresProUpgrade(tenant, {postgres})` und
+greifen **nur** bei `BILLING_ENFORCED=true` (+ Stripe + Postgres). Bis dahin ist
+jeder effektiv Pro. Downgrade ist kulant: bestehende Daten bleiben, nur Neu-Anlage
+über dem Limit wird gesperrt.
+- **API & MCP:** Erstellung *und* Nutzung von API-Schlüsseln (`402`, Keys bleiben,
+  Upgrade reaktiviert).
+- **Boards:** Free = max. **1 Board**. 2. Board → `402 upgrade_required`.
+- **Team:** Free = max. **2 Mitglieder** (aktive + offene Einladungen). 3. → `402`.
+- **Badge:** „Powered by Roadlight" auf dem öffentlichen Board im Free-Plan.
+- Limits zentral in `lib/plan-limits.js`. Die Konsole zeigt die Auslastung
+  („1/1 Board, 2/2 Mitglieder") aus dem `usage`-Feld von `GET …/billing`.
 
-## Noch offen (Folge-PRs)
-- **UI:** „Upgrade"/„Abo verwalten" in der Tenant-Konsole, Plan-Anzeige.
-- **Gating:** weitere Free-Limits durchsetzen (1 Board, 2 Team-Mitglieder,
-  „Powered by Roadlight"-Badge); Pro hebt sie auf.
+## Live schalten (Premium-Launch) — Checkliste
+1. Stripe **Live-Mode**: Produkt/Preis (9 €/Monat) + Webhook auf `roadlight.pro` neu
+   anlegen, Live-Keys ziehen.
+2. In Vercel (roadlight): `STRIPE_SECRET_KEY=sk_live_…`, `STRIPE_WEBHOOK_SECRET`,
+   `STRIPE_PRICE_PRO` setzen.
+3. **Zuletzt** `BILLING_ENFORCED=true` setzen → ab jetzt greifen alle Limits.
+4. Vorher rechtlich absichern: Bezahl-AGB + USt/MwSt (Stripe Tax), Widerruf.
