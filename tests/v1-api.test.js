@@ -325,7 +325,8 @@ test('requireApiKey sperrt die Nutzung bei Nicht-Pro (bestehende Keys, Downgrade
     .split('function requireApiKey(')[1]
     ?.split('async function loadApiKeySuggestionById')[0] || '';
   assert.ok(middleware.length > 0, 'requireApiKey muss gefunden werden');
-  assert.ok(middleware.includes('apiAccessRequiresUpgrade(planTenant)'), 'Usage-Gate im Middleware-Pfad');
+  assert.ok(middleware.includes('requiresProUpgradeResolved(planTenant'),
+    'Usage-Gate läuft über den fail-open-Wrapper requiresProUpgradeResolved');
   assert.ok(/res\.status\(402\)/.test(middleware), 'gated Requests liefern 402');
 });
 
@@ -360,7 +361,14 @@ test('requireApiKey liest den Plan aus der Postgres-Plan-Quelle (nicht Firestore
     middleware.includes('repos.tenants.findById(data.tenantId)'),
     'Plan stammt aus der Postgres-Plan-Quelle, nicht aus dem Firestore-Tenant'
   );
-  assert.ok(middleware.includes('apiAccessRequiresUpgrade(planTenant)'), 'Gate prüft den Plan-Tenant');
+  // Fail-open: kein `|| tenant`-Fallback auf den (plan-losen) Firestore-Tenant —
+  // der würde einen zahlenden Pro-Kunden bei einem Lookup-Miss aussperren.
+  assert.ok(
+    !/findById\(data\.tenantId\)\)\s*\|\|\s*tenant/.test(middleware),
+    'kein Firestore-Fallback für den Plan-Tenant (fail-closed-Regression)'
+  );
+  assert.ok(middleware.includes('requiresProUpgradeResolved(planTenant'),
+    'Gate prüft den Plan-Tenant über den fail-open-Wrapper');
 });
 
 test('docs/api.md und api-docs.html weisen API/MCP als Pro-Feature aus', () => {

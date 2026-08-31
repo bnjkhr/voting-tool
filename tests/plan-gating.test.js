@@ -91,6 +91,54 @@ test('isProPlan: nur plan==="pro" ist Pro; fehlend/leer => Free', () => {
 });
 
 // ---------------------------------------------------------------------------
+// API-/MCP-Gate: fail-open bei nicht auflösbarem Plan-Tenant. Der Plan-Tenant
+// wird im requireApiKey-Pfad asynchron aus Postgres geladen und kann null sein
+// (ID-Mismatch Firestore/Postgres oder transienter Fehler). Ein zahlender
+// Pro-Kunde darf dann NICHT ausgesperrt werden.
+// ---------------------------------------------------------------------------
+
+test('requiresProUpgradeResolved: nicht auflösbarer Plan-Tenant => fail-open (kein 402 für zahlende Pro-Kunden)', () => {
+  withEnv(LIVE, () => {
+    // Regressionsanker: der naive requiresProUpgrade(null) failt CLOSED (true) —
+    // ein plan-loser/nicht auflösbarer Tenant gilt als Free. Genau deshalb darf
+    // der API-Pfad requiresProUpgrade NICHT direkt auf einen evtl. null
+    // Plan-Tenant anwenden.
+    assert.equal(billing.requiresProUpgrade(null, { postgres: true }), true,
+      'requiresProUpgrade(null) ist fail-closed — dokumentiert die Falle');
+    // Der async-sichere Wrapper failt bewusst OFFEN.
+    assert.equal(billing.requiresProUpgradeResolved(null, { postgres: true }), false,
+      'nicht auflösbarer Plan-Tenant (Lookup-Miss) darf NICHT sperren');
+    assert.equal(billing.requiresProUpgradeResolved(undefined, { postgres: true }), false,
+      'undefined (z.B. nach Lookup-Fehler) darf NICHT sperren');
+  });
+});
+
+test('requiresProUpgradeResolved: aufgelöster Tenant gated exakt wie requiresProUpgrade', () => {
+  withEnv(LIVE, () => {
+    assert.equal(billing.requiresProUpgradeResolved(FREE, { postgres: true }), true,
+      'aufgelöster Free-Tenant bleibt upgrade-pflichtig (fail-open lockert echtes Free nicht auf)');
+    assert.equal(billing.requiresProUpgradeResolved(PRO, { postgres: true }), false,
+      'Pro-Workspace wird nie gegatet');
+  });
+  withEnv({ STRIPE_SECRET_KEY: 'sk_test_x' }, () => { // Beta: enforced aus
+    assert.equal(billing.requiresProUpgradeResolved(FREE, { postgres: true }), false,
+      'in der Beta wird niemand gegatet — auch der aufgelöste Tenant nicht');
+  });
+});
+
+test('requireApiKey: Plan-Tenant fail-open, kein Firestore-Fallback', () => {
+  const body = handlerAfter('function requireApiKey(');
+  assert.ok(body.includes('repos.tenants.findById(data.tenantId)'),
+    'Plan-Tenant muss aus der Postgres-Plan-Quelle geladen werden');
+  // Kein Rückfall auf den (plan-losen) Firestore-Tenant — das würde einen
+  // zahlenden Pro-Kunden bei einem Lookup-Miss fälschlich aussperren.
+  assert.ok(!/findById\(data\.tenantId\)\)\s*\|\|\s*tenant/.test(body),
+    'kein `|| tenant`-Fallback auf den Firestore-Tenant (trägt kein plan)');
+  assert.ok(body.includes('requiresProUpgradeResolved'),
+    'Gate muss über den fail-open-Wrapper requiresProUpgradeResolved laufen');
+});
+
+// ---------------------------------------------------------------------------
 // Board-Erstellung: Postgres-Pfad (Fix Geister-Board) + Gate
 // ---------------------------------------------------------------------------
 
