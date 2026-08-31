@@ -6752,15 +6752,32 @@ function requireApiKey(requiredScopes = []) {
       // Postgres, wohin der Stripe-Webhook synct. Für die Entitlement-Prüfung
       // daher den maßgeblichen Tenant aus der Plan-Quelle laden, aber nur wenn
       // das Gating überhaupt live ist (sonst kein Extra-Query auf dem Hot-Path).
-      let planTenant = tenant;
+      //
+      // Fail-open: Lässt sich der Plan-Tenant NICHT auflösen (ID-Mismatch
+      // Firestore/Postgres oder transienter Postgres-Fehler), wird NICHT
+      // gesperrt. Ein bezahltes Entitlement ist zu schützen — ein zahlender
+      // Pro-Kunde darf für seinen bestehenden Key bei einem Lookup-Fehler kein
+      // 402 bekommen. Der Firestore-Tenant taugt hier NICHT als Fallback, weil
+      // er kein `plan` trägt und damit fälschlich als Free gälte.
       if (billing.proGatingActive({ postgres: usePostgres() })) {
-        planTenant = (await repos.tenants.findById(data.tenantId)) || tenant;
-      }
-      if (apiAccessRequiresUpgrade(planTenant)) {
-        return res.status(402).json({
-          error: 'Dieser Workspace hat keinen aktiven Pro-Plan. API- und MCP-Zugriff sind Pro-Features.',
-          code: 'upgrade_required',
-        });
+        const { tenant: planTenant, error: lookupError } =
+          await billing.resolvePlanTenant(() => repos.tenants.findById(data.tenantId));
+        if (lookupError) {
+          console.error(
+            `Pro-Gating: Plan-Tenant-Lookup für ${data.tenantId} fehlgeschlagen (fail-open):`,
+            lookupError?.message || lookupError
+          );
+        } else if (!planTenant) {
+          console.warn(
+            `Pro-Gating: Plan-Tenant ${data.tenantId} nicht auflösbar — API-Zugriff fail-open gewährt`
+          );
+        }
+        if (billing.requiresProUpgradeResolved(planTenant, { postgres: usePostgres() })) {
+          return res.status(402).json({
+            error: 'Dieser Workspace hat keinen aktiven Pro-Plan. API- und MCP-Zugriff sind Pro-Features.',
+            code: 'upgrade_required',
+          });
+        }
       }
 
       req.apiAuth = {

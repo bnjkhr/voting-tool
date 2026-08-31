@@ -51,6 +51,27 @@ function withEnv(overrides, fn) {
   }
 }
 
+// Async-Variante: hält die Env-Overrides gesetzt, bis das (asynchrone) fn ganz
+// durch ist. Nötig, weil das Gate die Env erst NACH einem `await` liest — mit
+// dem synchronen withEnv wäre sie bis dahin schon zurückgesetzt.
+async function withEnvAsync(overrides, fn) {
+  const keys = ['BILLING_ENFORCED', 'STRIPE_SECRET_KEY'];
+  const prev = {};
+  for (const k of keys) prev[k] = process.env[k];
+  try {
+    for (const k of keys) {
+      if (overrides[k] === undefined) delete process.env[k];
+      else process.env[k] = overrides[k];
+    }
+    await fn();
+  } finally {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  }
+}
+
 const FREE = { plan: 'free' };
 const PRO = { plan: 'pro' };
 const LIVE = { BILLING_ENFORCED: 'true', STRIPE_SECRET_KEY: 'sk_test_x' };
@@ -88,6 +109,87 @@ test('isProPlan: nur plan==="pro" ist Pro; fehlend/leer => Free', () => {
   assert.equal(billing.isProPlan(FREE), false);
   assert.equal(billing.isProPlan({}), false);
   assert.equal(billing.isProPlan(null), false);
+});
+
+// ---------------------------------------------------------------------------
+// API-/MCP-Gate: fail-open bei nicht auflösbarem Plan-Tenant. Der Plan-Tenant
+// wird im requireApiKey-Pfad asynchron aus Postgres geladen und kann null sein
+// (ID-Mismatch Firestore/Postgres oder transienter Fehler). Ein zahlender
+// Pro-Kunde darf dann NICHT ausgesperrt werden.
+// ---------------------------------------------------------------------------
+
+test('requiresProUpgradeResolved: nicht auflösbarer Plan-Tenant => fail-open (kein 402 für zahlende Pro-Kunden)', () => {
+  withEnv(LIVE, () => {
+    // Regressionsanker: der naive requiresProUpgrade(null) failt CLOSED (true) —
+    // ein plan-loser/nicht auflösbarer Tenant gilt als Free. Genau deshalb darf
+    // der API-Pfad requiresProUpgrade NICHT direkt auf einen evtl. null
+    // Plan-Tenant anwenden.
+    assert.equal(billing.requiresProUpgrade(null, { postgres: true }), true,
+      'requiresProUpgrade(null) ist fail-closed — dokumentiert die Falle');
+    // Der async-sichere Wrapper failt bewusst OFFEN.
+    assert.equal(billing.requiresProUpgradeResolved(null, { postgres: true }), false,
+      'nicht auflösbarer Plan-Tenant (Lookup-Miss) darf NICHT sperren');
+    assert.equal(billing.requiresProUpgradeResolved(undefined, { postgres: true }), false,
+      'undefined (z.B. nach Lookup-Fehler) darf NICHT sperren');
+  });
+});
+
+test('requiresProUpgradeResolved: aufgelöster Tenant gated exakt wie requiresProUpgrade', () => {
+  withEnv(LIVE, () => {
+    assert.equal(billing.requiresProUpgradeResolved(FREE, { postgres: true }), true,
+      'aufgelöster Free-Tenant bleibt upgrade-pflichtig (fail-open lockert echtes Free nicht auf)');
+    assert.equal(billing.requiresProUpgradeResolved(PRO, { postgres: true }), false,
+      'Pro-Workspace wird nie gegatet');
+  });
+  withEnv({ STRIPE_SECRET_KEY: 'sk_test_x' }, () => { // Beta: enforced aus
+    assert.equal(billing.requiresProUpgradeResolved(FREE, { postgres: true }), false,
+      'in der Beta wird niemand gegatet — auch der aufgelöste Tenant nicht');
+  });
+});
+
+test('requireApiKey: Plan-Tenant fail-open, kein Firestore-Fallback', () => {
+  const body = handlerAfter('function requireApiKey(');
+  assert.ok(body.includes('repos.tenants.findById(data.tenantId)'),
+    'Plan-Tenant muss aus der Postgres-Plan-Quelle geladen werden');
+  // Kein Rückfall auf den (plan-losen) Firestore-Tenant — das würde einen
+  // zahlenden Pro-Kunden bei einem Lookup-Miss fälschlich aussperren.
+  assert.ok(!/findById\(data\.tenantId\)\)\s*\|\|\s*tenant/.test(body),
+    'kein `|| tenant`-Fallback auf den Firestore-Tenant (trägt kein plan)');
+  assert.ok(body.includes('billing.resolvePlanTenant('),
+    'Lookup läuft über den Fail-open-Loader resolvePlanTenant');
+  assert.ok(body.includes('requiresProUpgradeResolved'),
+    'Gate muss über den fail-open-Wrapper requiresProUpgradeResolved laufen');
+});
+
+// resolvePlanTenant kapselt das try/catch-Swallow des Middleware-Pfads. Diese
+// Tests treffen den echten Failure Mode (Loader wirft / liefert null), der zuvor
+// nur in der nicht bootbaren Express-Middleware lebte und rein statisch gedeckt war.
+
+test('resolvePlanTenant: Loader wirft => tenant=null, Fehler durchgereicht (kein Rethrow)', async () => {
+  const boom = new Error('pg down');
+  const result = await billing.resolvePlanTenant(async () => { throw boom; });
+  assert.equal(result.tenant, null,
+    'transienter Lookup-Fehler wird als null behandelt, NICHT propagiert (sonst 500 statt fail-open)');
+  assert.equal(result.error, boom, 'Fehler wird fürs Logging zurückgegeben');
+});
+
+test('resolvePlanTenant: Loader liefert null/Tenant => durchgereicht ohne Fehler', async () => {
+  const miss = await billing.resolvePlanTenant(async () => null);
+  assert.equal(miss.tenant, null);
+  assert.equal(miss.error, null, 'ein sauberer Miss ist kein Fehler');
+  const hit = await billing.resolvePlanTenant(async () => PRO);
+  assert.equal(hit.tenant, PRO);
+  assert.equal(hit.error, null);
+});
+
+test('Fail-open Ende-zu-Ende: Lookup-Fehler sperrt einen Pro-Kunden NICHT (kein 402)', async () => {
+  await withEnvAsync(LIVE, async () => {
+    // Genau die Verdrahtung der Middleware: laden (fail-open) -> Gate-Entscheidung.
+    const { tenant: planTenant } =
+      await billing.resolvePlanTenant(async () => { throw new Error('pg down'); });
+    assert.equal(billing.requiresProUpgradeResolved(planTenant, { postgres: true }), false,
+      'nach einem transienten Lookup-Fehler darf das Gate NICHT greifen (fail-open)');
+  });
 });
 
 // ---------------------------------------------------------------------------
