@@ -221,6 +221,58 @@ test('tenant admin exposes a billing panel wired to the tenant-scoped billing en
   assert.ok(tenantAdminScript.includes("this.billingReturn === 'success'"));
 });
 
+// Extrahiert einen Methoden-Körper ab der Signatur. Klassen-Methoden sind mit
+// 4 Spaces eingerückt; ihr Körper endet an der ersten Zeile, die exakt aus
+// 4 Spaces + `}` besteht. Die Einrückung als Grenze zu nutzen ist immun gegen
+// geschweifte Klammern in Strings, Template-Literalen oder Kommentaren im
+// Körper — eine reine Klammer-Zählung würde an einem Literal wie '}' oder an
+// verschachtelten Template-Literalen den falschen Body schneiden.
+const METHOD_END = '\n    }';
+function methodBody(source, signature) {
+  const start = source.indexOf(signature);
+  assert.ok(start > -1, `Methode nicht gefunden: ${signature}`);
+  const bodyStart = source.indexOf('{', start);
+  const end = source.indexOf(METHOD_END, bodyStart);
+  assert.ok(end > -1, `Kein Methoden-Ende (${JSON.stringify(METHOD_END)}) für ${signature}`);
+  return source.slice(bodyStart, end + METHOD_END.length);
+}
+
+test('API-Key-Gate und Rollen-Sichtbarkeit kollidieren nicht auf derselben Klasse', () => {
+  // Regression PR #59: renderSessionContext toggelt is-hidden über ALLE
+  // [data-admin-only]-Elemente (#apiKeyForm inklusive). Würde renderApiKeys das
+  // Plan-Gate ebenfalls über is-hidden fahren, blendet ein loadSession()-Rerun
+  // (z.B. nach Slug-Umbenennung) das gegatete Formular wieder ein. Die Gate-Klasse
+  // MUSS daher von der Rollen-Klasse getrennt sein.
+  // Signatur mit ` {` trifft die Definition, nicht die this.-Aufrufe.
+  const sessionCtx = methodBody(tenantAdminScript, 'renderSessionContext() {');
+  const apiKeys = methodBody(tenantAdminScript, 'renderApiKeys() {');
+
+  // Rollen-System besitzt is-hidden für [data-admin-only].
+  assert.ok(
+    /\[data-admin-only\][\s\S]*?toggle\('is-hidden'/.test(sessionCtx),
+    'renderSessionContext soll [data-admin-only] weiterhin über is-hidden steuern'
+  );
+
+  // Plan-Gate am Formular läuft über eine eigene Klasse …
+  assert.ok(
+    apiKeys.includes("form.classList.toggle('is-gated'"),
+    'renderApiKeys soll das Formular-Gate über die eigene Klasse is-gated fahren'
+  );
+
+  // … und darf is-hidden am Formular NICHT anfassen (sonst Kollision).
+  assert.equal(
+    /form\.classList\.toggle\('is-hidden'/.test(apiKeys),
+    false,
+    'renderApiKeys darf is-hidden am Formular nicht toggeln — das gehört dem Rollen-System'
+  );
+
+  // Die Gate-Klasse blendet tatsächlich aus.
+  assert.ok(
+    /\.is-gated\s*\{[^}]*display:\s*none/.test(tenantAdminHtml),
+    'is-gated braucht eine display:none-Regel'
+  );
+});
+
 test('tenant admin shows dismissible onboarding for signup redirects', () => {
   assert.ok(tenantAdminHtml.includes('id="workspaceOnboarding"'));
   assert.ok(tenantAdminHtml.includes('id="dismissOnboardingBtn"'));

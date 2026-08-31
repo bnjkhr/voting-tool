@@ -73,7 +73,13 @@
             text-align: right;
         }
 
-        .is-hidden {
+        /* .is-gated ist eine EIGENE Klasse (nicht is-hidden), damit das
+           Plan-Gating NICHT mit dem rollenbasierten .is-hidden-Toggle aus
+           renderSessionContext ([data-admin-only]) kollidiert — sonst blendet
+           ein Session-Rerun das gegatete Formular wieder ein. Beide blenden
+           identisch aus; das gemeinsame Verhalten lebt hier an einer Stelle. */
+        .is-hidden,
+        .is-gated {
             display: none !important;
         }
 
