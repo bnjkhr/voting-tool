@@ -221,6 +221,57 @@ test('tenant admin exposes a billing panel wired to the tenant-scoped billing en
   assert.ok(tenantAdminScript.includes("this.billingReturn === 'success'"));
 });
 
+// Extrahiert einen Methoden-Körper per Klammer-Zählung ab der Signatur.
+function methodBody(source, signature) {
+  const start = source.indexOf(signature);
+  assert.ok(start > -1, `Methode nicht gefunden: ${signature}`);
+  let depth = 0;
+  let i = source.indexOf('{', start);
+  const bodyStart = i;
+  for (; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return source.slice(bodyStart, i + 1);
+  }
+  throw new Error(`Kein balancierter Körper für ${signature}`);
+}
+
+test('API-Key-Gate und Rollen-Sichtbarkeit kollidieren nicht auf derselben Klasse', () => {
+  // Regression PR #59: renderSessionContext toggelt is-hidden über ALLE
+  // [data-admin-only]-Elemente (#apiKeyForm inklusive). Würde renderApiKeys das
+  // Plan-Gate ebenfalls über is-hidden fahren, blendet ein loadSession()-Rerun
+  // (z.B. nach Slug-Umbenennung) das gegatete Formular wieder ein. Die Gate-Klasse
+  // MUSS daher von der Rollen-Klasse getrennt sein.
+  // Signatur mit ` {` trifft die Definition, nicht die this.-Aufrufe.
+  const sessionCtx = methodBody(tenantAdminScript, 'renderSessionContext() {');
+  const apiKeys = methodBody(tenantAdminScript, 'renderApiKeys() {');
+
+  // Rollen-System besitzt is-hidden für [data-admin-only].
+  assert.ok(
+    /\[data-admin-only\][\s\S]*?toggle\('is-hidden'/.test(sessionCtx),
+    'renderSessionContext soll [data-admin-only] weiterhin über is-hidden steuern'
+  );
+
+  // Plan-Gate am Formular läuft über eine eigene Klasse …
+  assert.ok(
+    apiKeys.includes("form.classList.toggle('is-gated'"),
+    'renderApiKeys soll das Formular-Gate über die eigene Klasse is-gated fahren'
+  );
+
+  // … und darf is-hidden am Formular NICHT anfassen (sonst Kollision).
+  assert.equal(
+    /form\.classList\.toggle\('is-hidden'/.test(apiKeys),
+    false,
+    'renderApiKeys darf is-hidden am Formular nicht toggeln — das gehört dem Rollen-System'
+  );
+
+  // Die Gate-Klasse blendet tatsächlich aus.
+  assert.ok(
+    /\.is-gated\s*\{[^}]*display:\s*none/.test(tenantAdminHtml),
+    'is-gated braucht eine display:none-Regel'
+  );
+});
+
 test('tenant admin shows dismissible onboarding for signup redirects', () => {
   assert.ok(tenantAdminHtml.includes('id="workspaceOnboarding"'));
   assert.ok(tenantAdminHtml.includes('id="dismissOnboardingBtn"'));

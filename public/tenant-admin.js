@@ -1202,12 +1202,15 @@ class TenantAdminApp {
         const form = document.getElementById('apiKeyForm');
         if (notice) notice.classList.toggle('is-hidden', !gated || !this.canManageWorkspace());
         if (form) {
-            // Auch die Admin-only-Sichtbarkeit erhalten — sonst zeigt renderApiKeys
-            // das Formular Nicht-Admins, weil es das gemeinsame is-hidden-Toggle
-            // aus applyRolePermissions überschreibt.
-            const hideForm = gated || !this.canManageWorkspace();
-            form.classList.toggle('is-hidden', hideForm);
-            form.querySelectorAll('input, button').forEach(el => { el.disabled = hideForm; });
+            // Plan-Gating läuft über die eigene Klasse .is-gated und NICHT über
+            // das rollenbasierte .is-hidden aus renderSessionContext. Sonst
+            // toggeln zwei Systeme dieselbe Klasse: ein loadSession()-Rerun (z.B.
+            // nach Slug-Umbenennung) entfernt is-hidden für [data-admin-only] und
+            // blendet das gegatete Formular wieder ein. Rolle (is-hidden) und Plan
+            // (is-gated) sind jetzt unabhängig; beide blenden per CSS aus.
+            form.classList.toggle('is-gated', gated);
+            const disableForm = gated || !this.canManageWorkspace();
+            form.querySelectorAll('input, button').forEach(el => { el.disabled = disableForm; });
         }
 
         if (!this.canManageWorkspace()) {

@@ -77,6 +77,14 @@
             display: none !important;
         }
 
+        /* Plan-Gating (Pro-Feature gesperrt). Eigene Klasse, damit es NICHT mit
+           dem rollenbasierten .is-hidden-Toggle aus renderSessionContext
+           ([data-admin-only]) kollidiert — sonst blendet ein Session-Rerun das
+           gegatete Formular wieder ein. Beide blenden per CSS aus. */
+        .is-gated {
+            display: none !important;
+        }
+
         .tenant-admin-header h1 {
             margin: 0 0 var(--spacing-xs);
             font-family: var(--font-heading);
