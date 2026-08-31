@@ -221,19 +221,20 @@ test('tenant admin exposes a billing panel wired to the tenant-scoped billing en
   assert.ok(tenantAdminScript.includes("this.billingReturn === 'success'"));
 });
 
-// Extrahiert einen Methoden-Körper per Klammer-Zählung ab der Signatur.
+// Extrahiert einen Methoden-Körper ab der Signatur. Klassen-Methoden sind mit
+// 4 Spaces eingerückt; ihr Körper endet an der ersten Zeile, die exakt aus
+// 4 Spaces + `}` besteht. Die Einrückung als Grenze zu nutzen ist immun gegen
+// geschweifte Klammern in Strings, Template-Literalen oder Kommentaren im
+// Körper — eine reine Klammer-Zählung würde an einem Literal wie '}' oder an
+// verschachtelten Template-Literalen den falschen Body schneiden.
+const METHOD_END = '\n    }';
 function methodBody(source, signature) {
   const start = source.indexOf(signature);
   assert.ok(start > -1, `Methode nicht gefunden: ${signature}`);
-  let depth = 0;
-  let i = source.indexOf('{', start);
-  const bodyStart = i;
-  for (; i < source.length; i++) {
-    const ch = source[i];
-    if (ch === '{') depth++;
-    else if (ch === '}' && --depth === 0) return source.slice(bodyStart, i + 1);
-  }
-  throw new Error(`Kein balancierter Körper für ${signature}`);
+  const bodyStart = source.indexOf('{', start);
+  const end = source.indexOf(METHOD_END, bodyStart);
+  assert.ok(end > -1, `Kein Methoden-Ende (${JSON.stringify(METHOD_END)}) für ${signature}`);
+  return source.slice(bodyStart, end + METHOD_END.length);
 }
 
 test('API-Key-Gate und Rollen-Sichtbarkeit kollidieren nicht auf derselben Klasse', () => {
