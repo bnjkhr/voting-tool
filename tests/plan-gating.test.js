@@ -28,6 +28,69 @@ test('Free-Plan-Limits sind 1 Board / 2 Mitglieder', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Gate-ENTSCHEIDUNG (behavioral) — fängt eine Logik-Inversion rot ab, anders als
+// die reinen Quelltext-Checks weiter unten. Alle Board-/Mitglieder-/Badge-Gates
+// hängen an billing.requiresProUpgrade; hier wird die Wahrheitstabelle geprüft.
+const billing = require('../lib/billing');
+
+function withEnv(overrides, fn) {
+  const keys = ['BILLING_ENFORCED', 'STRIPE_SECRET_KEY'];
+  const prev = {};
+  for (const k of keys) prev[k] = process.env[k];
+  try {
+    for (const k of keys) {
+      if (overrides[k] === undefined) delete process.env[k];
+      else process.env[k] = overrides[k];
+    }
+    fn();
+  } finally {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  }
+}
+
+const FREE = { plan: 'free' };
+const PRO = { plan: 'pro' };
+const LIVE = { BILLING_ENFORCED: 'true', STRIPE_SECRET_KEY: 'sk_test_x' };
+
+test('In der Beta (BILLING_ENFORCED aus) wird NIEMAND gegatet — jeder effektiv Pro', () => {
+  withEnv({ STRIPE_SECRET_KEY: 'sk_test_x' }, () => { // enforced fehlt
+    assert.equal(billing.requiresProUpgrade(FREE, { postgres: true }), false,
+      'ohne BILLING_ENFORCED darf ein Free-Tenant NICHT gegatet werden');
+    assert.equal(billing.proGatingActive({ postgres: true }), false);
+  });
+});
+
+test('Live + Free => Gate greift; Live + Pro => nicht (fängt !isProPlan-Inversion)', () => {
+  withEnv(LIVE, () => {
+    assert.equal(billing.requiresProUpgrade(FREE, { postgres: true }), true,
+      'Live-Gating + Free muss upgrade-pflichtig sein');
+    assert.equal(billing.requiresProUpgrade(PRO, { postgres: true }), false,
+      'Pro-Workspace darf NIE gegatet werden — eine isProPlan-Inversion würde hier rot');
+  });
+});
+
+test('Gate braucht Stripe + Postgres als Plan-Quelle', () => {
+  withEnv(LIVE, () => {
+    assert.equal(billing.requiresProUpgrade(FREE, { postgres: false }), false,
+      'ohne Postgres (Plan-Quelle) kein Gating');
+  });
+  withEnv({ BILLING_ENFORCED: 'true' }, () => { // kein Stripe-Key
+    assert.equal(billing.requiresProUpgrade(FREE, { postgres: true }), false,
+      'ohne Stripe (Upgrade-Pfad) kein Gating');
+  });
+});
+
+test('isProPlan: nur plan==="pro" ist Pro; fehlend/leer => Free', () => {
+  assert.equal(billing.isProPlan(PRO), true);
+  assert.equal(billing.isProPlan(FREE), false);
+  assert.equal(billing.isProPlan({}), false);
+  assert.equal(billing.isProPlan(null), false);
+});
+
+// ---------------------------------------------------------------------------
 // Board-Erstellung: Postgres-Pfad (Fix Geister-Board) + Gate
 // ---------------------------------------------------------------------------
 
