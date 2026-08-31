@@ -8,6 +8,7 @@ const apiSource = fs.readFileSync(path.join(rootDir, 'api/index.js'), 'utf8');
 const tenantAdminHtml = fs.readFileSync(path.join(rootDir, 'public/tenant-admin.html'), 'utf8');
 const tenantAdminScript = fs.readFileSync(path.join(rootDir, 'public/tenant-admin.js'), 'utf8');
 const apiDocs = fs.readFileSync(path.join(rootDir, 'docs/api.md'), 'utf8');
+const apiDocsHtml = fs.readFileSync(path.join(rootDir, 'public/api-docs.html'), 'utf8');
 
 test('v1 routes are mounted with API key middleware and the documented scopes', () => {
   const routes = [
@@ -292,4 +293,87 @@ test('docs/api.md documents every v1 endpoint, scope and rate limit', () => {
   assert.ok(apiDocs.includes('30 Requests/Minute'));
   assert.ok(apiDocs.includes('https://votingtool.benkohler.de/api/v1'));
   assert.ok(apiDocs.includes('Authorization: Bearer vt_live_'));
+});
+
+// ---------------------------------------------------------------------------
+// Pro-Gating: API-Schlüssel & MCP sind ein Pro-Feature
+// ---------------------------------------------------------------------------
+
+test('apiAccessRequiresUpgrade delegiert an das feature-unabhängige Gate in lib/billing', () => {
+  assert.ok(apiSource.includes('function apiAccessRequiresUpgrade(tenant) {'), 'apiAccessRequiresUpgrade muss existieren');
+  // Die 3-Bedingungs-Logik (enforced + stripe + postgres) lebt in lib/billing;
+  // hier wird nur der usePostgres-Flag reingereicht. Verhalten deckt
+  // tests/billing.test.js ab.
+  assert.ok(
+    apiSource.includes('return billing.requiresProUpgrade(tenant, { postgres: usePostgres() });'),
+    'nutzt billing.requiresProUpgrade mit dem usePostgres-Flag als Plan-Quelle'
+  );
+});
+
+test('API-Key-Erstellung ist hinter Pro gegated (402 upgrade_required)', () => {
+  const createHandler = apiSource
+    .split("app.post('/api/admin/tenants/:tenantSlug/api-keys'")[1]
+    ?.split('app.delete')[0] || '';
+  assert.ok(createHandler.length > 0, 'Create-Handler muss gefunden werden');
+  assert.ok(createHandler.includes('apiAccessRequiresUpgrade(tenant)'), 'Create prüft das Entitlement');
+  assert.ok(createHandler.includes("code: 'upgrade_required'"), 'liefert maschinenlesbaren Code');
+  assert.ok(/res\.status\(402\)/.test(createHandler), 'gated mit 402 Payment Required');
+});
+
+test('requireApiKey sperrt die Nutzung bei Nicht-Pro (bestehende Keys, Downgrade)', () => {
+  const middleware = apiSource
+    .split('function requireApiKey(')[1]
+    ?.split('async function loadApiKeySuggestionById')[0] || '';
+  assert.ok(middleware.length > 0, 'requireApiKey muss gefunden werden');
+  assert.ok(middleware.includes('apiAccessRequiresUpgrade(planTenant)'), 'Usage-Gate im Middleware-Pfad');
+  assert.ok(/res\.status\(402\)/.test(middleware), 'gated Requests liefern 402');
+});
+
+test('Tenant-Admin-UI sperrt die Key-Erstellung im Free-Plan', () => {
+  assert.ok(tenantAdminScript.includes('isApiAccessGated()'), 'Frontend-Gate-Helper existiert');
+  // Frontend-Gate spiegelt das Backend: billingEnforced UND billingEnabled (Postgres
+  // implizit, da /billing ohne Postgres 404 liefert), und nur bei Nicht-Pro.
+  assert.ok(
+    /b\.billingEnforced && b\.billingEnabled\) && !this\.isProPlan\(b\)/.test(tenantAdminScript),
+    'Gate greift erst bei live Premium (billingEnforced + billingEnabled) und Nicht-Pro'
+  );
+  assert.ok(tenantAdminScript.includes("this.isApiAccessGated()"), 'createApiKey nutzt den Gate-Check');
+  // Das Formular bleibt für Nicht-Admins verborgen (Admin-only-Sichtbarkeit nicht überschreiben).
+  assert.ok(
+    /gated \|\| !this\.canManageWorkspace\(\)/.test(tenantAdminScript),
+    'renderApiKeys erhält die Admin-only-Sichtbarkeit des Formulars'
+  );
+  assert.ok(tenantAdminHtml.includes('id="apiKeyProNotice"'), 'Pro-Hinweis-Element im Markup');
+});
+
+test('requireApiKey liest den Plan aus der Postgres-Plan-Quelle (nicht Firestore)', () => {
+  const middleware = apiSource
+    .split('function requireApiKey(')[1]
+    ?.split('async function loadApiKeySuggestionById')[0] || '';
+  assert.ok(middleware.length > 0, 'requireApiKey muss gefunden werden');
+  // Nur wenn Gating live ist, den maßgeblichen Tenant (mit `plan`) aus Postgres holen.
+  assert.ok(
+    middleware.includes('billing.proGatingActive({ postgres: usePostgres() })'),
+    'lädt den Plan-Tenant nur bei live Gating'
+  );
+  assert.ok(
+    middleware.includes('repos.tenants.findById(data.tenantId)'),
+    'Plan stammt aus der Postgres-Plan-Quelle, nicht aus dem Firestore-Tenant'
+  );
+  assert.ok(middleware.includes('apiAccessRequiresUpgrade(planTenant)'), 'Gate prüft den Plan-Tenant');
+});
+
+test('docs/api.md und api-docs.html weisen API/MCP als Pro-Feature aus', () => {
+  assert.ok(/Pro-Feature/.test(apiDocs), 'docs/api.md nennt das Pro-Feature');
+  assert.ok(apiDocs.includes('upgrade_required'), 'docs/api.md dokumentiert den 402-Code');
+  assert.ok(/Pro-Feature/.test(apiDocsHtml), 'api-docs.html nennt das Pro-Feature');
+  assert.ok(/402/.test(apiDocsHtml), 'api-docs.html nennt den 402-Downgrade-Hinweis');
+});
+
+test('/billing meldet den Enforce-Status an die UI (Master-Schalter)', () => {
+  const handler = apiSource
+    .split("app.get('/api/admin/tenants/:tenantSlug/billing'")[1]
+    ?.split('app.post')[0] || '';
+  assert.ok(handler.includes('billingEnforced: billing.billingEnforced()'),
+    '/billing gibt billingEnforced zurück, damit die UI vor dem Live-Schalten offen bleibt');
 });

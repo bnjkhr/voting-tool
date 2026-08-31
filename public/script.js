@@ -554,9 +554,25 @@ class VotingApp {
             this.apps = apps;
             this.renderApps(apps);
             this.applyUrlStateFromLocation({ replace: true });
+            if (this.isTenantMode()) this.loadTenantMeta();
         } catch (error) {
             console.error('Error loading apps:', error);
             this.showToast('Fehler beim Laden der Apps', 'error');
+        }
+    }
+
+    // Tenant-Meta für das öffentliche Board (nur der „Powered by Roadlight"-Badge).
+    // Der Endpoint liefert ein reduziertes Shape; showBadge steuert die Anzeige
+    // und ist server-seitig ans Pro-Gating gebunden.
+    async loadTenantMeta() {
+        try {
+            const response = await fetch(`/api/tenants/${encodeURIComponent(this.tenantSlug)}`);
+            if (!response.ok) return;
+            const meta = await response.json();
+            const badge = document.getElementById('poweredByBadge');
+            if (badge) badge.hidden = !meta.showBadge;
+        } catch (error) {
+            console.error('Error loading tenant meta:', error);
         }
     }
 

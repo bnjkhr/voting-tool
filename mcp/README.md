@@ -2,6 +2,8 @@
 
 Ein MCP-Server (Model Context Protocol), der Claude Code (und andere MCP-Clients) erlaubt, Einträge im Voting-Tool zu lesen, zu erstellen und zu aktualisieren — über die [Public API v1](../docs/api.md).
 
+> **Pro-Feature:** API- und MCP-Zugriff sind Teil des Pro-Plans. Free-Workspaces können keine API-Schlüssel erstellen; bestehende Schlüssel liefern nach einem Downgrade `402`, bis wieder auf Pro upgradet wird.
+
 ## Setup
 
 ```bash
