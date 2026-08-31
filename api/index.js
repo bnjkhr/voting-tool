@@ -6760,16 +6760,14 @@ function requireApiKey(requiredScopes = []) {
       // 402 bekommen. Der Firestore-Tenant taugt hier NICHT als Fallback, weil
       // er kein `plan` trägt und damit fälschlich als Free gälte.
       if (billing.proGatingActive({ postgres: usePostgres() })) {
-        let planTenant = null;
-        try {
-          planTenant = await repos.tenants.findById(data.tenantId);
-        } catch (lookupError) {
+        const { tenant: planTenant, error: lookupError } =
+          await billing.resolvePlanTenant(() => repos.tenants.findById(data.tenantId));
+        if (lookupError) {
           console.error(
             `Pro-Gating: Plan-Tenant-Lookup für ${data.tenantId} fehlgeschlagen (fail-open):`,
             lookupError?.message || lookupError
           );
-        }
-        if (!planTenant) {
+        } else if (!planTenant) {
           console.warn(
             `Pro-Gating: Plan-Tenant ${data.tenantId} nicht auflösbar — API-Zugriff fail-open gewährt`
           );
