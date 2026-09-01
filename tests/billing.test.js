@@ -159,6 +159,7 @@ test('Billing-Endpoints existieren mit korrekten Guards', () => {
   assert.ok(apiSource.includes("app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess()"));
   assert.ok(apiSource.includes("app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(['owner'])"));
   assert.ok(apiSource.includes("app.post('/api/admin/tenants/:tenantSlug/billing/portal', requireTenantAccess(['owner'])"));
+  assert.ok(apiSource.includes('configuration: process.env.STRIPE_PORTAL_CONFIGURATION || undefined'));
   // Abo-Sync läuft nur in Postgres.
   assert.ok(/handleStripeEvent[\s\S]{0,120}usePostgres\(\)/.test(apiSource), 'Webhook-Handler ist postgres-gescopt');
 });

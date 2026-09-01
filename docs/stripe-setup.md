@@ -36,8 +36,13 @@ Lokal in `.env.local` (zum Testen) und in Vercel (Production):
 STRIPE_SECRET_KEY=sk_test_…      (bzw. sk_live_… für Production)
 STRIPE_WEBHOOK_SECRET=whsec_…
 STRIPE_PRICE_PRO=price_…
+STRIPE_PORTAL_CONFIGURATION=bpc_…
 BILLING_ENFORCED=false
 ```
+
+`STRIPE_PORTAL_CONFIGURATION` verweist auf eine eigene Roadlight-Konfiguration,
+damit Legal-Links, Rücksprung-URL und Kündigungsoptionen nicht von anderen Produkten
+im selben Stripe-Konto übernommen werden.
 
 > **Master-Schalter `BILLING_ENFORCED`** (Default: aus): Steuert, ob Pro-Features
 > (aktuell API-/MCP-Zugriff) tatsächlich gesperrt werden. Bewusst **getrennt**

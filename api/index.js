@@ -4068,6 +4068,7 @@ app.post('/api/admin/tenants/:tenantSlug/billing/portal', requireTenantAccess(['
     if (!tenant.stripeCustomerId) return res.status(400).json({ error: 'Kein aktives Abo vorhanden' });
     const session = await stripe.billingPortal.sessions.create({
       customer: tenant.stripeCustomerId,
+      configuration: process.env.STRIPE_PORTAL_CONFIGURATION || undefined,
       return_url: `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`,
     });
     res.json({ url: session.url });
