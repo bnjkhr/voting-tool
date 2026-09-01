@@ -6,20 +6,18 @@
 > muss vor Verwendung geprüft werden. Erst nach der Prüfung als `public/agb.html`
 > live schalten (die aktuelle `agb.html` ist die kostenlose Beta-Fassung).
 
-## Offene Entscheidungen (VOR der anwaltlichen Prüfung klären)
+## Getroffene Entscheidungen (Stand: Betreiber bestätigt)
 
-1. **Umsatzsteuer.** Im Impressum ist **keine USt-IdNr** angegeben → vermutlich
-   **Kleinunternehmer nach § 19 UStG**. Das bestimmt, ob die 9 € brutto=netto sind
-   oder ob USt ausgewiesen wird. → Variante A oder B in § 5 wählen. Betrifft auch
-   die Stripe-Tax-Konfiguration.
-2. **Zielgruppe Verbraucher vs. Unternehmer.** Können auch **Verbraucher** (nicht
-   nur Unternehmen) Pro buchen? Wenn ja, greifen Widerrufsrecht (§ 7), Brutto-
-   Preisangabe und Verbraucherstreitbeilegung (§ 14). Falls ausschließlich B2B:
-   Registrierung müsste die Unternehmereigenschaft abfragen/bestätigen — sonst gilt
-   sicherheitshalber das Verbraucherrecht. Dieser Entwurf ist auf den **sicheren
-   Fall (Verbraucher möglich)** ausgelegt.
-3. **Preis brutto/netto & Währung.** 9 € pro Monat — als Endpreis bestätigen
-   (siehe § 5). Jahresabo optional später.
+1. **Umsatzsteuer:** **Kleinunternehmer nach § 19 UStG** — es wird **keine
+   Umsatzsteuer ausgewiesen** (§ 5). → In Stripe **keine Steuer (Stripe Tax aus)**;
+   Rechnungen tragen den § 19-Hinweis, keine USt-Position.
+2. **Zielgruppe:** **Verbraucher möglich** → Widerrufsrecht (§ 7), Brutto-Preis­
+   angabe und Verbraucher-Schlussbestimmungen (§ 14) bleiben Bestandteil.
+3. **Preis:** **9 € pro Monat als Endpreis** (brutto = netto, da § 19). Jahresabo
+   optional später.
+
+**Weiterhin offen:** anwaltliche Prüfung des Gesamttexts, insbesondere der
+**Widerrufsbelehrung** (§ 7) — erst danach als `public/agb.html` live schalten.
 
 ---
 
@@ -63,18 +61,9 @@ Pro-Abo zwischen dir und dem Betreiber zustande. Du erhältst eine Bestätigung 
 E-Mail bzw. über dein Konto.
 
 ### 5. Preise und Zahlung
-Das Pro-Abo kostet **9 € pro Monat**.
-
-> **Variante A (Kleinunternehmer § 19 UStG):** Der Betreiber ist Kleinunternehmer
-> im Sinne des § 19 UStG; es wird **keine Umsatzsteuer ausgewiesen**. Der Preis ist
-> ein Endpreis.
->
-> **Variante B (umsatzsteuerpflichtig):** Alle Preise verstehen sich inklusive der
-> jeweils geltenden gesetzlichen Umsatzsteuer. Die Umsatzsteuer wird auf der
-> Rechnung ausgewiesen. Für Kunden in der EU kann sich der auszuweisende Steuersatz
-> nach dem Sitz des Kunden richten (Stripe Tax).
->
-> → **Eine der beiden Varianten wählen und die andere löschen.**
+Das Pro-Abo kostet **9 € pro Monat**. Der Betreiber ist Kleinunternehmer im Sinne
+des § 19 UStG; es wird **keine Umsatzsteuer ausgewiesen** (§ 19 Abs. 1 UStG). Der
+angegebene Preis ist ein Endpreis.
 
 Die Abrechnung erfolgt im Voraus für den jeweiligen Abrechnungszeitraum (ein Monat)
 über den Zahlungsdienstleister **Stripe** (Stripe Payments Europe, Ltd.). Die

@@ -71,10 +71,18 @@ jeder effektiv Pro. Downgrade ist kulant: bestehende Daten bleiben, nur Neu-Anla
 - Limits zentral in `lib/plan-limits.js`. Die Konsole zeigt die Auslastung
   („1/1 Board, 2/2 Mitglieder") aus dem `usage`-Feld von `GET …/billing`.
 
+## Steuer: Kleinunternehmer (§ 19 UStG)
+Der Betreiber ist Kleinunternehmer nach § 19 UStG → **keine Umsatzsteuer**. 9 € ist
+ein Endpreis (brutto = netto). In Stripe daher:
+- **Stripe Tax: aus** (keine Steuerberechnung/-position).
+- Rechnungs-Einstellungen: den **§ 19-Hinweis** hinterlegen (z. B. „Gemäß § 19 UStG
+  wird keine Umsatzsteuer berechnet."), keine USt-Zeile.
+
 ## Live schalten (Premium-Launch) — Checkliste
-1. Stripe **Live-Mode**: Produkt/Preis (9 €/Monat) + Webhook auf `roadlight.pro` neu
-   anlegen, Live-Keys ziehen.
-2. In Vercel (roadlight): `STRIPE_SECRET_KEY=sk_live_…`, `STRIPE_WEBHOOK_SECRET`,
+1. **Bezahl-AGB** (`docs/agb-pro-entwurf.md`) anwaltlich prüfen lassen → als
+   `public/agb.html` live; Impressum/Datenschutz auf Stripe/Bezahlung prüfen.
+2. Stripe **Live-Mode**: Produkt/Preis (9 €/Monat, keine Steuer) + Webhook auf
+   `roadlight.pro` neu anlegen, Live-Keys ziehen.
+3. In Vercel (roadlight): `STRIPE_SECRET_KEY=sk_live_…`, `STRIPE_WEBHOOK_SECRET`,
    `STRIPE_PRICE_PRO` setzen.
-3. **Zuletzt** `BILLING_ENFORCED=true` setzen → ab jetzt greifen alle Limits.
-4. Vorher rechtlich absichern: Bezahl-AGB + USt/MwSt (Stripe Tax), Widerruf.
+4. **Zuletzt** `BILLING_ENFORCED=true` setzen → ab jetzt greifen alle Limits.
