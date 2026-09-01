@@ -4031,6 +4031,12 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
       customer_email: tenant.stripeCustomerId ? undefined : (req.tenantAuth?.user?.email || undefined),
       customer_update: tenant.stripeCustomerId ? { address: 'auto', name: 'auto' } : undefined,
       billing_address_collection: 'required',
+      branding_settings: {
+        display_name: 'Roadlight',
+        background_color: '#FAF8F5',
+        button_color: '#4F46E5',
+        border_style: 'rounded',
+      },
       custom_text: {
         submit: {
           message: '9 € pro Monat. Das Abo verlängert sich monatlich und kann jederzeit zum Ende des laufenden Abrechnungszeitraums gekündigt werden.',

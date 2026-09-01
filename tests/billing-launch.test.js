@@ -19,6 +19,9 @@ test('checkout requires recorded product-specific consent before Stripe', () => 
   assert.ok(api.includes("req.body?.requestImmediatePerformance !== true"));
   assert.equal(api.includes('consent_collection:'), false);
   assert.ok(api.includes('billing_address_collection'));
+  assert.ok(api.includes("display_name: 'Roadlight'"));
+  assert.ok(api.includes("background_color: '#FAF8F5'"));
+  assert.ok(api.includes("button_color: '#4F46E5'"));
   assert.ok(adminHtml.includes('id="billingConsentDialog"'));
   assert.ok(adminHtml.includes('name="acceptTerms"'));
   assert.ok(adminHtml.includes('name="requestImmediatePerformance"'));
