@@ -3849,6 +3849,25 @@ async function handleStripeEvent(stripe, event) {
     return;
   }
 
+  // Rechnungen werden vor der automatischen Finalisierung als Draft erzeugt.
+  // Der produktbezogene §19-Hinweis wird deshalb hier gesetzt, statt die
+  // kontoweiten (mit FamilyManager geteilten) Rechnungseinstellungen zu ändern.
+  if (event.type === 'invoice.created') {
+    const invoice = event.data.object || {};
+    const subscriptionRef = invoice.subscription
+      || invoice.parent?.subscription_details?.subscription;
+    const subscriptionId = typeof subscriptionRef === 'string'
+      ? subscriptionRef
+      : subscriptionRef?.id;
+    if (!invoice.id || !subscriptionId || invoice.status !== 'draft') return;
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    if (!subscription.metadata?.tenantId) return;
+    if (invoice.footer !== SMALL_BUSINESS_INVOICE_FOOTER) {
+      await stripe.invoices.update(invoice.id, { footer: SMALL_BUSINESS_INVOICE_FOOTER });
+    }
+    return;
+  }
+
   // Wiederkehrende Zahlungen passieren asynchron. Subscription-Events bleiben
   // die Plan-Quelle; Invoice-Events re-synchronisieren denselben aktuellen
   // Subscription-Stand, damit Zahlungserfolg/-fehler nicht nur vom Dashboard-
@@ -4029,10 +4048,7 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
       line_items: [{ price: priceId, quantity: 1 }],
       client_reference_id: tenant.id,
       metadata: { tenantId: tenant.id },
-      subscription_data: {
-        metadata: { tenantId: tenant.id },
-        invoice_settings: { footer: SMALL_BUSINESS_INVOICE_FOOTER },
-      },
+      subscription_data: { metadata: { tenantId: tenant.id } },
       customer: tenant.stripeCustomerId || undefined,
       customer_email: tenant.stripeCustomerId ? undefined : (req.tenantAuth?.user?.email || undefined),
       customer_update: tenant.stripeCustomerId ? { address: 'auto', name: 'auto' } : undefined,
