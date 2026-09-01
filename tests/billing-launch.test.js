@@ -23,7 +23,6 @@ test('checkout requires recorded product-specific consent before Stripe', () => 
   assert.ok(api.includes("background_color: '#FAF8F5'"));
   assert.ok(api.includes("button_color: '#4F46E5'"));
   assert.ok(api.includes("integration_identifier: CHECKOUT_INTEGRATION_IDENTIFIER"));
-  assert.ok(api.includes("invoice_settings: { footer: SMALL_BUSINESS_INVOICE_FOOTER }"));
   assert.ok(api.includes("automatic_tax: { enabled: false }"));
   assert.ok(adminHtml.includes('id="billingConsentDialog"'));
   assert.ok(adminHtml.includes('name="acceptTerms"'));
@@ -57,6 +56,7 @@ test('webhooks deduplicate events and cover recurring invoice outcomes', () => {
   assert.ok(read('db/billing.js').includes("? 'processed' : 'processing'"));
   assert.ok(read('db/billing.js').includes("interval '5 minutes'"));
   for (const eventType of [
+    'invoice.created',
     'invoice.paid',
     'invoice.payment_failed',
     'invoice.payment_action_required',
@@ -64,6 +64,8 @@ test('webhooks deduplicate events and cover recurring invoice outcomes', () => {
   ]) {
     assert.ok(api.includes(eventType), `missing ${eventType}`);
   }
+  assert.ok(api.includes("invoice.status !== 'draft'"));
+  assert.ok(api.includes('stripe.invoices.update(invoice.id, { footer: SMALL_BUSINESS_INVOICE_FOOTER })'));
 });
 
 test('landing exposes the real Pro offer', () => {
