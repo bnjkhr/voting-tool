@@ -1,23 +1,23 @@
 # AGB-Entwurf — Roadlight Pro (Bezahl-Abo)
 
-> ⚠️ **ENTWURF — vor dem Verbraucher-Live-Gang anwaltlich prüfen lassen.** Dies ist ein
-> strukturierter Arbeitsentwurf, **keine Rechtsberatung**. Insbesondere die
-> **Widerrufsbelehrung** (§ 7) unterliegt strengen gesetzlichen Formvorgaben und
-> muss vor Verwendung geprüft werden. `public/agb.html` bildet den kompakten
-> Arbeitsstand bereits ab, ist aber ausdrücklich noch nicht rechtlich freigegeben.
+> ⚠️ **B2B-ARBEITSFASSUNG — anwaltlich prüfen lassen.** Dies ist ein strukturierter
+> Arbeitsentwurf, **keine Rechtsberatung**. `public/agb.html` bildet die kompakte
+> B2B-Fassung bereits ab, ist aber ausdrücklich noch nicht rechtlich freigegeben.
 
 ## Getroffene Entscheidungen (Stand: Betreiber bestätigt)
 
 1. **Umsatzsteuer:** **Kleinunternehmer nach § 19 UStG** — es wird **keine
    Umsatzsteuer ausgewiesen** (§ 5). → In Stripe **keine Steuer (Stripe Tax aus)**;
    Rechnungen tragen den § 19-Hinweis, keine USt-Position.
-2. **Zielgruppe:** **Verbraucher möglich** → Widerrufsrecht (§ 7), Brutto-Preis­
-   angabe und Verbraucher-Schlussbestimmungen (§ 14) bleiben Bestandteil.
+2. **Zielgruppe:** **ausschließlich Unternehmer (§ 14 BGB)**. Roadlight weist auf
+   der Landingpage, bei Registrierung, in den AGB und unmittelbar vor Checkout
+   darauf hin und protokolliert die ausdrückliche Unternehmerbestätigung.
 3. **Preis:** **9 € pro Monat als Endpreis** (brutto = netto, da § 19). Jahresabo
    optional später.
 
-**Weiterhin offen:** anwaltliche Prüfung des Gesamttexts, insbesondere der
-**Widerrufsbelehrung** (§ 7) — erst danach als `public/agb.html` live schalten.
+**Weiterhin offen:** anwaltliche Prüfung des Gesamttexts und der technischen
+B2B-Abgrenzung. Die Pflichtbestätigung ist kein Freibrief, wenn Roadlight im
+Einzelfall positive Kenntnis von einer privaten Nutzung hat.
 
 ---
 
@@ -26,7 +26,10 @@
 ### 1. Geltungsbereich
 Diese Nutzungsbedingungen regeln die Nutzung des Dienstes „Roadlight" (nachfolgend
 „Dienst"), erreichbar unter roadlight.pro, betrieben von Ben Kohler, Auf dem Kreuz
-32/1, 89073 Ulm (nachfolgend „Betreiber"). Mit der Registrierung eines Workspaces,
+32/1, 89073 Ulm (nachfolgend „Betreiber"). Der Dienst richtet sich ausschließlich
+an Unternehmer im Sinne des § 14 BGB, juristische Personen des öffentlichen Rechts
+und öffentlich-rechtliche Sondervermögen. Verträge mit Verbrauchern im Sinne des
+§ 13 BGB werden nicht geschlossen. Mit der Registrierung eines Workspaces,
 dem Abschluss eines kostenpflichtigen Abos oder der sonstigen Nutzung des Dienstes
 erkennst du diese Bedingungen an.
 
@@ -86,42 +89,12 @@ angemessener Frist oder aus wichtigem Grund (insbesondere bei Verstoß gegen die
 Bedingungen oder Zahlungsverzug) kündigen. Das Recht zur außerordentlichen Kündigung
 bleibt für beide Seiten unberührt.
 
-### 7. Widerrufsrecht für Verbraucher
-> ⚠️ **Anwaltlich prüfen.** Der folgende Text orientiert sich am gesetzlichen Muster
-> (§§ 355, 356 BGB, Art. 246a EGBGB), muss aber vor Verwendung auf korrekte Form und
-> Vollständigkeit geprüft werden.
-
-**Widerrufsbelehrung**
-
-Verbraucher haben das Recht, binnen vierzehn Tagen ohne Angabe von Gründen diesen
-Vertrag zu widerrufen. Die Widerrufsfrist beträgt vierzehn Tage ab dem Tag des
-Vertragsabschlusses. Um dein Widerrufsrecht auszuüben, musst du uns (Ben Kohler, Auf
-dem Kreuz 32/1, 89073 Ulm, E-Mail: hallo@roadlight.pro) mittels einer eindeutigen
-Erklärung (z. B. ein mit der Post versandter Brief oder eine E-Mail) über deinen
-Entschluss, diesen Vertrag zu widerrufen, informieren. Du kannst dafür das beigefügte
-Muster-Widerrufsformular verwenden, das jedoch nicht vorgeschrieben ist. Zur Wahrung
-der Widerrufsfrist reicht es aus, dass du die Mitteilung über die Ausübung des
-Widerrufsrechts vor Ablauf der Widerrufsfrist absendest.
-
-**Folgen des Widerrufs.** Wenn du diesen Vertrag widerrufst, haben wir dir alle
-Zahlungen, die wir von dir erhalten haben, unverzüglich und spätestens binnen
-vierzehn Tagen ab dem Tag zurückzuzahlen, an dem die Mitteilung über deinen Widerruf
-bei uns eingegangen ist.
-
-**Vorzeitiges Erlöschen bei digitalen Dienstleistungen.** Verlangst du als
-Verbraucher, dass die Pro-Leistung bereits während der Widerrufsfrist beginnt,
-erlischt dein Widerrufsrecht, wenn wir die Leistung vollständig erbracht haben; bei
-einer während der Widerrufsfrist begonnenen, noch nicht vollständig erbrachten
-Leistung schuldest du bei Widerruf einen anteiligen Betrag für die bis zum Widerruf
-erbrachte Leistung. Wir holen deine ausdrückliche Zustimmung zum sofortigen
-Leistungsbeginn und deine Kenntnisnahme vom (teilweisen) Verlust des Widerrufsrechts
-im Bestellvorgang ein.
-
-**Muster-Widerrufsformular** (nur ausfüllen und zurücksenden, wenn du den Vertrag
-widerrufen möchtest):
-An Ben Kohler, Auf dem Kreuz 32/1, 89073 Ulm, hallo@roadlight.pro — Hiermit widerrufe
-ich den von mir abgeschlossenen Vertrag über das Roadlight-Pro-Abo. Bestellt am /
-Name / Anschrift / Datum / (bei Mitteilung auf Papier: Unterschrift).
+### 7. Ausschließlich geschäftliche Nutzung
+Roadlight schließt keine Verträge mit Verbrauchern. Ein gesetzliches
+Verbraucher-Widerrufsrecht besteht für die von diesen Bedingungen erfassten Verträge
+daher nicht. Die Unternehmereigenschaft und der geschäftliche Verwendungszweck
+werden bei Registrierung und vor dem kostenpflichtigen Abschluss ausdrücklich
+bestätigt.
 
 ### 8. Pflichten der Nutzer
 Nutzer verpflichten sich, keine rechtswidrigen, beleidigenden, diskriminierenden oder
@@ -168,12 +141,9 @@ Zahlungsabwicklung ist Stripe eingebunden; Details ergeben sich aus der
 Datenschutzerklärung.
 
 ### 14. Schlussbestimmungen
-Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts;
-bei Verbrauchern bleiben zwingende Schutzvorschriften ihres Aufenthaltsstaates
-unberührt. Ist der Kunde Unternehmer, juristische Person des öffentlichen Rechts oder
-öffentlich-rechtliches Sondervermögen, ist Gerichtsstand Ulm. Der Betreiber ist
-nicht verpflichtet und nicht bereit, an Streitbeilegungsverfahren vor
-einer Verbraucherschlichtungsstelle teilzunehmen. Sollte eine Bestimmung unwirksam
-sein, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
+Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts.
+Ist der Kunde Kaufmann, juristische Person des öffentlichen Rechts oder
+öffentlich-rechtliches Sondervermögen, ist Gerichtsstand Ulm. Sollte eine Bestimmung
+unwirksam sein, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
 
-Stand: Entwurf, September 2026.
+Stand: B2B-Arbeitsfassung, 1. September 2026.

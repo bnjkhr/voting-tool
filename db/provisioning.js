@@ -29,13 +29,15 @@ class InviteNotPendingError extends Error {
 async function provisionWorkspace({
   tenantId, tenantName, tenantSlug,
   appId, appName, appDescription, appSlug, ticketPrefix,
-  email, membershipId,
+  email, membershipId, businessCustomerConfirmedBy,
 }) {
   return withTransaction(async (client) => {
     await client.query(
-      `insert into tenants (id, name, display_name, slug, status)
-       values ($1, $2, $3, $4, 'active')`,
-      [tenantId, tenantName, tenantName, tenantSlug]
+      `insert into tenants (
+         id, name, display_name, slug, status,
+         business_customer_confirmed_at, business_customer_confirmed_by
+       ) values ($1, $2, $3, $4, 'active', now(), $5)`,
+      [tenantId, tenantName, tenantName, tenantSlug, businessCustomerConfirmedBy]
     );
     await client.query(
       `insert into apps (id, tenant_id, name, description, slug, ticket_prefix, labels)

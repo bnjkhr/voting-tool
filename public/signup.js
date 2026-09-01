@@ -47,10 +47,11 @@ class SignupApp {
             workspaceSlug: (formData.get('workspaceSlug') || '').toString().trim(),
             boardName: (formData.get('boardName') || '').toString().trim(),
             ticketPrefix: (formData.get('ticketPrefix') || '').toString().trim(),
+            confirmBusinessCustomer: formData.get('confirmBusinessCustomer') === 'on',
         };
 
-        if (!payload.email || !payload.workspaceName) {
-            this.setStatus('E-Mail und Workspace Name sind erforderlich.', 'error');
+        if (!payload.email || !payload.workspaceName || !payload.confirmBusinessCustomer) {
+            this.setStatus('E-Mail, Workspace Name und Unternehmerbestätigung sind erforderlich.', 'error');
             return;
         }
 

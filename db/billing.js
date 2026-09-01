@@ -6,6 +6,7 @@ const { mapRow } = require('./rows');
 const CHECKOUT_COLUMNS = `
   tenant_id, attempt_id, stripe_session_id, checkout_url, status,
   terms_version, terms_accepted_at, immediate_performance_accepted_at,
+  business_customer_confirmed_at,
   accepted_by, expires_at, created_at, updated_at
 `;
 
@@ -19,7 +20,7 @@ async function reserveCheckout({
   const { rows } = await query(
     `insert into billing_checkout_sessions (
        tenant_id, attempt_id, status, terms_version, terms_accepted_at,
-       immediate_performance_accepted_at, accepted_by, expires_at
+       business_customer_confirmed_at, accepted_by, expires_at
      ) values ($1, $2, 'creating', $3, now(), now(), $4, $5)
      on conflict (tenant_id) do update set
        attempt_id = excluded.attempt_id,
@@ -28,7 +29,8 @@ async function reserveCheckout({
        status = 'creating',
        terms_version = excluded.terms_version,
        terms_accepted_at = excluded.terms_accepted_at,
-       immediate_performance_accepted_at = excluded.immediate_performance_accepted_at,
+       immediate_performance_accepted_at = null,
+       business_customer_confirmed_at = excluded.business_customer_confirmed_at,
        accepted_by = excluded.accepted_by,
        expires_at = excluded.expires_at,
        updated_at = now()

@@ -15,14 +15,15 @@ mit Live-Keys wiederholen.
 4. **Customer Portal** aktivieren (Settings → Billing → Customer portal → Speichern),
    Kündigung zum Periodenende und Aktualisierung der Zahlungsart erlauben, sonst
    schlägt „Abo verwalten" fehl.
-5. Die Roadlight-AGB und Datenschutzerklärung werden im produktinternen
-   Zustimmungsdialog vor Stripe verlinkt und die Zustimmung serverseitig
-   versioniert protokolliert. Im gemeinsam mit FamilyManager verwendeten
-   Stripe-Konto keine Roadlight-spezifische kontoweite AGB-URL setzen.
-6. Stripe Tax bleibt aus. Der Webhook setzt bei `invoice.created` den Hinweis
-   „Gemäß § 19 UStG wird keine Umsatzsteuer berechnet." auf die noch nicht
-   finalisierte Roadlight-Rechnung. Damit trägt jede Roadlight-Rechnung den
-   Hinweis, ohne die kontoweiten FamilyManager-Einstellungen zu verändern.
+5. Roadlight läuft in einem **eigenen Stripe-Konto**. Dort die Roadlight-AGB,
+   Datenschutzerklärung und öffentlichen Unternehmensinformationen hinterlegen.
+   Die B2B-Unternehmerbestätigung wird zusätzlich vor Stripe abgefragt und
+   serverseitig versioniert protokolliert.
+6. Stripe Tax bleibt aus. In den kontoweiten Rechnungseinstellungen den Standard-
+   Footer „Gemäß § 19 UStG wird keine Umsatzsteuer berechnet." setzen. Der Webhook
+   ergänzt denselben Hinweis bei `invoice.created` zusätzlich auf noch nicht
+   finalisierten Rechnungen; der Kontostandard ist nötig, weil initiale Abo-
+   Rechnungen bereits vor der Webhook-Verarbeitung finalisiert werden können.
 7. Der Restricted Key benötigt dafür zusätzlich **Invoices: Write**.
 8. Roadlight deaktiviert **Managed Payments** pro Checkout-Session explizit,
    weil Stripe Managed Payments nicht zusammen mit dem eigenen Kündigungs- und
@@ -115,10 +116,10 @@ ein Endpreis (brutto = netto). In Stripe daher:
   wird keine Umsatzsteuer berechnet."), keine USt-Zeile.
 
 ## Live schalten (Premium-Launch) — Checkliste
-1. **Bezahl-AGB** (`docs/agb-pro-entwurf.md`) anwaltlich prüfen lassen → als
-   `public/agb.html` live; Impressum/Datenschutz auf Stripe/Bezahlung prüfen.
-2. Verbraucher-Vertrieb nur mit geprüftem Widerrufs- und Kündigungsprozess
-   (§ 312k BGB); alternativ den Start technisch und vertraglich auf B2B begrenzen.
+1. **B2B-AGB** (`docs/agb-pro-entwurf.md`) anwaltlich prüfen lassen; Impressum und
+   Datenschutz auf Stripe/Bezahlung prüfen.
+2. Landingpage, Registrierung und Checkout müssen Roadlight sichtbar auf
+   Unternehmer (§ 14 BGB) begrenzen und die Bestätigung serverseitig protokollieren.
 3. Stripe **Live-Mode**: Produkt/Preis (9 €/Monat, keine Steuer) + Webhook auf
    `roadlight.pro` neu anlegen, Live-Keys ziehen.
 4. In Vercel (roadlight): `STRIPE_SECRET_KEY=sk_live_…`, `STRIPE_WEBHOOK_SECRET`,

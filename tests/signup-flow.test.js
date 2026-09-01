@@ -16,6 +16,8 @@ test('signup page lets a new owner create a workspace', () => {
   assert.ok(html.includes('name="workspaceSlug"'));
   assert.ok(html.includes('name="boardName"'));
   assert.ok(html.includes('name="ticketPrefix"'));
+  assert.ok(html.includes('name="confirmBusinessCustomer"'));
+  assert.ok(html.includes('&sect;&nbsp;14 BGB'));
   assert.ok(html.includes('href="/login.html"'));
   assert.ok(html.includes('src="signup.js"'));
 
@@ -24,12 +26,15 @@ test('signup page lets a new owner create a workspace', () => {
   assert.ok(script.includes('syncWorkspaceSlug'));
   assert.ok(script.includes('slugTouched'));
   assert.ok(script.includes('normalizeSlug'));
+  assert.ok(script.includes("confirmBusinessCustomer: formData.get('confirmBusinessCustomer') === 'on'"));
   assert.equal(script.includes('data.loginUrl'), false);
   assert.ok(script.includes('Login-Link wurde per E-Mail verschickt.'));
 });
 
 test('signup api provisions tenant, owner membership and login link without admin auth', () => {
   assert.ok(apiSource.includes("app.post('/api/signup/workspaces'"));
+  assert.ok(apiSource.includes("code: 'business_customer_required'"));
+  assert.ok(apiSource.includes('businessCustomerConfirmedBy: email'));
   assert.ok(apiSource.includes('buildSignupWorkspaceConfig'));
   assert.ok(apiSource.includes('buildTenantProvisionDocuments'));
   assert.ok(apiSource.includes('buildUserData'));

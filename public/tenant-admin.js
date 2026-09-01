@@ -1515,7 +1515,7 @@ class TenantAdminApp {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     acceptTerms: form.elements.acceptTerms.checked,
-                    requestImmediatePerformance: form.elements.requestImmediatePerformance.checked,
+                    confirmBusinessCustomer: form.elements.confirmBusinessCustomer.checked,
                 }),
             });
             const data = await response.json();
