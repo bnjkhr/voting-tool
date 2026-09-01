@@ -4054,6 +4054,7 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
       customer_update: tenant.stripeCustomerId ? { address: 'auto', name: 'auto' } : undefined,
       billing_address_collection: 'required',
       automatic_tax: { enabled: false },
+      managed_payments: { enabled: false },
       branding_settings: {
         display_name: 'Roadlight',
         background_color: '#FAF8F5',

@@ -24,6 +24,10 @@ mit Live-Keys wiederholen.
    finalisierte Roadlight-Rechnung. Damit trägt jede Roadlight-Rechnung den
    Hinweis, ohne die kontoweiten FamilyManager-Einstellungen zu verändern.
 7. Der Restricted Key benötigt dafür zusätzlich **Invoices: Write**.
+8. Roadlight deaktiviert **Managed Payments** pro Checkout-Session explizit,
+   weil Stripe Managed Payments nicht zusammen mit dem eigenen Kündigungs- und
+   Preishinweis (`custom_text`) akzeptiert. Das ist unabhängig von der
+   kontoweiten Stripe-Voreinstellung.
 
 ## 2. Webhook einrichten
 1. Developers → **Webhooks** → Endpoint hinzufügen:
