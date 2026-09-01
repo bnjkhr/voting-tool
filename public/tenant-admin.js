@@ -30,6 +30,7 @@ class TenantAdminApp {
         this.billingReturn = params.get('billing');
         if (this.billingReturn) {
             params.delete('billing');
+            params.delete('session_id');
             const query = params.toString();
             history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
         }
@@ -92,8 +93,16 @@ class TenantAdminApp {
         document.getElementById('billingStatus').addEventListener('click', event => {
             const trigger = event.target.closest('[data-action]');
             if (!trigger) return;
-            if (trigger.dataset.action === 'billing-upgrade') this.startBillingCheckout(trigger);
+            if (trigger.dataset.action === 'billing-upgrade') this.openBillingConsentDialog();
             else if (trigger.dataset.action === 'billing-portal') this.openBillingPortal(trigger);
+        });
+        document.getElementById('billingConsentDialog').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="billing-consent-cancel"]');
+            if (trigger) document.getElementById('billingConsentDialog').close();
+        });
+        document.getElementById('billingConsentForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.startBillingCheckout(document.getElementById('billingConsentSubmit'));
         });
         document.getElementById('tenantTabs').addEventListener('click', event => {
             const trigger = event.target.closest('[data-action="switch-view"]');
@@ -1431,7 +1440,7 @@ class TenantAdminApp {
             else if (b.currentPeriodEnd) detail = `Verlängert sich am ${this.formatDate(b.currentPeriodEnd)}.`;
             else detail = 'Aktiv.';
         } else {
-            detail = 'Kostenlos — für kleine Workspaces.';
+            detail = 'Kostenlos — für kleine Workspaces. Pro kostet 9 € pro Monat.';
         }
 
         const features = isPro
@@ -1483,6 +1492,16 @@ class TenantAdminApp {
         `;
     }
 
+    openBillingConsentDialog() {
+        if (this.currentRole !== 'owner') {
+            this.showToast('Nur der Owner kann upgraden', 'error');
+            return;
+        }
+        const form = document.getElementById('billingConsentForm');
+        form.reset();
+        document.getElementById('billingConsentDialog').showModal();
+    }
+
     async startBillingCheckout(button) {
         if (this.currentRole !== 'owner') {
             this.showToast('Nur der Owner kann upgraden', 'error');
@@ -1490,7 +1509,15 @@ class TenantAdminApp {
         }
         if (button) button.disabled = true;
         try {
-            const response = await this.adminFetch(this.tenantAdminPath('/billing/checkout'), { method: 'POST' });
+            const form = document.getElementById('billingConsentForm');
+            const response = await this.adminFetch(this.tenantAdminPath('/billing/checkout'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    acceptTerms: form.elements.acceptTerms.checked,
+                    requestImmediatePerformance: form.elements.requestImmediatePerformance.checked,
+                }),
+            });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Checkout konnte nicht gestartet werden');
             window.location.href = data.url;

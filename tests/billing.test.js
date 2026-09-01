@@ -124,6 +124,24 @@ test('billingEnabled/getStripe sind ohne STRIPE_SECRET_KEY inaktiv', () => {
   }
 });
 
+test('Pro-Preis muss aktiv, 9 EUR und monatlich sein', () => {
+  const valid = {
+    active: true,
+    currency: 'eur',
+    unit_amount: 900,
+    type: 'recurring',
+    recurring: { interval: 'month', interval_count: 1 },
+  };
+  assert.deepEqual(billing.validateProPrice(valid), { valid: true, reason: null });
+  assert.equal(billing.validateProPrice({ ...valid, unit_amount: 990 }).reason, 'amount_mismatch');
+  assert.equal(billing.validateProPrice({ ...valid, currency: 'usd' }).reason, 'currency_mismatch');
+  assert.equal(billing.validateProPrice({ ...valid, active: false }).reason, 'price_inactive');
+  assert.equal(
+    billing.validateProPrice({ ...valid, recurring: { interval: 'year', interval_count: 1 } }).reason,
+    'interval_mismatch'
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Verdrahtung in index.js
 // ---------------------------------------------------------------------------

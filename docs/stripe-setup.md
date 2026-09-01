@@ -8,18 +8,26 @@ mit Live-Keys wiederholen.
 ## 1. In Stripe anlegen
 1. Stripe-Konto → **Test-Mode** aktivieren (Toggle oben rechts).
 2. **Produkt** „Roadlight Pro" mit einem wiederkehrenden **Preis** (monatlich, EUR).
+   Betrag: **9,00 EUR**, keine Testphase, keine nutzungsabhängige Abrechnung.
    Die **Price-ID** (`price_…`) notieren → das ist `STRIPE_PRICE_PRO`.
 3. **API-Keys** (Developers → API keys): den **Secret Key** (`sk_test_…`) →
    `STRIPE_SECRET_KEY`.
 4. **Customer Portal** aktivieren (Settings → Billing → Customer portal → Speichern),
-   sonst schlägt „Abo verwalten" fehl.
+   Kündigung zum Periodenende und Aktualisierung der Zahlungsart erlauben, sonst
+   schlägt „Abo verwalten" fehl.
+5. Unter **Public details** die AGB-URL `https://roadlight.pro/agb.html` und die
+   Datenschutz-URL `https://roadlight.pro/datenschutz.html` hinterlegen. Checkout
+   verlangt die Stripe-AGB-Zustimmung und funktioniert ohne Terms-URL nicht.
+6. Stripe Tax bleibt aus. Rechnungen tragen den Hinweis „Gemäß § 19 UStG wird
+   keine Umsatzsteuer berechnet."
 
 ## 2. Webhook einrichten
 1. Developers → **Webhooks** → Endpoint hinzufügen:
    `https://roadlight.pro/api/stripe/webhook`
 2. Events auswählen: `checkout.session.completed`,
    `customer.subscription.created`, `customer.subscription.updated`,
-   `customer.subscription.deleted`.
+   `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`,
+   `invoice.payment_action_required`, `invoice.finalization_failed`.
 3. Das **Signing Secret** (`whsec_…`) → `STRIPE_WEBHOOK_SECRET`.
 
 ## 3. Env-Vars setzen (roadlight-Projekt)
@@ -28,6 +36,7 @@ Lokal in `.env.local` (zum Testen) und in Vercel (Production):
 STRIPE_SECRET_KEY=sk_test_…      (bzw. sk_live_… für Production)
 STRIPE_WEBHOOK_SECRET=whsec_…
 STRIPE_PRICE_PRO=price_…
+BILLING_ENFORCED=false
 ```
 
 > **Master-Schalter `BILLING_ENFORCED`** (Default: aus): Steuert, ob Pro-Features
@@ -51,6 +60,20 @@ Tenant-Bezug → der Handler macht `return`, ohne einen Tenant zu ändern).
 Nach erfolgreichem Checkout sollte in Neon `tenants.plan = 'pro'`,
 `subscription_status = 'active'`, `stripe_customer_id`/`current_period_end`
 gesetzt sein.
+
+Die Tabelle `billing_checkout_sessions` serialisiert parallele Checkout-Versuche
+pro Workspace und protokolliert die akzeptierte AGB-Version. Webhook-Event-IDs
+werden in `stripe_webhook_events` dedupliziert; laufende Zustellungen werden noch
+nicht mit 2xx quittiert und verwaiste Claims nach fünf Minuten übernommen.
+
+## Datenbankmigration vor Vercel
+
+Vor dem Deployment einmal `npm run db:migrate` mit der Ziel-Datenbank ausführen.
+Der Migrator ist idempotent und nutzt einen Postgres-Advisory-Lock. Er läuft bewusst
+nicht in `vercel-build`: Vercel behandelt die Hilfsdateien unter `api/` als einzelne
+Functions und würde den Build-Hook mehrfach starten. Migrationen müssen additiv und
+rückwärtskompatibel bleiben, weil Preview und Production dieselbe Datenbank nutzen
+können.
 
 ## Endpoints (bereits gebaut)
 - `POST /api/stripe/webhook` — Signatur-verifiziert, synct Abo-Status → `tenants` (nur Postgres).
@@ -81,8 +104,12 @@ ein Endpreis (brutto = netto). In Stripe daher:
 ## Live schalten (Premium-Launch) — Checkliste
 1. **Bezahl-AGB** (`docs/agb-pro-entwurf.md`) anwaltlich prüfen lassen → als
    `public/agb.html` live; Impressum/Datenschutz auf Stripe/Bezahlung prüfen.
-2. Stripe **Live-Mode**: Produkt/Preis (9 €/Monat, keine Steuer) + Webhook auf
+2. Verbraucher-Vertrieb nur mit geprüftem Widerrufs- und Kündigungsprozess
+   (§ 312k BGB); alternativ den Start technisch und vertraglich auf B2B begrenzen.
+3. Stripe **Live-Mode**: Produkt/Preis (9 €/Monat, keine Steuer) + Webhook auf
    `roadlight.pro` neu anlegen, Live-Keys ziehen.
-3. In Vercel (roadlight): `STRIPE_SECRET_KEY=sk_live_…`, `STRIPE_WEBHOOK_SECRET`,
+4. In Vercel (roadlight): `STRIPE_SECRET_KEY=sk_live_…`, `STRIPE_WEBHOOK_SECRET`,
    `STRIPE_PRICE_PRO` setzen.
-4. **Zuletzt** `BILLING_ENFORCED=true` setzen → ab jetzt greifen alle Limits.
+5. Test-Checkout, Webhook, Portal, Kündigung und Downgrade in Stripe-Testmode
+   vollständig prüfen.
+6. **Zuletzt** `BILLING_ENFORCED=true` setzen → ab jetzt greifen alle Limits.

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <meta name="theme-color" content="#FFFFFF">
@@ -484,6 +485,52 @@
             margin: 10px 0 0;
             color: var(--text-secondary);
             font-size: 0.85rem;
+        }
+
+        .billing-consent-dialog {
+            width: min(560px, calc(100vw - 32px));
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 0;
+            background: var(--surface);
+            color: var(--text-primary);
+            box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+        }
+
+        .billing-consent-dialog::backdrop {
+            background: rgba(15, 23, 42, 0.58);
+        }
+
+        .billing-consent-form {
+            display: grid;
+            gap: 16px;
+            padding: 24px;
+        }
+
+        .billing-consent-form h3,
+        .billing-consent-form p {
+            margin: 0;
+        }
+
+        .billing-consent-option {
+            display: grid;
+            grid-template-columns: 20px 1fr;
+            gap: 10px;
+            align-items: start;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+
+        .billing-consent-option input {
+            margin-top: 3px;
+        }
+
+        .billing-consent-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
         }
 
         .tenant-admin-controls {
@@ -979,6 +1026,24 @@
                         <div id="billingStatus" class="tenant-empty">Lade Plan…</div>
                     </div>
                 </div>
+                <dialog id="billingConsentDialog" class="billing-consent-dialog">
+                    <form id="billingConsentForm" class="billing-consent-form">
+                        <h3>Roadlight Pro abonnieren</h3>
+                        <p><strong>9&nbsp;€ pro Monat</strong>, monatlich kündbar. Das Abo verlängert sich automatisch um jeweils einen Monat.</p>
+                        <label class="billing-consent-option">
+                            <input name="acceptTerms" type="checkbox" required>
+                            <span>Ich akzeptiere die <a href="/agb.html" target="_blank" rel="noopener">AGB</a> und habe die <a href="/datenschutz.html" target="_blank" rel="noopener">Datenschutzerklärung</a> gelesen.</span>
+                        </label>
+                        <label class="billing-consent-option">
+                            <input name="requestImmediatePerformance" type="checkbox" required>
+                            <span>Ich verlange, dass Roadlight Pro sofort vor Ablauf der Widerrufsfrist beginnt. Mir ist bekannt, dass bei einem Widerruf Wertersatz für bereits erbrachte Leistungen anfallen kann.</span>
+                        </label>
+                        <div class="billing-consent-actions">
+                            <button class="secondary-btn" type="button" data-action="billing-consent-cancel">Abbrechen</button>
+                            <button id="billingConsentSubmit" class="primary-btn" type="submit">Weiter zur Zahlung</button>
+                        </div>
+                    </form>
+                </dialog>
                 <div class="tenant-admin-panel">
                     <h2>Workspace</h2>
                     <div class="tenant-admin-panel-body">
