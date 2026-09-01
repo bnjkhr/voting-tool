@@ -50,6 +50,7 @@ test('checkout creation is serialized and idempotent', () => {
 });
 
 test('webhooks deduplicate events and cover recurring invoice outcomes', () => {
+  assert.ok(api.includes('process.env.STRIPE_WEBHOOK_SECRET?.trim()'));
   assert.ok(migration.includes('create table stripe_webhook_events'));
   assert.ok(api.includes('repos.billing.beginWebhookEvent'));
   assert.ok(api.includes('repos.billing.completeWebhookEvent'));

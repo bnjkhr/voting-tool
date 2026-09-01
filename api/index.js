@@ -3893,7 +3893,7 @@ async function handleStripeEvent(stripe, event) {
 // Stripe-Webhook (Roh-Body via express.raw, siehe Middleware oben).
 app.post('/api/stripe/webhook', async (req, res) => {
   const stripe = billing.getStripe();
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   if (!stripe || !webhookSecret) {
     return res.status(503).json({ error: 'Billing not configured' });
   }
