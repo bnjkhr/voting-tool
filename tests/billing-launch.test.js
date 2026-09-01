@@ -24,6 +24,7 @@ test('checkout requires recorded product-specific consent before Stripe', () => 
   assert.ok(api.includes("button_color: '#4F46E5'"));
   assert.ok(api.includes("integration_identifier: CHECKOUT_INTEGRATION_IDENTIFIER"));
   assert.ok(api.includes("automatic_tax: { enabled: false }"));
+  assert.ok(api.includes("managed_payments: { enabled: false }"));
   assert.ok(adminHtml.includes('id="billingConsentDialog"'));
   assert.ok(adminHtml.includes('name="acceptTerms"'));
   assert.ok(adminHtml.includes('name="requestImmediatePerformance"'));
