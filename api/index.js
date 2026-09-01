@@ -67,6 +67,8 @@ const planLimits = require('../lib/plan-limits');
 const BILLING_TERMS_VERSION = '2026-09-01';
 const PRO_PRICE_EUR = 9;
 const CHECKOUT_TTL_MS = 31 * 60 * 1000;
+const CHECKOUT_INTEGRATION_IDENTIFIER = 'roadlight_qmvkptzr';
+const SMALL_BUSINESS_INVOICE_FOOTER = 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.';
 
 const app = express();
 
@@ -4023,14 +4025,19 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
     const returnUrl = `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`;
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
+      integration_identifier: CHECKOUT_INTEGRATION_IDENTIFIER,
       line_items: [{ price: priceId, quantity: 1 }],
       client_reference_id: tenant.id,
       metadata: { tenantId: tenant.id },
-      subscription_data: { metadata: { tenantId: tenant.id } },
+      subscription_data: {
+        metadata: { tenantId: tenant.id },
+        invoice_settings: { footer: SMALL_BUSINESS_INVOICE_FOOTER },
+      },
       customer: tenant.stripeCustomerId || undefined,
       customer_email: tenant.stripeCustomerId ? undefined : (req.tenantAuth?.user?.email || undefined),
       customer_update: tenant.stripeCustomerId ? { address: 'auto', name: 'auto' } : undefined,
       billing_address_collection: 'required',
+      automatic_tax: { enabled: false },
       branding_settings: {
         display_name: 'Roadlight',
         background_color: '#FAF8F5',

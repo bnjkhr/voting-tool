@@ -22,12 +22,22 @@ test('checkout requires recorded product-specific consent before Stripe', () => 
   assert.ok(api.includes("display_name: 'Roadlight'"));
   assert.ok(api.includes("background_color: '#FAF8F5'"));
   assert.ok(api.includes("button_color: '#4F46E5'"));
+  assert.ok(api.includes("integration_identifier: CHECKOUT_INTEGRATION_IDENTIFIER"));
+  assert.ok(api.includes("invoice_settings: { footer: SMALL_BUSINESS_INVOICE_FOOTER }"));
+  assert.ok(api.includes("automatic_tax: { enabled: false }"));
   assert.ok(adminHtml.includes('id="billingConsentDialog"'));
   assert.ok(adminHtml.includes('name="acceptTerms"'));
   assert.ok(adminHtml.includes('name="requestImmediatePerformance"'));
   assert.ok(adminHtml.includes('href="/agb.html"'));
   assert.ok(adminHtml.includes('href="/datenschutz.html"'));
   assert.ok(adminJs.includes('openBillingConsentDialog'));
+});
+
+test('Stripe API and checkout tracking are pinned for production', () => {
+  const billing = read('lib/billing.js');
+  assert.ok(billing.includes("const STRIPE_API_VERSION = '2026-07-29.dahlia'"));
+  assert.ok(billing.includes('apiVersion: STRIPE_API_VERSION'));
+  assert.match(api, /CHECKOUT_INTEGRATION_IDENTIFIER = 'roadlight_[a-z]{8}'/);
 });
 
 test('checkout creation is serialized and idempotent', () => {

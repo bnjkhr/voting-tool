@@ -19,8 +19,10 @@ mit Live-Keys wiederholen.
    Zustimmungsdialog vor Stripe verlinkt und die Zustimmung serverseitig
    versioniert protokolliert. Im gemeinsam mit FamilyManager verwendeten
    Stripe-Konto keine Roadlight-spezifische kontoweite AGB-URL setzen.
-6. Stripe Tax bleibt aus. Rechnungen tragen den Hinweis „Gemäß § 19 UStG wird
-   keine Umsatzsteuer berechnet."
+6. Stripe Tax bleibt aus. Der Checkout setzt den Hinweis „Gemäß § 19 UStG wird
+   keine Umsatzsteuer berechnet." direkt auf die Roadlight-Subscription, damit
+   auch im gemeinsam genutzten Stripe-Konto jede Roadlight-Rechnung den Hinweis
+   trägt.
 
 ## 2. Webhook einrichten
 1. Developers → **Webhooks** → Endpoint hinzufügen:
