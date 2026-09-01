@@ -4031,7 +4031,6 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
       customer_email: tenant.stripeCustomerId ? undefined : (req.tenantAuth?.user?.email || undefined),
       customer_update: tenant.stripeCustomerId ? { address: 'auto', name: 'auto' } : undefined,
       billing_address_collection: 'required',
-      consent_collection: { terms_of_service: 'required' },
       custom_text: {
         submit: {
           message: '9 € pro Monat. Das Abo verlängert sich monatlich und kann jederzeit zum Ende des laufenden Abrechnungszeitraums gekündigt werden.',
