@@ -1,10 +1,10 @@
 # AGB-Entwurf — Roadlight Pro (Bezahl-Abo)
 
-> ⚠️ **ENTWURF — vor dem Live-Gang anwaltlich prüfen lassen.** Dies ist ein
+> ⚠️ **ENTWURF — vor dem Verbraucher-Live-Gang anwaltlich prüfen lassen.** Dies ist ein
 > strukturierter Arbeitsentwurf, **keine Rechtsberatung**. Insbesondere die
 > **Widerrufsbelehrung** (§ 7) unterliegt strengen gesetzlichen Formvorgaben und
-> muss vor Verwendung geprüft werden. Erst nach der Prüfung als `public/agb.html`
-> live schalten (die aktuelle `agb.html` ist die kostenlose Beta-Fassung).
+> muss vor Verwendung geprüft werden. `public/agb.html` bildet den kompakten
+> Arbeitsstand bereits ab, ist aber ausdrücklich noch nicht rechtlich freigegeben.
 
 ## Getroffene Entscheidungen (Stand: Betreiber bestätigt)
 
@@ -171,10 +171,9 @@ Datenschutzerklärung.
 Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts;
 bei Verbrauchern bleiben zwingende Schutzvorschriften ihres Aufenthaltsstaates
 unberührt. Ist der Kunde Unternehmer, juristische Person des öffentlichen Rechts oder
-öffentlich-rechtliches Sondervermögen, ist Gerichtsstand Ulm. Die EU-Plattform zur
-Online-Streitbeilegung erreichst du unter https://ec.europa.eu/consumers/odr/. Der
-Betreiber ist nicht verpflichtet und nicht bereit, an Streitbeilegungsverfahren vor
+öffentlich-rechtliches Sondervermögen, ist Gerichtsstand Ulm. Der Betreiber ist
+nicht verpflichtet und nicht bereit, an Streitbeilegungsverfahren vor
 einer Verbraucherschlichtungsstelle teilzunehmen. Sollte eine Bestimmung unwirksam
 sein, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
 
-Stand: Entwurf, [Datum vor Live-Gang einsetzen].
+Stand: Entwurf, September 2026.

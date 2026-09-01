@@ -64,6 +64,10 @@ const { usePostgres } = repos.backend;
 const billing = require('../lib/billing');
 const planLimits = require('../lib/plan-limits');
 
+const BILLING_TERMS_VERSION = '2026-09-01';
+const PRO_PRICE_EUR = 9;
+const CHECKOUT_TTL_MS = 31 * 60 * 1000;
+
 const app = express();
 
 function loadDotEnvFileIfPresent() {
@@ -135,6 +139,21 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // SPA-Fallback am Ende der Datei; /index.html bleibt als Board-Shell erreichbar.
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/landing.html'));
+});
+
+const INTERNAL_STATIC_PATHS = new Set([
+  '/admin-ux-proposals.html',
+  '/kommt-bald.html',
+  '/mockup-1-linear.html',
+  '/mockup-2-soft.html',
+  '/mockup-3-glass.html',
+  '/test.html',
+]);
+app.use((req, res, next) => {
+  if (process.env.VERCEL_ENV === 'production' && INTERNAL_STATIC_PATHS.has(req.path)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  return next();
 });
 
 // Serve static files from public directory
@@ -3812,6 +3831,7 @@ async function handleStripeEvent(stripe, event) {
     if (!tenantId || !session.subscription) return;
     const subscription = await stripe.subscriptions.retrieve(session.subscription);
     await applyBillingToTenant(tenantId, subscription, session.customer);
+    await repos.billing.markCheckoutCompleted(session.id);
     return;
   }
   if (event.type === 'customer.subscription.created'
@@ -3823,6 +3843,28 @@ async function handleStripeEvent(stripe, event) {
     // Event-Payload den AKTUELLEN Stand von Stripe holen -> ein verspäteter
     // alter Event überschreibt so keine neuere Kündigung.
     const subscription = await stripe.subscriptions.retrieve(event.data.object.id);
+    await applyBillingToTenant(tenantId, subscription, subscription.customer);
+    return;
+  }
+
+  // Wiederkehrende Zahlungen passieren asynchron. Subscription-Events bleiben
+  // die Plan-Quelle; Invoice-Events re-synchronisieren denselben aktuellen
+  // Subscription-Stand, damit Zahlungserfolg/-fehler nicht nur vom Dashboard-
+  // Timing abhängen. Stripe-E-Mails/Smart Retries werden im Dashboard aktiviert.
+  if (event.type === 'invoice.paid'
+    || event.type === 'invoice.payment_failed'
+    || event.type === 'invoice.payment_action_required'
+    || event.type === 'invoice.finalization_failed') {
+    const invoice = event.data.object || {};
+    const subscriptionRef = invoice.subscription
+      || invoice.parent?.subscription_details?.subscription;
+    const subscriptionId = typeof subscriptionRef === 'string'
+      ? subscriptionRef
+      : subscriptionRef?.id;
+    if (!subscriptionId) return;
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const tenantId = subscription.metadata?.tenantId;
+    if (!tenantId) return;
     await applyBillingToTenant(tenantId, subscription, subscription.customer);
   }
 }
@@ -3842,8 +3884,25 @@ app.post('/api/stripe/webhook', async (req, res) => {
     return res.status(400).json({ error: 'Invalid signature' });
   }
   try {
+    let eventClaimed = false;
+    if (usePostgres()) {
+      const eventState = await repos.billing.beginWebhookEvent(event.id, event.type);
+      if (eventState === 'processed') {
+        return res.json({ received: true, duplicate: true });
+      }
+      if (eventState === 'processing') {
+        // Noch kein 2xx: Stripe soll erneut zustellen, falls der parallele
+        // Handler abstürzt. Verwaiste Claims werden nach fünf Minuten übernommen.
+        return res.status(409).json({ received: false, processing: true });
+      }
+      eventClaimed = eventState === 'claimed';
+    }
     await handleStripeEvent(stripe, event);
+    if (eventClaimed) await repos.billing.completeWebhookEvent(event.id);
   } catch (err) {
+    if (usePostgres() && event?.id) {
+      try { await repos.billing.releaseWebhookEvent(event.id); } catch (_) { /* Stripe retry bleibt maßgeblich */ }
+    }
     console.error('Stripe webhook handler error:', err.message);
     return res.status(500).json({ error: 'Webhook handler failed' });
   }
@@ -3896,6 +3955,8 @@ app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (
       // sonst würde "Upgrade" garantiert in ein 503 laufen. Das Portal (Abo
       // verwalten) genügt der Secret-Key allein.
       checkoutReady: billing.billingEnabled() && !!process.env.STRIPE_PRICE_PRO,
+      priceEur: PRO_PRICE_EUR,
+      termsVersion: BILLING_TERMS_VERSION,
     });
   } catch (error) {
     console.error('Error loading billing status:', error);
@@ -3905,6 +3966,7 @@ app.get('/api/admin/tenants/:tenantSlug/billing', requireTenantAccess(), async (
 
 // Tenant Admin (Owner): Checkout für Pro starten.
 app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(['owner']), rateLimit(60000, 10), async (req, res) => {
+  let attemptId = null;
   try {
     if (!usePostgres()) return res.status(404).json({ error: 'Not found' }); // Billing lebt in Neon
     const stripe = billing.getStripe();
@@ -3916,6 +3978,48 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
     if (billing.PRO_STATUSES.has(tenant.subscriptionStatus)) {
       return res.status(409).json({ error: 'Es besteht bereits ein aktives Abo. Verwalte es über das Kundenportal.' });
     }
+    if (req.body?.acceptTerms !== true || req.body?.requestImmediatePerformance !== true) {
+      return res.status(400).json({
+        error: 'Bitte akzeptiere die AGB und bestätige den sofortigen Leistungsbeginn.',
+        code: 'billing_consent_required',
+      });
+    }
+
+    attemptId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + CHECKOUT_TTL_MS);
+    const acceptedBy = req.tenantAuth?.user?.email
+      || (req.tenantAuth?.type === 'admin' ? 'platform-admin' : null);
+    const reservation = await repos.billing.reserveCheckout({
+      tenantId: tenant.id,
+      attemptId,
+      termsVersion: BILLING_TERMS_VERSION,
+      acceptedBy,
+      expiresAt,
+    });
+    if (!reservation.reserved) {
+      const existing = reservation.checkout;
+      if (existing?.status === 'ready' && existing.checkoutUrl) {
+        return res.json({ url: existing.checkoutUrl, reused: true });
+      }
+      return res.status(409).json({
+        error: 'Checkout wird bereits vorbereitet. Bitte versuche es gleich erneut.',
+        code: 'checkout_in_progress',
+        retryable: true,
+      });
+    }
+
+    const configuredPrice = await stripe.prices.retrieve(priceId);
+    const priceValidation = billing.validateProPrice(configuredPrice, {
+      unitAmount: PRO_PRICE_EUR * 100,
+      currency: 'eur',
+    });
+    if (!priceValidation.valid) {
+      console.error('Configured Stripe Pro price is invalid:', priceValidation.reason);
+      await repos.billing.markCheckoutFailed(attemptId);
+      attemptId = null;
+      return res.status(503).json({ error: 'Der Pro-Preis ist nicht korrekt konfiguriert' });
+    }
+
     const returnUrl = `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`;
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -3925,12 +4029,29 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
       subscription_data: { metadata: { tenantId: tenant.id } },
       customer: tenant.stripeCustomerId || undefined,
       customer_email: tenant.stripeCustomerId ? undefined : (req.tenantAuth?.user?.email || undefined),
+      customer_update: tenant.stripeCustomerId ? { address: 'auto', name: 'auto' } : undefined,
+      billing_address_collection: 'required',
+      consent_collection: { terms_of_service: 'required' },
+      custom_text: {
+        submit: {
+          message: '9 € pro Monat. Das Abo verlängert sich monatlich und kann jederzeit zum Ende des laufenden Abrechnungszeitraums gekündigt werden.',
+        },
+      },
       allow_promotion_codes: true,
-      success_url: `${returnUrl}&billing=success`,
+      locale: 'de',
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
+      success_url: `${returnUrl}&billing=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${returnUrl}&billing=cancelled`,
+    }, { idempotencyKey: `roadlight-checkout-${attemptId}` });
+    await repos.billing.markCheckoutReady(attemptId, {
+      stripeSessionId: session.id,
+      checkoutUrl: session.url,
     });
     res.json({ url: session.url });
   } catch (error) {
+    if (attemptId && usePostgres()) {
+      try { await repos.billing.markCheckoutFailed(attemptId); } catch (_) { /* Originalfehler melden */ }
+    }
     console.error('Error creating checkout session:', error);
     res.status(500).json({ error: 'Checkout konnte nicht gestartet werden' });
   }
@@ -3947,6 +4068,7 @@ app.post('/api/admin/tenants/:tenantSlug/billing/portal', requireTenantAccess(['
     if (!tenant.stripeCustomerId) return res.status(400).json({ error: 'Kein aktives Abo vorhanden' });
     const session = await stripe.billingPortal.sessions.create({
       customer: tenant.stripeCustomerId,
+      configuration: process.env.STRIPE_PORTAL_CONFIGURATION || undefined,
       return_url: `${buildRequestBaseUrl(req)}/tenant-admin.html?tenant=${encodeURIComponent(tenant.slug || tenant.id)}`,
     });
     res.json({ url: session.url });
@@ -7276,6 +7398,15 @@ app.get('*', (req, res, next) => {
   }
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
+
+// Lokale Entwicklung und Stripe-CLI-Webhook-Tests. Vercel importiert nur das
+// Express-App-Objekt; deshalb darf der Listener dort nicht automatisch starten.
+if (require.main === module) {
+  const port = Number(process.env.PORT || 3000);
+  app.listen(port, () => {
+    console.log(`Roadlight läuft auf http://localhost:${port}`);
+  });
+}
 
 // For Vercel serverless functions
 module.exports = app;

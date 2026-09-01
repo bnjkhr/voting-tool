@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["fra1"],
   "routes": [
     {
       "src": "/(.*)",
@@ -8,7 +9,7 @@
   ],
   "functions": {
     "api/index.js": {
-      "maxDuration": 10
+      "maxDuration": 30
     }
   }
 }

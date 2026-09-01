@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#FAF8F5">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <title>Roadlight – Feedback-Board, öffentliche Roadmap & Changelog</title>
-    <meta name="description" content="Feedback-Board, Roadmap und Changelog in einem – DSGVO-konform, Hosting in Frankfurt. Sammle Votes, priorisiere Ideen und feiere jedes Release.">
+    <meta name="description" content="Feedback-Board, Roadmap und Changelog in einem – mit EU-Datenbank und API in Frankfurt. Sammle Votes, priorisiere Ideen und feiere jedes Release.">
     <link rel="canonical" href="https://roadlight.pro/">
 
     <!-- Open Graph / Social Preview -->
@@ -14,7 +15,7 @@
     <meta property="og:locale" content="de_DE">
     <meta property="og:url" content="https://roadlight.pro/">
     <meta property="og:title" content="Roadlight – Feedback-Board, öffentliche Roadmap & Changelog">
-    <meta property="og:description" content="Feedback-Board, öffentliche Roadmap und Changelog – alles in einem. DSGVO-konform, Hosting in Frankfurt.">
+    <meta property="og:description" content="Feedback-Board, öffentliche Roadmap und Changelog – alles in einem. EU-Datenbank, API in Frankfurt.">
     <meta property="og:image" content="https://roadlight.pro/og-image.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -52,7 +53,7 @@
             "availableLanguage": ["German"]
           },
           "areaServed": "EU",
-          "description": "Feedback-Board, öffentliche Roadmap und Changelog für europäische Produktteams – DSGVO-konform, Hosting in Frankfurt."
+          "description": "Feedback-Board, öffentliche Roadmap und Changelog für europäische Produktteams – mit EU-Datenbank und API in Frankfurt."
         },
         {
           "@type": "WebSite",
@@ -61,7 +62,7 @@
           "url": "https://roadlight.pro/",
           "inLanguage": "de-DE",
           "publisher": { "@id": "https://roadlight.pro/#organization" },
-          "description": "Feedback-Board, öffentliche Roadmap & Changelog – alles in einem. DSGVO-konform, Hosting in Frankfurt."
+          "description": "Feedback-Board, öffentliche Roadmap & Changelog – alles in einem. EU-Datenbank, API in Frankfurt."
         },
         {
           "@type": "SoftwareApplication",
@@ -71,7 +72,7 @@
           "applicationCategory": "BusinessApplication",
           "operatingSystem": "Web",
           "inLanguage": "de-DE",
-          "description": "Sammle Feedback, priorisiere nach echten Votes, zeig deine öffentliche Roadmap und feiere jedes Release – alles in einem. DSGVO-konform, Hosting in Frankfurt.",
+          "description": "Sammle Feedback, priorisiere nach echten Votes, zeig deine öffentliche Roadmap und feiere jedes Release – alles in einem. EU-Datenbank, API in Frankfurt.",
           "publisher": { "@id": "https://roadlight.pro/#organization" },
           "featureList": [
             "Feedback-Board mit Voting",
@@ -82,18 +83,29 @@
             "Team-Rollen",
             "REST-API mit API-Schlüsseln",
             "MCP-Server für KI-Assistenten",
-            "DSGVO-konform",
-            "Hosting in Frankfurt"
+            "EU-Datenbank",
+            "API in Frankfurt"
           ],
-          "offers": {
-            "@type": "Offer",
-            "name": "Free",
-            "price": "0",
-            "priceCurrency": "EUR",
-            "priceValidUntil": "2027-12-31",
-            "availability": "https://schema.org/InStock",
-            "url": "https://roadlight.pro/signup.html"
-          }
+          "offers": [
+            {
+              "@type": "Offer",
+              "name": "Free",
+              "price": "0",
+              "priceCurrency": "EUR",
+              "priceValidUntil": "2027-12-31",
+              "availability": "https://schema.org/InStock",
+              "url": "https://roadlight.pro/signup.html"
+            },
+            {
+              "@type": "Offer",
+              "name": "Pro",
+              "price": "9",
+              "priceCurrency": "EUR",
+              "priceValidUntil": "2027-12-31",
+              "availability": "https://schema.org/InStock",
+              "url": "https://roadlight.pro/signup.html"
+            }
+          ]
         }
       ]
     }
@@ -140,8 +152,8 @@
                     <a href="#vorschau" class="btn btn-secondary btn-lg">Live-Board ansehen</a>
                 </div>
                 <div class="trust">
-                    <span><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> DSGVO-konform</span>
-                    <span><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Hosting in Frankfurt</span>
+                    <span><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> EU-Datenbank</span>
+                    <span><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> API in Frankfurt</span>
                     <span><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Ohne Kreditkarte</span>
                 </div>
             </div>
@@ -464,8 +476,8 @@
                 <div class="grid-4 reveal">
                     <div class="why-card">
                         <span class="why-icon"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
-                        <h3>EU &amp; DSGVO</h3>
-                        <p>Datenverarbeitung nach DSGVO, Hosting in Frankfurt. Keine Datenweitergabe in Drittländer.</p>
+                        <h3>EU-Infrastruktur</h3>
+                        <p>Anwendungsdaten liegen in einer EU-Datenbank, die API läuft in Frankfurt. Eingesetzte US-Dienstleister und Schutzmechanismen sind transparent dokumentiert.</p>
                     </div>
                     <div class="why-card">
                         <span class="why-icon"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
@@ -486,69 +498,12 @@
             </div>
         </section>
 
-        <!-- ============ VERGLEICH / ALTERNATIVE ============ -->
-        <section class="compare">
-            <div class="wrap">
-                <div class="section-head reveal">
-                    <span class="eyebrow">Vergleich</span>
-                    <h2>Die DSGVO-konforme Alternative zu Canny &amp; UserVoice</h2>
-                    <p>Feedback-Board, Roadmap und Changelog in einem – gehostet in Frankfurt statt in den USA.</p>
-                </div>
-                <div class="compare-table-wrap reveal">
-                    <table class="compare-table">
-                        <caption class="visually-hidden">Vergleich der Funktionen von Roadlight, Canny und UserVoice</caption>
-                        <thead>
-                            <tr>
-                                <th scope="col">Funktion</th>
-                                <th scope="col" class="is-roadlight">Roadlight</th>
-                                <th scope="col">Canny</th>
-                                <th scope="col">UserVoice</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <th scope="row">Hosting in der EU (Frankfurt)</th>
-                                <td class="is-roadlight">Frankfurt</td>
-                                <td class="compare-no">USA</td>
-                                <td class="compare-no">USA</td>
-                            </tr>
-                            <tr>
-                                <th scope="row">Feedback, Roadmap &amp; Changelog in einem</th>
-                                <td class="is-roadlight compare-yes">Ja</td>
-                                <td class="compare-yes">Ja</td>
-                                <td class="compare-no">Teilweise</td>
-                            </tr>
-                            <tr>
-                                <th scope="row">KI-Anbindung per MCP-Server</th>
-                                <td class="is-roadlight compare-yes">Ja</td>
-                                <td class="compare-no">Nein</td>
-                                <td class="compare-no">Nein</td>
-                            </tr>
-                            <tr>
-                                <th scope="row">Dauerhaft kostenloser Plan</th>
-                                <td class="is-roadlight compare-yes">Ja</td>
-                                <td class="compare-no">Begrenzt</td>
-                                <td class="compare-no">Nein</td>
-                            </tr>
-                            <tr>
-                                <th scope="row">Sofort startklar, kein DNS-Setup</th>
-                                <td class="is-roadlight compare-yes">Ja</td>
-                                <td class="compare-no">Nein</td>
-                                <td class="compare-no">Nein</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <p class="compare-note">Vergleich nach öffentlich verfügbaren Informationen (Stand Juli 2026). Angaben zu Drittanbietern ohne Gewähr.</p>
-            </div>
-        </section>
-
         <!-- ============ EARLY ACCESS ============ -->
         <section class="early-access">
             <div class="wrap">
                 <div class="ea-inner reveal">
                     <span class="ea-badge">Early Access</span>
-                    <p>Roadlight ist frisch gestartet. Wer jetzt einsteigt, nutzt alles kostenlos – und prägt die Roadmap von Anfang an mit.</p>
+                    <p>Roadlight ist frisch gestartet. Free bleibt kostenlos; Pro schaltet unbegrenzte Teams, mehrere Boards sowie API und MCP frei.</p>
                 </div>
             </div>
         </section>
@@ -570,25 +525,25 @@
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> 1 Board</li>
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Feedback, Voting &amp; Roadmap</li>
                             <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Öffentlicher Changelog</li>
-                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Hosting in Frankfurt</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> EU-Datenbank &amp; API in Frankfurt</li>
                         </ul>
                         <a href="/signup.html" class="btn btn-secondary">Kostenlos starten</a>
                     </div>
                     <div class="price-card featured">
-                        <span class="price-badge">Demnächst</span>
+                        <span class="price-badge">Jetzt verfügbar</span>
                         <h3>Pro</h3>
                         <p class="price-tagline">Für wachsende Produktteams</p>
-                        <div class="price-amount">bald<span> &nbsp;</span></div>
+                        <div class="price-amount">9&nbsp;€<span> / Monat</span></div>
                         <ul class="price-list">
-                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Mehrere Boards</li>
-                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Team-Rollen &amp; Moderation</li>
-                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Eigenes Branding</li>
-                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Priorisierter Support</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Unbegrenzt Boards</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Unbegrenzt Team-Mitglieder</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> REST-API &amp; MCP-Server</li>
+                            <li><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Kein „Powered by Roadlight“-Badge</li>
                         </ul>
-                        <a href="/signup.html" class="btn btn-primary">Kostenlos starten</a>
+                        <a href="/signup.html" class="btn btn-primary">Pro starten</a>
                     </div>
                 </div>
-                <p class="price-note">Bezahlung folgt später. Aktuell startest du komplett kostenlos.</p>
+                <p class="price-note">Monatlich kündbar. 9 € Endpreis; gemäß § 19 UStG wird keine Umsatzsteuer ausgewiesen. Das Upgrade erfolgt nach dem kostenlosen Start in deiner Konsole.</p>
             </div>
         </section>
 
@@ -600,8 +555,8 @@
                 </div>
                 <div class="faq-list reveal">
                     <details class="faq-item">
-                        <summary>Ist Roadlight DSGVO-konform?<span class="plus"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
-                        <p>Ja. Wir verarbeiten Daten nach den Vorgaben der DSGVO und hosten in Frankfurt. Schriften sind selbst gehostet, es findet keine Datenweitergabe in Drittländer statt.</p>
+                        <summary>Wo werden meine Daten verarbeitet?<span class="plus"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+                        <p>Roadlight verarbeitet die Anwendungsdaten in einer EU-Datenbank und betreibt die API in Frankfurt. Für eingesetzte US-Dienstleister gelten die in der Datenschutzerklärung beschriebenen Schutzmechanismen und Auftragsverarbeitungsverträge.</p>
                     </details>
                     <details class="faq-item">
                         <summary>Kann ich eine eigene Domain nutzen?<span class="plus"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
@@ -609,7 +564,7 @@
                     </details>
                     <details class="faq-item">
                         <summary>Ist es wirklich kostenlos?<span class="plus"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
-                        <p>Ja. Der Free-Plan mit Feedback-Board, Voting, Roadmap und Changelog ist dauerhaft kostenlos und erfordert keine Kreditkarte. Pro mit erweiterten Funktionen kommt später.</p>
+                        <p>Ja. Der Free-Plan mit Feedback-Board, Voting, Roadmap und Changelog ist dauerhaft kostenlos und erfordert keine Kreditkarte. Pro kostet 9 € pro Monat und kann in der Workspace-Konsole aktiviert werden.</p>
                     </details>
                     <details class="faq-item">
                         <summary>Kann ich bestehendes Feedback importieren?<span class="plus"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
