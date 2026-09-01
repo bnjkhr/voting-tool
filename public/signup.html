@@ -96,6 +96,24 @@
             outline: 3px solid rgba(17, 17, 17, 0.12);
         }
 
+        .signup-consent {
+            display: grid;
+            grid-template-columns: 20px 1fr;
+            gap: 10px;
+            align-items: start;
+            color: var(--ink);
+            font-weight: 600;
+            line-height: 1.45;
+        }
+
+        .signup-consent input[type="checkbox"] {
+            appearance: auto;
+            width: 18px;
+            min-height: 18px;
+            margin: 2px 0 0;
+            padding: 0;
+        }
+
         .signup-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -194,6 +212,10 @@
                             <input name="ticketPrefix" type="text" maxlength="5" placeholder="ACME">
                         </label>
                     </div>
+                    <label class="signup-consent">
+                        <input name="confirmBusinessCustomer" type="checkbox" required>
+                        <span>Ich handle als Unternehmer im Sinne des &sect;&nbsp;14 BGB f&uuml;r meine gewerbliche oder selbstst&auml;ndige berufliche T&auml;tigkeit. Roadlight richtet sich nicht an Verbraucher.</span>
+                    </label>
                     <button id="signupBtn" class="primary-btn" type="submit">Workspace erstellen</button>
                     <p style="margin-top: 12px; font-size: 0.85rem; color: var(--muted);">
                         Mit dem Erstellen eines Workspaces akzeptierst du die

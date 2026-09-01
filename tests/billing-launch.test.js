@@ -13,10 +13,11 @@ const adminHtml = read('public/tenant-admin.html');
 const adminJs = read('public/tenant-admin.js');
 const landing = read('public/landing.html');
 const migration = read('migrations/0005_billing_operations.sql');
+const b2bMigration = read('migrations/0006_b2b_customer_confirmation.sql');
 
-test('checkout requires recorded product-specific consent before Stripe', () => {
+test('checkout requires recorded B2B and terms consent before Stripe', () => {
   assert.ok(api.includes("req.body?.acceptTerms !== true"));
-  assert.ok(api.includes("req.body?.requestImmediatePerformance !== true"));
+  assert.ok(api.includes("req.body?.confirmBusinessCustomer !== true"));
   assert.equal(api.includes('consent_collection:'), false);
   assert.ok(api.includes('billing_address_collection'));
   assert.ok(api.includes("display_name: 'Roadlight'"));
@@ -27,7 +28,8 @@ test('checkout requires recorded product-specific consent before Stripe', () => 
   assert.ok(api.includes("managed_payments: { enabled: false }"));
   assert.ok(adminHtml.includes('id="billingConsentDialog"'));
   assert.ok(adminHtml.includes('name="acceptTerms"'));
-  assert.ok(adminHtml.includes('name="requestImmediatePerformance"'));
+  assert.ok(adminHtml.includes('name="confirmBusinessCustomer"'));
+  assert.ok(adminHtml.includes('&sect;&nbsp;14 BGB'));
   assert.ok(adminHtml.includes('href="/agb.html"'));
   assert.ok(adminHtml.includes('href="/datenschutz.html"'));
   assert.ok(adminJs.includes('openBillingConsentDialog'));
@@ -42,6 +44,8 @@ test('Stripe API and checkout tracking are pinned for production', () => {
 
 test('checkout creation is serialized and idempotent', () => {
   assert.ok(migration.includes('create table billing_checkout_sessions'));
+  assert.ok(b2bMigration.includes('business_customer_confirmed_at'));
+  assert.ok(read('db/billing.js').includes('business_customer_confirmed_at'));
   assert.ok(migration.includes('tenant_id                         text primary key'));
   assert.ok(api.includes('repos.billing.reserveCheckout'));
   assert.ok(api.includes('billing.validateProPrice'));
@@ -75,6 +79,7 @@ test('landing exposes the real Pro offer', () => {
   assert.ok(landing.includes('REST-API &amp; MCP-Server'));
   assert.ok(landing.includes('Jetzt verfügbar'));
   assert.equal(landing.includes('Bezahlung folgt später'), false);
+  assert.ok(landing.includes('ausschließlich an Unternehmer im Sinne des § 14 BGB'));
 });
 
 test('production function is pinned to Frankfurt', () => {
@@ -94,6 +99,9 @@ test('public legal pages describe paid Pro and Stripe', () => {
   assert.ok(terms.includes('9&nbsp;&euro; pro Monat'));
   assert.equal(terms.includes('ec.europa.eu/consumers/odr'), false);
   assert.ok(privacy.includes('Stripe Payments Europe'));
+  assert.ok(terms.includes('&sect;&nbsp;14 BGB'));
+  assert.ok(terms.includes('Vertr&auml;ge mit Verbrauchern'));
+  assert.equal(terms.includes('Widerrufsbelehrung'), false);
 });
 
 test('production does not expose internal mockups and test pages', () => {

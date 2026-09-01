@@ -9,7 +9,9 @@ const COLUMNS = `
   id, name, display_name, slug, status,
   email_from_name, email_reply_to,
   plan, stripe_customer_id, stripe_subscription_id, subscription_status,
-  trial_ends_at, current_period_end, created_at, updated_at
+  trial_ends_at, current_period_end,
+  business_customer_confirmed_at, business_customer_confirmed_by,
+  created_at, updated_at
 `;
 
 // Ergänzt das verschachtelte emailSettings-Objekt (wie im Alt-Shape).

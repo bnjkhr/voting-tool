@@ -64,7 +64,7 @@ const { usePostgres } = repos.backend;
 const billing = require('../lib/billing');
 const planLimits = require('../lib/plan-limits');
 
-const BILLING_TERMS_VERSION = '2026-09-01';
+const BILLING_TERMS_VERSION = '2026-09-01-b2b';
 const PRO_PRICE_EUR = 9;
 const CHECKOUT_TTL_MS = 31 * 60 * 1000;
 const CHECKOUT_INTEGRATION_IDENTIFIER = 'roadlight_qmvkptzr';
@@ -1383,6 +1383,12 @@ app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
 // Public signup: create a new workspace and send the owner a magic login link
 app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
   try {
+    if (req.body?.confirmBusinessCustomer !== true) {
+      return res.status(400).json({
+        error: 'Roadlight richtet sich ausschließlich an Unternehmer. Bitte bestätige die geschäftliche Nutzung.',
+        code: 'business_customer_required',
+      });
+    }
     let email;
     let config;
     try {
@@ -1428,6 +1434,7 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
           ticketPrefix: config.ticketPrefix,
           email,
           membershipId,
+          businessCustomerConfirmedBy: email,
         });
         userId = provisioned.userId;
       } catch (error) {
@@ -1465,6 +1472,8 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
 
       const timestamp = admin.firestore.FieldValue.serverTimestamp();
       const docs = buildTenantProvisionDocuments(config, timestamp);
+      docs.tenant.businessCustomerConfirmedAt = timestamp;
+      docs.tenant.businessCustomerConfirmedBy = email;
       const tenantRef = db.collection('tenants').doc(config.tenantId);
       const appRef = db.collection('apps').doc();
       const counterRef = db.collection('counters').doc(appRef.id);
@@ -3999,9 +4008,9 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
     if (billing.PRO_STATUSES.has(tenant.subscriptionStatus)) {
       return res.status(409).json({ error: 'Es besteht bereits ein aktives Abo. Verwalte es über das Kundenportal.' });
     }
-    if (req.body?.acceptTerms !== true || req.body?.requestImmediatePerformance !== true) {
+    if (req.body?.acceptTerms !== true || req.body?.confirmBusinessCustomer !== true) {
       return res.status(400).json({
-        error: 'Bitte akzeptiere die AGB und bestätige den sofortigen Leistungsbeginn.',
+        error: 'Bitte akzeptiere die AGB und bestätige, dass du als Unternehmer handelst.',
         code: 'billing_consent_required',
       });
     }
@@ -4063,7 +4072,7 @@ app.post('/api/admin/tenants/:tenantSlug/billing/checkout', requireTenantAccess(
       },
       custom_text: {
         submit: {
-          message: '9 € pro Monat. Das Abo verlängert sich monatlich und kann jederzeit zum Ende des laufenden Abrechnungszeitraums gekündigt werden.',
+          message: 'Nur für Unternehmer (§ 14 BGB). 9 € pro Monat. Das Abo verlängert sich monatlich und kann jederzeit zum Ende des laufenden Abrechnungszeitraums gekündigt werden.',
         },
       },
       allow_promotion_codes: true,

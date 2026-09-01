@@ -45,6 +45,9 @@ test('LoginLink-Persistierung ist entdoppelt (ein Helfer, beide Endpoints)', () 
 
 test('provisionWorkspace kapselt die atomare Provisionierung', () => {
   assert.equal(typeof provisioning.provisionWorkspace, 'function');
+  const source = fs.readFileSync(path.join(rootDir, 'db/provisioning.js'), 'utf8');
+  assert.ok(source.includes('business_customer_confirmed_at'));
+  assert.ok(source.includes('businessCustomerConfirmedBy'));
 });
 
 test('Signup überlebt einen fehlgeschlagenen Mailversand (kein 500)', () => {
