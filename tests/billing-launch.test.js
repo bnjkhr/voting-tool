@@ -14,14 +14,16 @@ const adminJs = read('public/tenant-admin.js');
 const landing = read('public/landing.html');
 const migration = read('migrations/0005_billing_operations.sql');
 
-test('checkout requires recorded consent and Stripe terms acceptance', () => {
+test('checkout requires recorded product-specific consent before Stripe', () => {
   assert.ok(api.includes("req.body?.acceptTerms !== true"));
   assert.ok(api.includes("req.body?.requestImmediatePerformance !== true"));
-  assert.ok(api.includes("consent_collection: { terms_of_service: 'required' }"));
+  assert.equal(api.includes('consent_collection:'), false);
   assert.ok(api.includes('billing_address_collection'));
   assert.ok(adminHtml.includes('id="billingConsentDialog"'));
   assert.ok(adminHtml.includes('name="acceptTerms"'));
   assert.ok(adminHtml.includes('name="requestImmediatePerformance"'));
+  assert.ok(adminHtml.includes('href="/agb.html"'));
+  assert.ok(adminHtml.includes('href="/datenschutz.html"'));
   assert.ok(adminJs.includes('openBillingConsentDialog'));
 });
 

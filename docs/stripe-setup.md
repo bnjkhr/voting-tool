@@ -15,9 +15,10 @@ mit Live-Keys wiederholen.
 4. **Customer Portal** aktivieren (Settings → Billing → Customer portal → Speichern),
    Kündigung zum Periodenende und Aktualisierung der Zahlungsart erlauben, sonst
    schlägt „Abo verwalten" fehl.
-5. Unter **Public details** die AGB-URL `https://roadlight.pro/agb.html` und die
-   Datenschutz-URL `https://roadlight.pro/datenschutz.html` hinterlegen. Checkout
-   verlangt die Stripe-AGB-Zustimmung und funktioniert ohne Terms-URL nicht.
+5. Die Roadlight-AGB und Datenschutzerklärung werden im produktinternen
+   Zustimmungsdialog vor Stripe verlinkt und die Zustimmung serverseitig
+   versioniert protokolliert. Im gemeinsam mit FamilyManager verwendeten
+   Stripe-Konto keine Roadlight-spezifische kontoweite AGB-URL setzen.
 6. Stripe Tax bleibt aus. Rechnungen tragen den Hinweis „Gemäß § 19 UStG wird
    keine Umsatzsteuer berechnet."
 
