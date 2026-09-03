@@ -1,3 +1,4 @@
+const { DEFAULT_TICKET_PREFIX } = require('../lib/ticket-number');
 const {
   ACTIVE_TENANT_STATUS,
   LEGACY_TENANT_ID,
@@ -18,7 +19,9 @@ function buildTicketPrefix(value, fallbackSource = '') {
 
   if (explicit) return explicit;
 
-  return fallbackSource.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3) || 'APP';
+  // Derselbe Default wie im Ticketnummer-Formatter — eine Quelle, damit
+  // Firestore- und Postgres-Pfad nicht wieder auseinanderlaufen.
+  return fallbackSource.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 3) || DEFAULT_TICKET_PREFIX;
 }
 
 function resolveTenantSlug({ tenantSlug, tenantName }) {

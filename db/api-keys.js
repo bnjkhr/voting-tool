@@ -40,10 +40,11 @@ async function create({ id, tenantId, name, scopes = [], tokenHash, tokenPrefix,
   return mapRow(rows[0]);
 }
 
+// Fire-and-forget vom Request-Pfad aus: der Aufrufer wartet nicht auf das
+// Ergebnis, deshalb nur last_used_at zurückgeben statt der ganzen Zeile.
 async function touch(id) {
   const { rows } = await query(
-    `update api_keys set last_used_at = now()
-     where id = $1 returning ${COLUMNS}`,
+    'update api_keys set last_used_at = now() where id = $1 returning id, last_used_at',
     [id]
   );
   return mapRow(rows[0]);

@@ -250,6 +250,12 @@ Setzt automatisch `approved: true`, falls ein Status ≠ `neu` gesetzt wird.
 
 Liste aller Kommentare (auch pending). Benötigt `comments:read`.
 
+> **Hinweis zu `screenshots`:** Angehängte Bilder werden als URL statt als
+> Base64-Data-URL zurückgegeben. Diese URL zeigt auf den Moderations-Proxy des
+> Workspaces und ist mit einem API-Key **nicht** abrufbar — sie setzt eine
+> angemeldete Admin-Session voraus. Wer die Bilder programmatisch braucht,
+> meldet das bitte als Feature-Request.
+
 ### `POST /suggestions/:id/comments`
 
 Admin-Kommentar hinzufügen (auto-freigegeben). Benötigt `comments:write`.

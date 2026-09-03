@@ -59,6 +59,7 @@ const {
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
 const { shouldServeAppShell } = require('./spa-fallback');
+const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');
 const { usePostgres } = repos.backend;
@@ -288,6 +289,24 @@ async function findActiveTenantBySlug(tenantSlug) {
   return { id: doc.id, ...data };
 }
 
+// Backend-bewusstes Gegenstück zu findActiveTenantBySlug für den Fall, dass nur
+// die Tenant-ID vorliegt (API-Key-Auth). Unter Postgres kommt der Tenant damit
+// aus derselben Quelle wie sein Plan — der v1-Pfad braucht keinen zweiten
+// Plan-Lookup mehr.
+async function findActiveTenantById(tenantId) {
+  if (!tenantId) return null;
+  if (usePostgres()) {
+    const tenant = await repos.tenants.findById(tenantId);
+    return tenant && isActiveTenant(tenant) ? tenant : null;
+  }
+
+  const doc = await db.collection('tenants').doc(tenantId).get();
+  if (!doc.exists) return null;
+  const data = doc.data() || {};
+  if (!isActiveTenant(data)) return null;
+  return { id: doc.id, ...data };
+}
+
 async function findTenantAppBySlug(tenantId, appSlug) {
   if (usePostgres()) {
     return repos.apps.findBySlug(tenantId, appSlug);
@@ -321,27 +340,46 @@ async function resolveTenantAndAppBySlug({ tenantSlug, appSlug }) {
   return { tenant, tenantApp };
 }
 
+// Lädt eine Suggestion und erzwingt dabei die Tenant-Grenze — die eine Stelle,
+// an der diese Regel für beide Backends lebt. suggestionDoc ist nur im
+// Firestore-Modus gesetzt; Schreibpfade müssen unter Postgres über
+// repos.suggestions gehen. suggestionData trägt in beiden Backends die id.
+async function loadSuggestionForTenant(tenantId, suggestionId) {
+  if (usePostgres()) {
+    const suggestionData = await repos.suggestions.findById(suggestionId);
+    if (!suggestionData || getTenantId(suggestionData) !== tenantId) {
+      return { errorStatus: 404, error: 'Suggestion not found' };
+    }
+    return { suggestionData, suggestionDoc: null };
+  }
+
+  const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
+  if (!suggestionDoc.exists) {
+    return { errorStatus: 404, error: 'Suggestion not found' };
+  }
+  const suggestionData = { id: suggestionDoc.id, ...suggestionDoc.data() };
+  if (getTenantId(suggestionData) !== tenantId) {
+    return { errorStatus: 404, error: 'Suggestion not found' };
+  }
+
+  return { suggestionDoc, suggestionData };
+}
+
 async function resolveTenantSuggestionById(tenantSlug, suggestionId) {
   const tenant = await findActiveTenantBySlug(tenantSlug);
   if (!tenant) {
     return { errorStatus: 404, error: 'Tenant not found' };
   }
 
-  if (usePostgres()) {
-    const suggestionData = await repos.suggestions.findById(suggestionId);
-    if (!suggestionData || getTenantId(suggestionData) !== tenant.id) {
-      return { errorStatus: 404, error: 'Suggestion not found' };
-    }
-    return { tenant, suggestionData, suggestionDoc: null };
-  }
+  const found = await loadSuggestionForTenant(tenant.id, suggestionId);
+  return found.error ? found : { tenant, ...found };
+}
 
-  const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-  const suggestionData = suggestionDoc.exists ? suggestionDoc.data() : null;
-  if (!suggestionDoc.exists || getTenantId(suggestionData) !== tenant.id) {
-    return { errorStatus: 404, error: 'Suggestion not found' };
-  }
-
-  return { tenant, suggestionDoc, suggestionData };
+// comment-utils erwarten ein Firestore-Doc ({ id, data() }). Postgres liefert
+// flache Zeilen — dieser Adapter lässt beide Backends durch dieselbe
+// Normalisierung (authorType/approvalStatus-Defaults) laufen.
+function asCommentDoc(row) {
+  return { id: row.id, data: () => row };
 }
 
 function buildCommentStatsMap(commentDocs, tenantId) {
@@ -431,12 +469,53 @@ const DATA_URL_RE = /^data:([\w.+-]+\/[\w.+-]+);base64,(.+)$/s;
 // als image/svg+xml von der eigenen Origin serviert könnte es Skript ausführen.
 const SERVABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+// Legt eine Suggestion im aktiven Backend an und liefert die vergebene ID.
+// Kapselt die Backend-Weiche inkl. Screenshot-Ablage, damit die drei Aufrufer
+// (öffentlicher Submit, v1-API) nicht je eine eigene Kopie pflegen müssen:
+// Felder ohne Postgres-Spalte (approvedBy, screenshots) filtert der Repo-Create
+// beim Destructuring heraus, die Bilder werden zu attachments-Zeilen.
+async function createSuggestionRecord(tenantId, suggestion) {
+  if (!usePostgres()) {
+    const docRef = await db.collection('suggestions').add(suggestion);
+    return docRef.id;
+  }
+  const suggestionId = crypto.randomUUID();
+  await repos.suggestions.create({ id: suggestionId, ...suggestion });
+  await persistScreenshotAttachments(tenantId, 'suggestion', suggestionId, suggestion.screenshots);
+  return suggestionId;
+}
+
+// Gegenstück für comments. `comment` ist das Firestore-Shape (inkl. Sentinels
+// und base64-screenshots); `row` enthält die Felder, die die Postgres-Tabelle
+// kennt. Getrennt, weil die beiden Shapes sich bei den Autor-/Freigabefeldern
+// unterscheiden und ein gemeinsames Objekt beide verwässern würde.
+async function createCommentRecord(tenantId, comment, row) {
+  if (!usePostgres()) {
+    const commentRef = await db.collection('comments').add(comment);
+    return commentRef.id;
+  }
+  const commentId = crypto.randomUUID();
+  await repos.comments.create({ id: commentId, tenantId, ...row });
+  await persistScreenshotAttachments(tenantId, 'comment', commentId, comment.screenshots);
+  return commentId;
+}
+
+// Zeitstempel für einen Schreibvorgang im jeweils aktiven Backend: Firestore
+// setzt ihn serverseitig, Postgres braucht ein echtes Date. Einmal an der
+// Quelle wählen statt den Sentinel später wieder herauszupatchen — sonst muss
+// jedes neue Zeitstempel-Feld daran denken, und ein vergessenes schreibt ein
+// Sentinel-Objekt in eine timestamptz-Spalte.
+function writeTimestamp() {
+  return usePostgres() ? new Date() : admin.firestore.FieldValue.serverTimestamp();
+}
+
 async function persistScreenshotAttachments(tenantId, parentType, parentId, dataUrls) {
   if (!usePostgres() || !Array.isArray(dataUrls) || dataUrls.length === 0) return;
+  const rows = [];
   for (const url of dataUrls) {
     const m = DATA_URL_RE.exec(typeof url === 'string' ? url : '');
     if (!m || !SERVABLE_IMAGE_TYPES.has(m[1])) continue;
-    await repos.attachments.create({
+    rows.push({
       tenantId,
       parentType,
       parentId,
@@ -444,6 +523,8 @@ async function persistScreenshotAttachments(tenantId, parentType, parentId, data
       contentType: m[1],
     });
   }
+  // Ein Insert für alle Bilder statt einer pro Bild.
+  await repos.attachments.createMany(rows);
 }
 
 function attachmentUrl(tenantSlug, id, admin) {
@@ -756,7 +837,7 @@ async function generateTicketNumber(appId, tenantId = LEGACY_TENANT_ID) {
       tenantId: resolvedTenantId,
     }, { merge: true });
 
-    return suggestionImport.formatTicketNumber(prefix, nextNumber);
+    return formatTicketNumber(prefix, nextNumber);
   });
 
   return result;
@@ -1197,8 +1278,8 @@ async function resolvePendingInviteByToken(token) {
     if (isInviteExpired(invite)) {
       return { errorStatus: 410, error: 'Invite has expired' };
     }
-    const tenant = await repos.tenants.findById(invite.tenantId);
-    if (!tenant || !isActiveTenant(tenant)) {
+    const tenant = await findActiveTenantById(invite.tenantId);
+    if (!tenant) {
       return { errorStatus: 404, error: 'Tenant not found' };
     }
     return { inviteId: invite.id, invite, tenant };
@@ -1227,16 +1308,12 @@ async function resolvePendingInviteByToken(token) {
     return { errorStatus: 410, error: 'Invite has expired' };
   }
 
-  const tenantDoc = await db.collection('tenants').doc(invite.tenantId).get();
-  if (!tenantDoc.exists || !isActiveTenant(tenantDoc.data() || {})) {
+  const tenant = await findActiveTenantById(invite.tenantId);
+  if (!tenant) {
     return { errorStatus: 404, error: 'Tenant not found' };
   }
 
-  return {
-    inviteDoc,
-    invite,
-    tenant: { id: tenantDoc.id, ...tenantDoc.data() },
-  };
+  return { inviteDoc, invite, tenant };
 }
 
 function buildPublicInviteResponse(invite, tenant) {
@@ -1933,17 +2010,7 @@ app.post('/api/tenants/:tenantSlug/apps/:appSlug/suggestions', rateLimit(60000, 
 
     suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, tenant.id);
 
-    let suggestionId;
-    if (usePostgres()) {
-      suggestionId = crypto.randomUUID();
-      // screenshots ist kein Suggestions-Spaltenfeld — der Repo-Create ignoriert
-      // es; die Bilder landen als attachments-Zeilen.
-      await repos.suggestions.create({ id: suggestionId, ...suggestion });
-      await persistScreenshotAttachments(tenant.id, 'suggestion', suggestionId, suggestion.screenshots);
-    } else {
-      const docRef = await db.collection('suggestions').add(suggestion);
-      suggestionId = docRef.id;
-    }
+    const suggestionId = await createSuggestionRecord(tenant.id, suggestion);
 
     await logActivity(suggestionId, 'created', {
       detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" erstellt`,
@@ -2045,14 +2112,13 @@ app.get('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', async (re
       }
       const rows = await repos.comments.listForSuggestion(suggestionId);
       comments = rows
-        .filter((c) => c.tenantId === tenant.id && c.approvalStatus === 'approved')
-        .map((c) => ({
-          id: c.id,
-          text: c.text,
-          screenshots: [],
-          createdAt: c.createdAt,
-          authorType: c.authorType,
-        }));
+        .filter((c) => c.tenantId === tenant.id)
+        .map(asCommentDoc)
+        // buildPublicCommentResponse verwirft nicht freigegebene Kommentare
+        // selbst (isCommentVisibleToPublic) — dieselbe Regel wie im
+        // Firestore-Zweig, statt sie hier ein zweites Mal zu formulieren.
+        .map(buildPublicCommentResponse)
+        .filter(Boolean);
       await attachScreenshotUrls(comments, 'comment', tenant);
     } else {
       const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
@@ -2382,19 +2448,13 @@ app.post('/api/tenants/:tenantSlug/suggestions/:suggestionId/comments', rateLimi
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    let commentId;
-    if (usePostgres()) {
-      commentId = crypto.randomUUID();
-      await repos.comments.create({
-        id: commentId, tenantId: tenant.id, suggestionId,
-        text: validText, authorType: 'user', authorFingerprint: userFingerprint,
-        approvalStatus: 'pending',
-      });
-      await persistScreenshotAttachments(tenant.id, 'comment', commentId, screenshotValidation.screenshots);
-    } else {
-      const commentRef = await db.collection('comments').add(comment);
-      commentId = commentRef.id;
-    }
+    const commentId = await createCommentRecord(tenant.id, comment, {
+      suggestionId,
+      text: validText,
+      authorType: 'user',
+      authorFingerprint: userFingerprint,
+      approvalStatus: 'pending',
+    });
 
     await logActivity(suggestionId, 'comment_submitted', {
       detail: `Benutzer-Kommentar eingereicht: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
@@ -2836,7 +2896,9 @@ function buildSuggestionFromRequest(body, appId, userFingerprint, tenantId = LEG
     priority: 'mittel',
     labels: [],
     userFingerprint,
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
+    // Backend-abhaengig: Postgres bekommt ein Date, Firestore den Sentinel. Der
+    // Sentinel ist ein opakes Objekt und wuerde in timestamptz als "{}" landen.
+    createdAt: writeTimestamp(),
   };
 
   if (suggestion.notificationEnabled) {
@@ -3597,12 +3659,11 @@ app.get('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(), async (req
 // Pfade müssen dieselbe Slug-Kollisionsprüfung, dasselbe Free-Plan-Board-Gate
 // und dieselbe Zähler-Anlage bekommen; ein zweiter, nachgebauter Pfad wäre
 // genau die Stelle, an der das Board-Limit später still auseinanderläuft.
-// `planTenant` ist der Tenant aus der Plan-Quelle. Bei der Admin-Konsole ist das
-// derselbe Tenant (unter Postgres trägt er `plan`); hinter einem API-Schlüssel
-// stammt der Tenant aus Firestore und trägt kein `plan`, deshalb reicht die
-// Middleware den aufgelösten Plan-Tenant separat herein. requiresProUpgradeResolved
-// kapselt dabei die Fail-open-Regel: ein nicht auflösbarer Plan sperrt nicht.
-async function createTenantBoard(tenant, body = {}, { planTenant = tenant } = {}) {
+// `tenant` stammt in beiden Aufrufpfaden aus der Plan-Quelle (Admin-Konsole:
+// findActiveTenantBySlug, API-Schluessel: findActiveTenantById) und traegt unter
+// Postgres damit `plan`. requiresProUpgradeResolved kapselt die Fail-open-Regel:
+// ein nicht aufloesbarer Plan sperrt nicht.
+async function createTenantBoard(tenant, body = {}) {
   const boardName = validateInput(body.boardName || body.name, 120);
   if (!boardName) {
     return { status: 400, body: { error: 'Board name is required' } };
@@ -3629,7 +3690,7 @@ async function createTenantBoard(tenant, body = {}, { planTenant = tenant } = {}
     // (billing.requiresProUpgrade respektiert BILLING_ENFORCED) und der Plan
     // nicht Pro ist. Bestehende Boards bleiben immer erhalten — nur die
     // Neu-Anlage über dem Limit wird blockiert (kulanter Downgrade).
-    if (billing.requiresProUpgradeResolved(planTenant, { postgres: usePostgres() })) {
+    if (billing.requiresProUpgradeResolved(tenant, { postgres: usePostgres() })) {
       const boards = await repos.apps.listByTenant(tenant.id);
       if (boards.length >= planLimits.FREE_MAX_BOARDS) {
         return {
@@ -5157,18 +5218,8 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', req
       const rows = await repos.comments.listForSuggestion(suggestionId);
       comments = rows
         .filter((c) => c.tenantId === tenant.id)
-        .map((c) => ({
-          id: c.id,
-          text: c.text,
-          screenshots: [],
-          createdAt: c.createdAt,
-          authorType: c.authorType,
-          approvalStatus: c.approvalStatus,
-          approvedAt: c.approvedAt,
-          approvedBy: c.approvedBy,
-          rejectedAt: c.rejectedAt,
-          rejectedBy: c.rejectedBy,
-        }));
+        .map(asCommentDoc)
+        .map(buildAdminCommentResponse);
       await attachScreenshotUrls(comments, 'comment', tenant, true);
     } else {
       const commentsSnapshot = await db.collection('comments')
@@ -5230,18 +5281,13 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    let commentId;
-    if (usePostgres()) {
-      commentId = crypto.randomUUID();
-      await repos.comments.create({
-        id: commentId, tenantId: tenant.id, suggestionId,
-        text: validText, authorType: 'admin', approvalStatus: 'approved', approvedBy: 'admin',
-      });
-      await persistScreenshotAttachments(tenant.id, 'comment', commentId, screenshotValidation.screenshots);
-    } else {
-      const commentRef = await db.collection('comments').add(comment);
-      commentId = commentRef.id;
-    }
+    const commentId = await createCommentRecord(tenant.id, comment, {
+      suggestionId,
+      text: validText,
+      authorType: 'admin',
+      approvalStatus: 'approved',
+      approvedBy: 'admin',
+    });
 
     await logActivity(suggestionId, 'commented', {
       detail: `Kommentar hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
@@ -6987,6 +7033,35 @@ function rateLimitByApiKey(windowMs, maxRequests) {
   };
 }
 
+// Backend-bewusster Key-Lookup. Unter Postgres liegen die Keys in api_keys —
+// dort schreibt die Tenant-Konsole sie bereits an; ohne diesen Zweig könnte sich
+// ein in Postgres angelegter Key nach der Umstellung gar nicht authentifizieren.
+// `touch` kapselt das Fire-and-Forget-Update von lastUsedAt je Backend.
+async function findApiKeyByToken(token) {
+  if (usePostgres()) {
+    // token_hash ist UNIQUE — genau eine Zeile oder keine.
+    const key = await repos.apiKeys.findByTokenHash(hashApiKeyToken(token));
+    if (!key) return null;
+    return { key, touch: () => repos.apiKeys.touch(key.id) };
+  }
+
+  const snapshot = await db.collection('apiKeys')
+    .where('tokenHash', '==', hashApiKeyToken(token))
+    .limit(2)
+    .get();
+
+  if (snapshot.size !== 1) return null;
+
+  const doc = snapshot.docs[0];
+  return {
+    key: { id: doc.id, ...doc.data() },
+    touch: () => doc.ref.set(
+      { lastUsedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    ),
+  };
+}
+
 function requireApiKey(requiredScopes = []) {
   const scopes = Array.isArray(requiredScopes) ? requiredScopes : [requiredScopes];
 
@@ -6997,17 +7072,12 @@ function requireApiKey(requiredScopes = []) {
         return res.status(401).json({ error: 'Missing or malformed API key. Use Authorization: Bearer vt_live_…' });
       }
 
-      const snapshot = await db.collection('apiKeys')
-        .where('tokenHash', '==', hashApiKeyToken(token))
-        .limit(2)
-        .get();
-
-      if (snapshot.size !== 1) {
+      const found = await findApiKeyByToken(token);
+      if (!found) {
         return res.status(401).json({ error: 'Invalid API key' });
       }
 
-      const doc = snapshot.docs[0];
-      const data = { id: doc.id, ...doc.data() };
+      const { key: data, touch } = found;
       if (!isApiKeyActive(data)) {
         return res.status(401).json({ error: 'API key revoked' });
       }
@@ -7020,66 +7090,46 @@ function requireApiKey(requiredScopes = []) {
         });
       }
 
-      const tenantDoc = await db.collection('tenants').doc(data.tenantId).get();
-      if (!tenantDoc.exists || !isActiveTenant(tenantDoc.data() || {})) {
+      const tenant = await findActiveTenantById(data.tenantId);
+      if (!tenant) {
         return res.status(403).json({ error: 'API key tenant inactive or missing' });
       }
 
-      const tenant = { id: tenantDoc.id, ...tenantDoc.data() };
       // API-/MCP-Zugriff ist ein Pro-Feature. Bei einem Downgrade auf Free
       // liefern bestehende Keys 402 (die Keys bleiben erhalten, ein erneutes
       // Upgrade reaktiviert sie sofort). Greift nur bei aktivem Billing.
       //
-      // Der oben aus Firestore geladene Tenant trägt kein `plan` — das lebt in
-      // Postgres, wohin der Stripe-Webhook synct. Für die Entitlement-Prüfung
-      // daher den maßgeblichen Tenant aus der Plan-Quelle laden, aber nur wenn
-      // das Gating überhaupt live ist (sonst kein Extra-Query auf dem Hot-Path).
+      // `plan` lebt in Postgres, wohin der Stripe-Webhook synct — und das Gate
+      // ist ohnehin nur live, wenn Postgres das Backend ist
+      // (billing.proGatingActive verlangt postgres). Da findActiveTenantById
+      // den Tenant dann aus genau dieser Quelle lädt, IST `tenant` bereits der
+      // maßgebliche Plan-Tenant; ein zweiter Lookup auf dem Hot-Path entfällt.
       //
-      // Fail-open: Lässt sich der Plan-Tenant NICHT auflösen (ID-Mismatch
-      // Firestore/Postgres oder transienter Postgres-Fehler), wird NICHT
-      // gesperrt. Ein bezahltes Entitlement ist zu schützen — ein zahlender
-      // Pro-Kunde darf für seinen bestehenden Key bei einem Lookup-Fehler kein
-      // 402 bekommen. Der Firestore-Tenant taugt hier NICHT als Fallback, weil
-      // er kein `plan` trägt und damit fälschlich als Free gälte.
-      const gatingActive = billing.proGatingActive({ postgres: usePostgres() });
-      let planTenant = null;
-      if (gatingActive) {
-        const { tenant: resolvedPlanTenant, error: lookupError } =
-          await billing.resolvePlanTenant(() => repos.tenants.findById(data.tenantId));
-        planTenant = resolvedPlanTenant;
-        if (lookupError) {
-          console.error(
-            `Pro-Gating: Plan-Tenant-Lookup für ${data.tenantId} fehlgeschlagen (fail-open):`,
-            lookupError?.message || lookupError
-          );
-        } else if (!planTenant) {
-          console.warn(
-            `Pro-Gating: Plan-Tenant ${data.tenantId} nicht auflösbar — API-Zugriff fail-open gewährt`
-          );
-        }
-        if (billing.requiresProUpgradeResolved(planTenant, { postgres: usePostgres() })) {
-          return res.status(402).json({
-            error: 'Dieser Workspace hat keinen aktiven Pro-Plan. API- und MCP-Zugriff sind Pro-Features.',
-            code: 'upgrade_required',
-          });
-        }
+      // Fail-open bleibt erhalten: requiresProUpgradeResolved sperrt bei einem
+      // nicht auflösbaren Plan-Tenant NICHT — ein bezahltes Entitlement darf
+      // nie an einem Lookup-Problem scheitern (requiresProUpgrade(null) wäre
+      // fail-closed und damit die falsche Richtung).
+      if (billing.requiresProUpgradeResolved(tenant, { postgres: usePostgres() })) {
+        return res.status(402).json({
+          error: 'Dieser Workspace hat keinen aktiven Pro-Plan. API- und MCP-Zugriff sind Pro-Features.',
+          code: 'upgrade_required',
+        });
       }
 
       req.apiAuth = {
         keyId: data.id,
         tenantId: data.tenantId,
+        // findActiveTenantById laedt unter Postgres aus der Plan-Quelle — dieser
+        // Tenant traegt also `plan` und taugt direkt fuer nachgelagerte
+        // Pro-Gates (das Free-Plan-Board-Limit in createTenantBoard).
         tenant,
-        // Der Firestore-Tenant oben trägt kein `plan` — nachgelagerte Pro-Gates
-        // (das Free-Plan-Board-Limit in createTenantBoard) brauchen deshalb den
-        // Tenant aus der Plan-Quelle. null = Gating inaktiv oder Plan nicht
-        // auflösbar; beides bedeutet über requiresProUpgradeResolved: nicht sperren.
-        planTenant,
         scopes: grantedScopes,
         keyName: data.name,
       };
 
       // Fire-and-forget — never block the request on usage tracking.
-      doc.ref.set({ lastUsedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+      Promise.resolve()
+        .then(touch)
         .catch(err => console.error('Failed to update apiKey lastUsedAt:', err?.message || err));
 
       next();
@@ -7104,19 +7154,13 @@ async function loadApiKeyAppBySlug(req, appSlugParam) {
   return { tenantApp };
 }
 
+// Wie resolveTenantSuggestionById, nur mit dem Tenant aus dem API-Key statt aus
+// dem Slug — die Tenant-Grenze selbst liegt in loadSuggestionForTenant.
 async function loadApiKeySuggestionById(req, suggestionId) {
   if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
     return { errorStatus: 400, error: 'Invalid suggestion ID' };
   }
-  const suggestionDoc = await db.collection('suggestions').doc(suggestionId).get();
-  if (!suggestionDoc.exists) {
-    return { errorStatus: 404, error: 'Suggestion not found' };
-  }
-  const suggestionData = { id: suggestionDoc.id, ...suggestionDoc.data() };
-  if (getTenantId(suggestionData) !== req.apiAuth.tenantId) {
-    return { errorStatus: 404, error: 'Suggestion not found' };
-  }
-  return { suggestionDoc, suggestionData };
+  return loadSuggestionForTenant(req.apiAuth.tenantId, suggestionId);
 }
 
 // Legt einen importierten Eintrag mit mitgebrachter Ticketnummer an.
@@ -7127,10 +7171,28 @@ async function loadApiKeySuggestionById(req, suggestionId) {
 // plus das Anlegen läuft in einer Firestore-Transaktion, damit zwei parallele
 // Importe derselben Nummer sich nicht gegenseitig überholen.
 //
-// Firestore-Pfad wie der Rest der v1-Suggestion-Routen (die schreiben ebenfalls
-// direkt auf die Collection); für Postgres wird das mit der Datenmigration
-// nachgezogen.
+// Beide Backends: Postgres über eine SQL-Transaktion im Repository, Firestore
+// über eine runTransaction. Die Invariante ist identisch — importierte Nummer
+// eindeutig UND Zähler darüber hinaus geschoben.
 async function createSuggestionWithImportedTicketNumber(tenantApp, tenantId, suggestion, importData) {
+  if (usePostgres()) {
+    const { conflict, row } = await repos.suggestions.createWithImportedTicketNumber({
+      appId: tenantApp.id,
+      tenantId,
+      ticketNumber: importData.ticketNumber,
+      ticketNumberValue: importData.ticketNumberValue,
+      data: { id: crypto.randomUUID(), tenantId, ...suggestion },
+    });
+    if (conflict) {
+      return {
+        status: 409,
+        body: { error: `Ticketnummer ${importData.ticketNumber} ist in diesem Board bereits vergeben` },
+      };
+    }
+    await persistScreenshotAttachments(tenantId, 'suggestion', row.id, suggestion.screenshots);
+    return { status: 201, body: { id: row.id } };
+  }
+
   const counterRef = db.collection('counters').doc(tenantApp.id);
   const suggestionRef = db.collection('suggestions').doc();
   const duplicateQuery = db.collection('suggestions')
@@ -7254,11 +7316,7 @@ app.get('/api/v1/apps', requireApiKey(['suggestions:read']), rateLimitByApiKey(6
 // Admin-Konsole — inklusive Free-Plan-Board-Limit und Slug-Kollision (409).
 app.post('/api/v1/apps', requireApiKey(['boards:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
   try {
-    const { status, body } = await createTenantBoard(
-      req.apiAuth.tenant,
-      req.body || {},
-      { planTenant: req.apiAuth.planTenant },
-    );
+    const { status, body } = await createTenantBoard(req.apiAuth.tenant, req.body || {});
     if (status !== 201) return res.status(status).json(body);
 
     // Kein Audit-Eintrag: die activity-Collection hängt an einer Ticket-ID,
@@ -7295,32 +7353,43 @@ app.get('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:read'])
     const statusFilter = (req.query.status || '').toString().trim();
     const typeFilter = (req.query.type || '').toString().trim();
     const approvedFilter = (req.query.approved || '').toString().trim();
+    const approvedOnly = approvedFilter === 'true' ? true : (approvedFilter === 'false' ? false : undefined);
 
-    const snapshot = await db.collection('suggestions')
-      .where('appId', '==', tenantApp.id)
-      .get();
+    let suggestions;
+    if (usePostgres()) {
+      // Tenant-Scope und Filter laufen in SQL — appId allein ist keine
+      // Tenant-Grenze (Board-IDs können importiert/kopiert werden), und ohne
+      // WHERE käme das ganze Board über die Leitung. Sortierung kommt aus dem
+      // ORDER BY des Repos.
+      suggestions = await repos.suggestions.listByAppFiltered(tenantApp.id, req.apiAuth.tenantId, {
+        type: typeFilter,
+        status: statusFilter,
+        approved: approvedOnly,
+      });
+    } else {
+      const snapshot = await db.collection('suggestions')
+        .where('appId', '==', tenantApp.id)
+        .get();
+      suggestions = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(data => getTenantId(data) === req.apiAuth.tenantId);
 
-    let suggestions = snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter(data => getTenantId(data) === req.apiAuth.tenantId);
+      if (typeFilter) {
+        suggestions = suggestions.filter(s => normalizeSuggestionType(s.type) === typeFilter);
+      }
+      if (statusFilter) {
+        suggestions = suggestions.filter(s => (s.status || mapLegacyTagToStatus(normalizeSuggestionType(s.type), s.tag, s.approved)) === statusFilter);
+      }
+      if (approvedOnly !== undefined) {
+        suggestions = suggestions.filter(s => Boolean(s.approved) === approvedOnly);
+      }
 
-    if (typeFilter) {
-      suggestions = suggestions.filter(s => normalizeSuggestionType(s.type) === typeFilter);
+      suggestions.sort((a, b) => {
+        const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+        const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+        return bTime - aTime;
+      });
     }
-    if (statusFilter) {
-      suggestions = suggestions.filter(s => (s.status || mapLegacyTagToStatus(normalizeSuggestionType(s.type), s.tag, s.approved)) === statusFilter);
-    }
-    if (approvedFilter === 'true') {
-      suggestions = suggestions.filter(s => Boolean(s.approved));
-    } else if (approvedFilter === 'false') {
-      suggestions = suggestions.filter(s => !s.approved);
-    }
-
-    suggestions.sort((a, b) => {
-      const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
-      const bTime = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
-      return bTime - aTime;
-    });
 
     res.json(suggestions.map(buildApiSuggestionResponse));
   } catch (error) {
@@ -7352,17 +7421,20 @@ app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write'
     if (error) return res.status(400).json({ error });
 
     suggestion.approved = true;
-    suggestion.approvedAt = admin.firestore.FieldValue.serverTimestamp();
+    suggestion.approvedAt = writeTimestamp();
     suggestion.approvedBy = actor;
 
     if (importData?.votes !== undefined) {
-      // Nur der Zähler — bewusst ohne votes-Dokumente, damit die
-      // Doppelabstimmungs-Sperre (die über die votes-Collection arbeitet)
+      // Nur der Zähler — bewusst ohne votes-Einträge, damit die
+      // Doppelabstimmungs-Sperre (die über die votes-Tabelle arbeitet)
       // nicht mit Phantom-Fingerprints gefüttert wird.
       suggestion.votes = importData.votes;
     }
     if (importData?.createdAt) {
-      suggestion.createdAt = admin.firestore.Timestamp.fromDate(importData.createdAt);
+      // Postgres nimmt das Date direkt, Firestore einen Timestamp.
+      suggestion.createdAt = usePostgres()
+        ? importData.createdAt
+        : admin.firestore.Timestamp.fromDate(importData.createdAt);
     }
 
     let suggestionId;
@@ -7378,8 +7450,7 @@ app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write'
       suggestionId = reserved.body.id;
     } else {
       suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, req.apiAuth.tenantId);
-      const docRef = await db.collection('suggestions').add(suggestion);
-      suggestionId = docRef.id;
+      suggestionId = await createSuggestionRecord(req.apiAuth.tenantId, suggestion);
     }
 
     const label = suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag';
@@ -7422,6 +7493,7 @@ app.patch('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:statu
     const activityEntries = [];
     const actor = `api:${req.apiAuth.keyId}`;
     const type = normalizeSuggestionType(suggestionData.type);
+    const now = writeTimestamp();
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
       const status = (req.body.status || '').toString().trim();
@@ -7432,10 +7504,10 @@ app.patch('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:statu
       const previousStatus = suggestionData.status || null;
       updates.status = status;
       updates.tag = mapStatusToLegacyTag(type, status);
-      updates.tagUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
+      updates.tagUpdatedAt = now;
       if (status !== 'neu' && !suggestionData.approved) {
         updates.approved = true;
-        updates.approvedAt = admin.firestore.FieldValue.serverTimestamp();
+        updates.approvedAt = now;
         updates.approvedBy = actor;
       }
       if (previousStatus !== status) {
@@ -7493,18 +7565,27 @@ app.patch('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:statu
       return res.status(400).json({ error: 'No supported fields provided (status, priority, labels)' });
     }
 
-    await suggestionDoc.ref.update(updates);
+    let updated;
+    if (usePostgres()) {
+      // suggestions hat keine approved_by-Spalte (comments schon) — ein
+      // entitäts-spezifisches Faktum, deshalb hier und nicht im Repo.
+      const { approvedBy, ...pgUpdates } = updates;
+      updated = await repos.suggestions.update(suggestionData.id, pgUpdates);
+    } else {
+      await suggestionDoc.ref.update(updates);
+      const refreshed = await suggestionDoc.ref.get();
+      updated = { id: refreshed.id, ...refreshed.data() };
+    }
 
     for (const entry of activityEntries) {
-      await logActivity(suggestionDoc.id, entry.action, {
+      await logActivity(suggestionData.id, entry.action, {
         ...entry.payload,
         actor,
         tenantId: req.apiAuth.tenantId,
       });
     }
 
-    const refreshed = await suggestionDoc.ref.get();
-    res.json(buildApiSuggestionResponse({ id: refreshed.id, ...refreshed.data() }));
+    res.json(buildApiSuggestionResponse(updated));
   } catch (error) {
     console.error('Error updating suggestion via API key:', error);
     res.status(500).json({ error: 'Failed to update suggestion' });
@@ -7516,13 +7597,32 @@ app.get('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:r
     const { errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
     if (error) return res.status(errorStatus).json({ error });
 
-    const snapshot = await db.collection('comments')
-      .where('suggestionId', '==', req.params.suggestionId)
-      .get();
+    let comments;
+    if (usePostgres()) {
+      const rows = await repos.comments.listForSuggestion(req.params.suggestionId);
+      comments = rows
+        .filter(c => getTenantId(c) === req.apiAuth.tenantId)
+        .map(asCommentDoc)
+        .map(buildAdminCommentResponse);
+      // Screenshots liegen unter Postgres als attachments-Zeilen, nicht mehr
+      // als base64 im Dokument — statt der Bytes gehen Proxy-URLs raus.
+      // admin=true, weil v1 (wie die Konsole) auch unfreigegebene Kommentare
+      // ausliefert; die öffentliche Proxy-Route würde deren Bilder verbergen.
+      // BEKANNTE LÜCKE: dieser Proxy verlangt eine Admin-Session, ein
+      // API-Key-Client kann die URLs also nicht abrufen. Unter Firestore kamen
+      // hier noch data:-URLs zurück. Das zu schließen braucht einen eigenen,
+      // API-Key-authentifizierten Attachment-Endpoint (+ docs/api.md) und ist
+      // bewusst nicht Teil dieses Backend-Umbaus.
+      await attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, true);
+    } else {
+      const snapshot = await db.collection('comments')
+        .where('suggestionId', '==', req.params.suggestionId)
+        .get();
 
-    const comments = snapshot.docs
-      .filter(doc => getTenantId(doc.data() || {}) === req.apiAuth.tenantId)
-      .map(buildAdminCommentResponse);
+      comments = snapshot.docs
+        .filter(doc => getTenantId(doc.data() || {}) === req.apiAuth.tenantId)
+        .map(buildAdminCommentResponse);
+    }
 
     comments.sort((a, b) => {
       const aTime = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
@@ -7561,7 +7661,13 @@ app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    const commentRef = await db.collection('comments').add(comment);
+    const commentId = await createCommentRecord(req.apiAuth.tenantId, comment, {
+      suggestionId: req.params.suggestionId,
+      text: validText,
+      authorType: 'admin',
+      approvalStatus: 'approved',
+      approvedBy: actor,
+    });
 
     await logActivity(req.params.suggestionId, 'commented', {
       detail: `Kommentar via API hinzugefügt: "${validText.slice(0, 80)}${validText.length > 80 ? '...' : ''}"`,
@@ -7569,11 +7675,15 @@ app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:
       tenantId: req.apiAuth.tenantId,
     });
 
-    res.status(201).json({
-      id: commentRef.id,
-      ...normalizeCommentData(comment),
-      createdAt: new Date(),
-    });
+    const created = { id: commentId, ...normalizeCommentData(comment), createdAt: new Date() };
+    if (usePostgres()) {
+      // Unter Postgres sind die Bilder attachments-Zeilen; die kanonische Form
+      // ist die Proxy-URL, die auch GET liefert. Das hochgeladene base64 hier
+      // zurückzuspiegeln wären bis zu 800 KB, die der Client schon hat — und
+      // eine andere Form als beim nächsten GET.
+      await attachScreenshotUrls([created], 'comment', req.apiAuth.tenant, true);
+    }
+    res.status(201).json(created);
   } catch (error) {
     console.error('Error creating comment via API key:', error);
     res.status(500).json({ error: 'Failed to create comment' });

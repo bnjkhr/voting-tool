@@ -1,4 +1,5 @@
 const admin = require('firebase-admin');
+const { formatTicketNumber } = require('../lib/ticket-number');
 const fs = require('fs');
 const path = require('path');
 
@@ -198,7 +199,7 @@ async function migrate() {
         const type = (s.data.type || 'feature').toLowerCase();
         const status = mapLegacyTagToStatus(type, s.data.tag, s.data.approved);
         const priority = type === 'bug' ? mapSeverityToPriority(s.data.severity) : 'mittel';
-        const ticketNumber = `${app.prefix}-${String(i + 1).padStart(3, '0')}`;
+        const ticketNumber = formatTicketNumber(app.prefix, i + 1);
 
         console.log(`  ${ticketNumber}: "${s.data.title}" (${type}) → status: ${status}, priority: ${priority}`);
       }
@@ -259,7 +260,7 @@ async function migrate() {
       const type = (s.data.type || 'feature').toLowerCase();
       const status = mapLegacyTagToStatus(type, s.data.tag, s.data.approved);
       const priority = type === 'bug' ? mapSeverityToPriority(s.data.severity) : 'mittel';
-      const ticketNumber = `${app.prefix}-${String(i + 1).padStart(3, '0')}`;
+      const ticketNumber = formatTicketNumber(app.prefix, i + 1);
 
       batch.update(db.collection('suggestions').doc(s.id), {
         ticketNumber,

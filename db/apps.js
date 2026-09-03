@@ -4,6 +4,7 @@
 // Firestore-Transaktion + eigene 'counters'-Collection ersetzt.
 const { query } = require('./pool');
 const { mapRow, mapRows, buildUpdate } = require('./rows');
+const { formatTicketNumber } = require('../lib/ticket-number');
 
 const COLUMNS = `
   id, tenant_id, name, description, slug, ticket_prefix, labels,
@@ -67,7 +68,7 @@ async function nextTicketNumber(appId) {
   );
   if (!rows[0]) throw new Error(`App ${appId} nicht gefunden`);
   const { issued, ticket_prefix: prefix } = rows[0];
-  return { number: issued, prefix, ticketNumber: `${prefix || 'TICKET'}-${String(issued).padStart(3, '0')}` };
+  return { number: issued, prefix, ticketNumber: formatTicketNumber(prefix, issued) };
 }
 
 module.exports = {

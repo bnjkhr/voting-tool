@@ -45,6 +45,12 @@ suite('apps + votes repositories', async (t) => {
   assert.equal(n1.ticketNumber, 'AV-001');
   assert.equal(n2.ticketNumber, 'AV-002');
 
+  // Board ohne ticket_prefix: Fallback muss derselbe sein wie im Firestore-Pfad
+  // (buildTicketPrefix -> 'APP'). Vorher stand hier ein abweichendes 'TICKET'.
+  const noPrefix = 'test_av_app_noprefix';
+  await apps.create({ id: noPrefix, tenantId: T, name: 'Ohne Prefix', slug: 'ohne-prefix' });
+  assert.equal((await apps.nextTicketNumber(noPrefix)).ticketNumber, 'APP-001');
+
   // Suggestion für Votes anlegen
   await query(
     `insert into suggestions (id, tenant_id, app_id, type, title) values ($1,$2,$3,'feature','Test')`,

@@ -21,11 +21,30 @@ test('die Postgres-Screenshot-Guards sind entfernt (kein stilles 400 mehr)', () 
 });
 
 test('Schreibpfade legen Screenshots als attachments an', () => {
-  // suggestion-create, public-comment-create, admin-comment-create.
-  const occurrences = apiSource.split('persistScreenshotAttachments(').length - 1;
-  assert.ok(occurrences >= 4, `erwartet Helper-Definition + 3 Aufrufe (gefunden ${occurrences})`);
-  assert.ok(apiSource.includes("persistScreenshotAttachments(tenant.id, 'suggestion'"));
-  assert.ok(apiSource.includes("persistScreenshotAttachments(tenant.id, 'comment'"));
+  // Die Ablage hängt nicht mehr an jedem einzelnen Handler, sondern an den
+  // beiden gemeinsamen Schreib-Helfern — dadurch kann kein Create-Pfad sie
+  // mehr vergessen.
+  assert.ok(apiSource.includes("persistScreenshotAttachments(tenantId, 'suggestion', suggestionId, suggestion.screenshots)"),
+    'createSuggestionRecord muss die Screenshots ablegen');
+  assert.ok(apiSource.includes("persistScreenshotAttachments(tenantId, 'comment', commentId, comment.screenshots)"),
+    'createCommentRecord muss die Screenshots ablegen');
+
+  // Und alle Create-Pfade laufen wirklich über die Helfer (öffentlicher Submit,
+  // öffentlicher Kommentar, Admin-Kommentar, v1-Submit, v1-Kommentar).
+  assert.equal(apiSource.split('createSuggestionRecord(').length - 1, 3,
+    'Definition + 2 Aufrufer (öffentlicher Submit, v1)');
+  assert.equal(apiSource.split('createCommentRecord(').length - 1, 4,
+    'Definition + 3 Aufrufer (öffentlich, Tenant-Admin, v1)');
+
+  // Kein tenant-fähiger Handler schreibt noch selbst gegen die Collections.
+  // Übrig bleiben nur der Helper und die Legacy-Endpoints (/api/apps/:appId/…,
+  // /api/suggestions/:id/comments, /api/admin/suggestions/:id/comments) — die
+  // bleiben bewusst Firestore-only und dürfen NICHT über den backend-bewussten
+  // Helper laufen, sonst landen Legacy-Daten nach dem Cutover in Postgres.
+  assert.equal(apiSource.split("db.collection('suggestions').add(").length - 1, 2,
+    'Helper + genau ein Legacy-Pfad schreiben Suggestions nach Firestore');
+  assert.equal(apiSource.split("db.collection('comments').add(").length - 1, 3,
+    'Helper + genau zwei Legacy-Pfade schreiben Kommentare nach Firestore');
 });
 
 test('Lesepfade hängen Proxy-URLs an (public vs admin)', () => {
@@ -66,7 +85,18 @@ test('der öffentliche Kommentar-Lesepfad hat einen Postgres-Branch (approved-on
   assert.ok(idx !== -1, 'öffentlicher Kommentar-Endpoint fehlt');
   const block = apiSource.slice(idx, idx + 1600);
   assert.ok(block.includes('usePostgres()'), 'erwartet einen Postgres-Branch');
-  assert.ok(block.includes("c.approvalStatus === 'approved'"), 'öffentlich nur approved');
+  // Die approved-Regel liegt jetzt in comment-utils (isCommentVisibleToPublic),
+  // die buildPublicCommentResponse anwendet — eine Regel für beide Backends
+  // statt einer zweiten Formulierung im Postgres-Zweig.
+  assert.ok(
+    block.includes('.map(buildPublicCommentResponse)') && block.includes('.filter(Boolean)'),
+    'öffentlich nur approved — über buildPublicCommentResponse'
+  );
+  const utils = fs.readFileSync(path.join(rootDir, 'api/comment-utils.js'), 'utf8');
+  assert.ok(
+    utils.includes('if (!isCommentVisibleToPublic(normalized)) {') && utils.includes('return null;'),
+    'buildPublicCommentResponse muss nicht freigegebene Kommentare verwerfen'
+  );
 });
 
 test('das attachments-Repo hält Bytes inline und lädt tenant-gescopt', () => {

@@ -143,49 +143,21 @@ test('requiresProUpgradeResolved: aufgelöster Tenant gated exakt wie requiresPr
   });
 });
 
-test('requireApiKey: Plan-Tenant fail-open, kein Firestore-Fallback', () => {
+test('requireApiKey: eine Tenant-Quelle, Gate weiter fail-open', () => {
   const body = handlerAfter('function requireApiKey(');
-  assert.ok(body.includes('repos.tenants.findById(data.tenantId)'),
-    'Plan-Tenant muss aus der Postgres-Plan-Quelle geladen werden');
-  // Kein Rückfall auf den (plan-losen) Firestore-Tenant — das würde einen
-  // zahlenden Pro-Kunden bei einem Lookup-Miss fälschlich aussperren.
-  assert.ok(!/findById\(data\.tenantId\)\)\s*\|\|\s*tenant/.test(body),
-    'kein `|| tenant`-Fallback auf den Firestore-Tenant (trägt kein plan)');
-  assert.ok(body.includes('billing.resolvePlanTenant('),
-    'Lookup läuft über den Fail-open-Loader resolvePlanTenant');
+  // Das Gate ist nur live, wenn Postgres das Backend ist (proGatingActive
+  // verlangt postgres). findActiveTenantById löst den Tenant dann aus genau
+  // dieser Quelle auf — er trägt `plan` bereits, ein zweiter Lookup entfällt.
+  assert.ok(body.includes('const tenant = await findActiveTenantById(data.tenantId);'),
+    'Tenant kommt aus der backend-bewussten Auflösung (unter Postgres inkl. plan)');
+  assert.equal(body.includes('repos.tenants.findById(data.tenantId)'), false,
+    'kein redundanter zweiter Plan-Lookup auf dem Hot-Path');
+  // Kein Rückfall auf einen plan-losen Tenant — das würde einen zahlenden
+  // Pro-Kunden bei einem Lookup-Miss fälschlich aussperren.
+  assert.ok(!/findActiveTenantById\(data\.tenantId\)\s*\|\|\s*/.test(body),
+    'kein `|| ...`-Fallback auf eine zweite (plan-lose) Tenant-Quelle');
   assert.ok(body.includes('requiresProUpgradeResolved'),
     'Gate muss über den fail-open-Wrapper requiresProUpgradeResolved laufen');
-});
-
-// resolvePlanTenant kapselt das try/catch-Swallow des Middleware-Pfads. Diese
-// Tests treffen den echten Failure Mode (Loader wirft / liefert null), der zuvor
-// nur in der nicht bootbaren Express-Middleware lebte und rein statisch gedeckt war.
-
-test('resolvePlanTenant: Loader wirft => tenant=null, Fehler durchgereicht (kein Rethrow)', async () => {
-  const boom = new Error('pg down');
-  const result = await billing.resolvePlanTenant(async () => { throw boom; });
-  assert.equal(result.tenant, null,
-    'transienter Lookup-Fehler wird als null behandelt, NICHT propagiert (sonst 500 statt fail-open)');
-  assert.equal(result.error, boom, 'Fehler wird fürs Logging zurückgegeben');
-});
-
-test('resolvePlanTenant: Loader liefert null/Tenant => durchgereicht ohne Fehler', async () => {
-  const miss = await billing.resolvePlanTenant(async () => null);
-  assert.equal(miss.tenant, null);
-  assert.equal(miss.error, null, 'ein sauberer Miss ist kein Fehler');
-  const hit = await billing.resolvePlanTenant(async () => PRO);
-  assert.equal(hit.tenant, PRO);
-  assert.equal(hit.error, null);
-});
-
-test('Fail-open Ende-zu-Ende: Lookup-Fehler sperrt einen Pro-Kunden NICHT (kein 402)', async () => {
-  await withEnvAsync(LIVE, async () => {
-    // Genau die Verdrahtung der Middleware: laden (fail-open) -> Gate-Entscheidung.
-    const { tenant: planTenant } =
-      await billing.resolvePlanTenant(async () => { throw new Error('pg down'); });
-    assert.equal(billing.requiresProUpgradeResolved(planTenant, { postgres: true }), false,
-      'nach einem transienten Lookup-Fehler darf das Gate NICHT greifen (fail-open)');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -203,7 +175,7 @@ test('Board-Gate hängt am zentralen Pro-Gate und liefert 402', () => {
   const body = functionBody('createTenantBoard');
   // requiresProUpgradeResolved delegiert an requiresProUpgrade und ergänzt die
   // Fail-open-Regel für einen nicht auflösbaren Plan-Tenant (API-Schlüssel-Pfad).
-  assert.ok(body.includes('billing.requiresProUpgradeResolved(planTenant, { postgres: usePostgres() })'),
+  assert.ok(body.includes('billing.requiresProUpgradeResolved(tenant, { postgres: usePostgres() })'),
     'Board-Limit muss über das zentrale Pro-Gate laufen (respektiert BILLING_ENFORCED)');
   assert.ok(body.includes('planLimits.FREE_MAX_BOARDS'), 'nutzt die zentrale Board-Grenze');
   assert.ok(body.includes('status: 402') && body.includes("code: 'upgrade_required'"), '402 upgrade_required erwartet');
@@ -218,8 +190,10 @@ test('Admin-Konsole UND v1-API laufen durch dasselbe Board-Gate', () => {
     'Admin-Route muss den geteilten Helfer aufrufen');
   assert.ok(apiRoute.includes('createTenantBoard('),
     'v1-Route muss den geteilten Helfer aufrufen');
-  assert.ok(apiRoute.includes('planTenant: req.apiAuth.planTenant'),
-    'v1-Route muss den Plan-Tenant aus der Plan-Quelle durchreichen, nicht den Firestore-Tenant');
+  // req.apiAuth.tenant kommt aus findActiveTenantById und ist unter Postgres
+  // bereits der Plan-Tenant — ein separates Durchreichen braucht es nicht mehr.
+  assert.ok(apiRoute.includes('req.apiAuth.tenant'),
+    'v1-Route muss den Tenant aus der Plan-Quelle verwenden');
   assert.equal(apiRoute.includes('planLimits.FREE_MAX_BOARDS'), false,
     'die v1-Route darf das Limit nicht nachbauen');
   assert.equal(apiRoute.includes('billing.requiresProUpgrade'), false,

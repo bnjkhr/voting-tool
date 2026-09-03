@@ -152,7 +152,7 @@ test('Notification-Adressen sind nicht importierbar', () => {
 
 test('der Generator formatiert über dieselbe Funktion wie der Import-Test', () => {
   assert.ok(
-    apiSource.includes('return suggestionImport.formatTicketNumber(prefix, nextNumber);'),
+    apiSource.includes('return formatTicketNumber(prefix, nextNumber);'),
     'generateTicketNumber muss formatTicketNumber nutzen — sonst testet der Round-Trip eine Kopie'
   );
 });
