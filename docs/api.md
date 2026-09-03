@@ -250,11 +250,9 @@ Setzt automatisch `approved: true`, falls ein Status ≠ `neu` gesetzt wird.
 
 Liste aller Kommentare (auch pending). Benötigt `comments:read`.
 
-> **Hinweis zu `screenshots`:** Angehängte Bilder werden als URL statt als
-> Base64-Data-URL zurückgegeben. Diese URL zeigt auf den Moderations-Proxy des
-> Workspaces und ist mit einem API-Key **nicht** abrufbar — sie setzt eine
-> angemeldete Admin-Session voraus. Wer die Bilder programmatisch braucht,
-> meldet das bitte als Feature-Request.
+> **Hinweis zu `screenshots`:** Angehängte Bilder kommen als URL statt als
+> Base64-Data-URL zurück. Die URL zeigt auf `GET /attachments/:id` (siehe
+> unten) und ist mit demselben API-Key abrufbar.
 
 ### `POST /suggestions/:id/comments`
 
@@ -268,6 +266,27 @@ Admin-Kommentar hinzufügen (auto-freigegeben). Benötigt `comments:write`.
 ```
 
 `screenshots` ist optional und akzeptiert Base64-Data-URLs (`data:image/png;base64,…`), max. 5 Bilder, je max. 300 KB, gesamt max. 800 KB.
+
+Die Antwort gibt `screenshots` bereits in der Lese-Form zurück (URLs auf
+`GET /attachments/:id`), nicht das gerade hochgeladene Base64.
+
+### `GET /attachments/:attachmentId`
+
+Liefert die Bytes eines angehängten Bildes. Benötigt `comments:read`,
+240 Requests/Minute.
+
+Die IDs stehen in `screenshots[]` der Kommentar-Endpunkte — URLs von dort
+unverändert verwenden, nicht selbst zusammenbauen. Der Workspace kommt aus dem
+API-Key: eine ID aus einem fremden Workspace liefert `404`, ebenso eine
+unbekannte ID.
+
+Antwort ist das Bild selbst (`image/png`, `image/jpeg`, `image/gif` oder
+`image/webp`), kein JSON.
+
+```bash
+curl -H "Authorization: Bearer vt_live_…" \
+  https://roadlight.pro/api/v1/attachments/0f8b1c9e-... --output screenshot.png
+```
 
 ## Boards
 

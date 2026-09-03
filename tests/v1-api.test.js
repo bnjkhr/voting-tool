@@ -55,6 +55,11 @@ test('v1 routes are mounted with API key middleware and the documented scopes', 
     },
     {
       signature:
+        "app.get('/api/v1/attachments/:attachmentId', requireApiKey(['comments:read']), rateLimitByApiKey(",
+      note: 'Screenshots gehoeren zu Kommentaren — derselbe Scope wie deren Lesepfad',
+    },
+    {
+      signature:
         "app.post('/api/v1/apps', requireApiKey(['boards:write']), rateLimitByApiKey(60000, 30)",
       note: 'creating a board requires boards:write, 30/min',
     },
@@ -365,7 +370,7 @@ test('kein v1-Zugriff auf Firestore außerhalb eines usePostgres()-Zweigs', () =
     .split(/\n(?=app\.(?:get|post|put|patch|delete)\('\/api\/v1|async function |function )/);
   const v1Routes = allBlocks.filter(block => /^app\.(get|post|put|patch|delete)\('\/api\/v1/.test(block));
   // 8 Suggestion-/Kommentar-Routen + 7 Board-/Release-Routen.
-  assert.equal(v1Routes.length, 15, `erwartet 15 v1-Routen im Abschnitt, gefunden: ${v1Routes.length}`);
+  assert.equal(v1Routes.length, 16, `erwartet 16 v1-Routen im Abschnitt, gefunden: ${v1Routes.length}`);
 
   // Was danach noch direkt auf Firestore zugreift, braucht eine Backend-Weiche.
   // Null Treffer ist das Ideal (alles hinter gemeinsamen Helfern).
@@ -455,7 +460,7 @@ test('v1-Kommentare lesen/schreiben unter Postgres inklusive Screenshot-Attachme
     'auch der Postgres-Zweig muss auf den Key-Tenant filtern'
   );
   assert.ok(
-    listHandler.includes("attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, true)"),
+    listHandler.includes("attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, 'v1')"),
     'Screenshots liegen unter Postgres als attachments und brauchen Proxy-URLs'
   );
 
@@ -507,6 +512,7 @@ test('docs/api.md documents every v1 endpoint, scope and rate limit', () => {
     'PATCH /suggestions/:id',
     'GET /suggestions/:id/comments',
     'POST /suggestions/:id/comments',
+    'GET /attachments/:attachmentId',
   ].forEach(fragment => {
     assert.ok(apiDocs.includes(fragment), `docs/api.md must document ${fragment}`);
   });

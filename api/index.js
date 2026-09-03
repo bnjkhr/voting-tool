@@ -495,7 +495,7 @@ async function createSuggestionRecord(tenantId, suggestion) {
 // 800 KB, die der Client schon hat, in einer anderen Form als beim naechsten
 // GET. admin=true, weil beide Aufrufer (Konsole, v1) auch unfreigegebene
 // Kommentare sehen duerfen.
-async function buildCreatedCommentResponse(commentId, comment, tenant, extra = {}) {
+async function buildCreatedCommentResponse(commentId, comment, tenant, commentScope, extra = {}) {
   const created = {
     id: commentId,
     ...normalizeCommentData(comment),
@@ -503,7 +503,7 @@ async function buildCreatedCommentResponse(commentId, comment, tenant, extra = {
     ...extra,
   };
   if (usePostgres()) {
-    await attachScreenshotUrls([created], 'comment', tenant, true);
+    await attachScreenshotUrls([created], 'comment', tenant, commentScope);
   }
   return created;
 }
@@ -546,20 +546,36 @@ async function persistScreenshotAttachments(tenantId, parentType, parentId, data
   await repos.attachments.createMany(rows);
 }
 
-function attachmentUrl(tenantSlug, id, admin) {
-  const base = admin ? `/api/admin/tenants` : `/api/tenants`;
+// Wer die URL abrufen darf, haengt vom Lesepfad ab — deshalb ein benannter
+// Scope statt eines admin-Booleans:
+//   public  offener Proxy, nur fuer freigegebene Parents
+//   admin   Tenant-Konsole (Session), auch unfreigegebene — Moderationsvorschau
+//   v1      API-Key (comments:read), tenant-gescopt ueber den Key
+// Der v1-Pfad braucht eine eigene Route, weil ein API-Key keine Admin-Session
+// hat und der Tenant nicht aus der URL, sondern aus dem Schluessel kommt.
+const ATTACHMENT_URL_SCOPES = ['public', 'admin', 'v1'];
+
+function attachmentUrl(tenantSlug, id, scope = 'public') {
+  if (!ATTACHMENT_URL_SCOPES.includes(scope)) {
+    throw new Error(`Unbekannter Attachment-Scope "${scope}"`);
+  }
+  if (scope === 'v1') {
+    // Kein Tenant im Pfad: der Schluessel bestimmt ihn.
+    return `/api/v1/attachments/${id}`;
+  }
+  const base = scope === 'admin' ? `/api/admin/tenants` : `/api/tenants`;
   return `${base}/${encodeURIComponent(tenantSlug)}/attachments/${id}`;
 }
 
 // Setzt item.screenshots auf ein Array von Proxy-URLs (batch, tenant-gescopt).
-// admin=true erzeugt URLs auf den authentifizierten Admin-Proxy (liefert auch
-// unfreigegebene Parents für die Moderation); sonst den öffentlichen Proxy.
-async function attachScreenshotUrls(items, parentType, tenant, admin = false) {
+// `scope` waehlt die Route, die der jeweilige Leser abrufen darf — siehe
+// attachmentUrl.
+async function attachScreenshotUrls(items, parentType, tenant, scope = 'public') {
   if (!usePostgres() || !Array.isArray(items) || items.length === 0) return items;
   const rows = await repos.attachments.listForParents(parentType, items.map((i) => i.id), tenant.id);
   const byParent = {};
   for (const a of rows) {
-    (byParent[a.parentId] = byParent[a.parentId] || []).push(attachmentUrl(tenant.slug, a.id, admin));
+    (byParent[a.parentId] = byParent[a.parentId] || []).push(attachmentUrl(tenant.slug, a.id, scope));
   }
   for (const item of items) item.screenshots = byParent[item.id] || [];
   return items;
@@ -4598,7 +4614,7 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions', requireTenantAccess(), asy
     if (!tenant) return;
 
     const { suggestions } = await loadTenantAdminSuggestions(tenant.id);
-    await attachScreenshotUrls(suggestions, 'suggestion', tenant, true);
+    await attachScreenshotUrls(suggestions, 'suggestion', tenant, 'admin');
     res.json(suggestions);
   } catch (error) {
     console.error('Error fetching tenant admin suggestions:', error);
@@ -5251,7 +5267,7 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', req
         .filter((c) => c.tenantId === tenant.id)
         .map(asCommentDoc)
         .map(buildAdminCommentResponse);
-      await attachScreenshotUrls(comments, 'comment', tenant, true);
+      await attachScreenshotUrls(comments, 'comment', tenant, 'admin');
     } else {
       const commentsSnapshot = await db.collection('comments')
         .where('suggestionId', '==', suggestionId)
@@ -5327,7 +5343,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
 
     await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'commented', validText);
 
-    res.status(201).json(await buildCreatedCommentResponse(commentId, comment, tenant, {
+    res.status(201).json(await buildCreatedCommentResponse(commentId, comment, tenant, 'admin', {
       approvedAt: new Date(),
       message: 'Kommentar erfolgreich hinzugefügt',
     }));
@@ -7620,6 +7636,41 @@ app.patch('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:statu
   }
 });
 
+// v1: Screenshot eines Kommentars ausliefern. Unter Postgres liefern die
+// Lesepfade Proxy-URLs statt base64; ohne diese Route waeren die fuer einen
+// API-Key-Client nicht abrufbar (der Admin-Proxy verlangt eine Session).
+//
+// Scope comments:read, weil im v1-Vertrag ausschliesslich Kommentare
+// Attachment-URLs ausgeben — buildApiSuggestionResponse fuehrt keine
+// screenshots. Der Tenant kommt aus dem Schluessel, nicht aus dem Pfad, und
+// findWithData filtert zusaetzlich darauf: eine geratene oder geleakte ID aus
+// einem fremden Workspace liefert 404.
+//
+// Anders als der oeffentliche Proxy ohne approved-Gate: ein Key mit
+// comments:read sieht ohnehin auch unmoderierte Kommentare, ein Gate hier
+// wuerde nur Bilder zu Texten verbergen, die derselbe Key schon lesen darf.
+app.get('/api/v1/attachments/:attachmentId', requireApiKey(['comments:read']), rateLimitByApiKey(60000, 240), async (req, res) => {
+  try {
+    if (!usePostgres()) {
+      // Im Firestore-Modus liegen Screenshots inline im Dokument; es gibt keine
+      // Attachment-IDs, auf die diese Route zeigen koennte.
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const { attachmentId } = req.params;
+    if (!ATTACHMENT_UUID_RE.test(attachmentId)) {
+      return res.status(400).json({ error: 'Invalid attachment id' });
+    }
+    const attachment = await repos.attachments.findWithData(attachmentId, req.apiAuth.tenantId);
+    if (!attachment || !attachment.data) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    return serveAttachmentBytes(res, attachment);
+  } catch (error) {
+    console.error('Error serving attachment via API key:', error);
+    return res.status(500).json({ error: 'Failed to load attachment' });
+  }
+});
+
 app.get('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
   try {
     const { errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
@@ -7641,7 +7692,7 @@ app.get('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:r
       // hier noch data:-URLs zurück. Das zu schließen braucht einen eigenen,
       // API-Key-authentifizierten Attachment-Endpoint (+ docs/api.md) und ist
       // bewusst nicht Teil dieses Backend-Umbaus.
-      await attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, true);
+      await attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, 'v1');
     } else {
       const snapshot = await db.collection('comments')
         .where('suggestionId', '==', req.params.suggestionId)
@@ -7703,7 +7754,7 @@ app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:
       tenantId: req.apiAuth.tenantId,
     });
 
-    res.status(201).json(await buildCreatedCommentResponse(commentId, comment, req.apiAuth.tenant));
+    res.status(201).json(await buildCreatedCommentResponse(commentId, comment, req.apiAuth.tenant, 'v1'));
   } catch (error) {
     console.error('Error creating comment via API key:', error);
     res.status(500).json({ error: 'Failed to create comment' });
