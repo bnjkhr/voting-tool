@@ -2,13 +2,27 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 // End-to-End gegen die echte Express-App: der Bug lag nicht in einer Hilfsfunktion,
 // sondern darin, WELCHE Datei die Root-Route ausliefert. Ein Test gegen den
 // Helfer allein haette ihn nicht gefangen.
 //
-// Die App bootet hier ohne DATABASE_URL und ohne Firebase-Credentials — die
-// Root-Route beruehrt keinen Datenspeicher.
+// api/index.js initialisiert beim Laden Firebase Admin und wirft ohne
+// Credentials. Deshalb hier ein Wegwerf-Service-Account: admin.credential.cert
+// validiert nur das PEM-Format und spricht mit niemandem, und die Root-Route
+// beruehrt ohnehin keinen Datenspeicher. Der .env-Loader in api/index.js
+// ueberschreibt gesetzte Variablen nicht — der Test laeuft damit lokal und in
+// CI gegen dieselbe Konfiguration, statt still an vorhandene Credentials der
+// Entwicklungsmaschine zu geraten.
+process.env.FIREBASE_PROJECT_ID = 'roadlight-root-deep-links-test';
+process.env.FIREBASE_CLIENT_EMAIL = 'test@roadlight-root-deep-links-test.iam.gserviceaccount.com';
+process.env.FIREBASE_PRIVATE_KEY = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+}).privateKey;
+
 const app = require('../api/index.js');
 
 const publicDir = path.join(__dirname, '../public');
