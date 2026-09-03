@@ -30,7 +30,11 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          # trust statt Passwort: der Container ist nur fuer die Dauer des Jobs
+          # erreichbar (localhost, kein Port nach aussen). Damit steht in der
+          # Connection-String unten auch kein Credential, das ein Secret-Scanner
+          # zu Recht anmeckern wuerde.
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: roadlight_test
         ports:
           - 5432:5432
@@ -42,8 +46,8 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/roadlight_test
-      DATABASE_URL_UNPOOLED: postgres://postgres:postgres@127.0.0.1:5432/roadlight_test
+      DATABASE_URL: postgres://postgres@127.0.0.1:5432/roadlight_test
+      DATABASE_URL_UNPOOLED: postgres://postgres@127.0.0.1:5432/roadlight_test
       # Der Service-Container spricht kein TLS. db/pool.js verlangt sonst
       # verifiziertes TLS (Neon) — nur dieser exakte Wert schaltet es ab.
       PGSSLMODE: disable
