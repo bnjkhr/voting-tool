@@ -489,6 +489,25 @@ async function createSuggestionRecord(tenantId, suggestion) {
 // und base64-screenshots); `row` enthält die Felder, die die Postgres-Tabelle
 // kennt. Getrennt, weil die beiden Shapes sich bei den Autor-/Freigabefeldern
 // unterscheiden und ein gemeinsames Objekt beide verwässern würde.
+// Antwort-Shape fuer einen frisch angelegten Kommentar. Unter Postgres liegen
+// die Bilder als attachments-Zeilen — kanonisch sind die Proxy-URLs, die auch
+// das GET liefert. Das hochgeladene base64 zurueckzuspiegeln waeren bis zu
+// 800 KB, die der Client schon hat, in einer anderen Form als beim naechsten
+// GET. admin=true, weil beide Aufrufer (Konsole, v1) auch unfreigegebene
+// Kommentare sehen duerfen.
+async function buildCreatedCommentResponse(commentId, comment, tenant, extra = {}) {
+  const created = {
+    id: commentId,
+    ...normalizeCommentData(comment),
+    createdAt: new Date(),
+    ...extra,
+  };
+  if (usePostgres()) {
+    await attachScreenshotUrls([created], 'comment', tenant, true);
+  }
+  return created;
+}
+
 async function createCommentRecord(tenantId, comment, row) {
   if (!usePostgres()) {
     const commentRef = await db.collection('comments').add(comment);
@@ -5308,13 +5327,10 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
 
     await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'commented', validText);
 
-    res.status(201).json({
-      id: commentId,
-      ...normalizeCommentData(comment),
-      createdAt: new Date(),
+    res.status(201).json(await buildCreatedCommentResponse(commentId, comment, tenant, {
       approvedAt: new Date(),
-      message: 'Kommentar erfolgreich hinzugefügt'
-    });
+      message: 'Kommentar erfolgreich hinzugefügt',
+    }));
   } catch (error) {
     console.error('Error adding tenant admin comment:', error);
     res.status(500).json({ error: 'Failed to add comment' });
@@ -7687,15 +7703,7 @@ app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:
       tenantId: req.apiAuth.tenantId,
     });
 
-    const created = { id: commentId, ...normalizeCommentData(comment), createdAt: new Date() };
-    if (usePostgres()) {
-      // Unter Postgres sind die Bilder attachments-Zeilen; die kanonische Form
-      // ist die Proxy-URL, die auch GET liefert. Das hochgeladene base64 hier
-      // zurückzuspiegeln wären bis zu 800 KB, die der Client schon hat — und
-      // eine andere Form als beim nächsten GET.
-      await attachScreenshotUrls([created], 'comment', req.apiAuth.tenant, true);
-    }
-    res.status(201).json(created);
+    res.status(201).json(await buildCreatedCommentResponse(commentId, comment, req.apiAuth.tenant));
   } catch (error) {
     console.error('Error creating comment via API key:', error);
     res.status(500).json({ error: 'Failed to create comment' });

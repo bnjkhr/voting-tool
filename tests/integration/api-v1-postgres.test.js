@@ -48,6 +48,9 @@ function bootApp() {
   process.env.DATA_BACKEND = 'postgres';
   // Pro-Gating aus lassen: hier geht es um den Backend-Pfad, nicht um Billing.
   delete process.env.BILLING_ENFORCED;
+  // Erlaubt es, die Tenant-Konsolen-Routen ohne Session anzusprechen
+  // (requireTenantAccess akzeptiert das Plattform-Admin-Passwort).
+  process.env.ADMIN_PASSWORD = 'test-admin-passwort-nur-fuer-diesen-lauf';
 
   const app = require('../../api/index.js');
   const server = app.listen(0);
@@ -57,6 +60,7 @@ function bootApp() {
       const base = `http://127.0.0.1:${server.address().port}`;
       resolve({
         server,
+        base,
         async call(method, path, { token, body } = {}) {
           const res = await fetch(`${base}${path}`, {
             method,
@@ -112,7 +116,7 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
   await seedKey('test_v1_key_revoked', T, revokedToken, ALL_SCOPES, true);
   await seedKey('test_v1_key_inactive', T_INACTIVE, inactiveTenantToken, ALL_SCOPES);
 
-  const { server, call } = await bootApp();
+  const { server, base, call } = await bootApp();
   t.after(() => new Promise((resolve) => server.close(resolve)));
 
   // -------------------------------------------------------------------------
@@ -484,6 +488,42 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
     const ids = res.body.map((r) => r.id);
     assert.ok(ids.includes('test_v1_rel_a'), 'eigenes Release fehlt');
     assert.equal(ids.includes('test_v1_rel_b'), false, 'Release des anderen Boards darf nicht auftauchen');
+  });
+
+  // -------------------------------------------------------------------------
+  // Die 201-Antwort auf einen neuen Kommentar darf das hochgeladene base64
+  // nicht zurueckspiegeln: unter Postgres liegen die Bilder als attachments,
+  // kanonisch ist die Proxy-URL, die auch das GET liefert. Gilt fuer BEIDE
+  // Schreibpfade — v1-API und Tenant-Konsole.
+  // -------------------------------------------------------------------------
+  await t.test('auch die Konsole liefert Proxy-URLs statt base64 zurueck', async () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const res = await fetch(`${base}/api/admin/tenants/test-v1/suggestions/${createdId}/comments`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.ADMIN_PASSWORD}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text: 'Konsolen-Kommentar mit Bild', screenshots: [png] }),
+    });
+    const body = await res.json();
+    assert.equal(res.status, 201, `erwartet 201, bekam ${res.status}: ${JSON.stringify(body)}`);
+
+    assert.equal(body.screenshots.length, 1);
+    assert.equal(body.screenshots[0].startsWith('data:'), false, 'kein base64-Echo in der Antwort');
+    assert.match(body.screenshots[0], /\/attachments\/[0-9a-f-]{36}$/, 'Proxy-URL erwartet');
+
+    // Und die Bytes liegen wirklich als attachments-Zeile, nicht im Kommentar.
+    const att = await query(
+      "select count(*)::int as n from attachments where parent_type = 'comment' and parent_id = $1",
+      [body.id]
+    );
+    assert.equal(att.rows[0].n, 1);
+
+    // Dieselbe URL kommt beim Lesen zurueck — POST und GET stimmen ueberein.
+    const list = await call('GET', `/api/v1/suggestions/${createdId}/comments`, { token: fullToken });
+    const same = list.body.find((c) => c.id === body.id);
+    assert.deepEqual(same.screenshots, body.screenshots, 'POST- und GET-Form muessen identisch sein');
   });
 
 });
