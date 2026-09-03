@@ -1,13 +1,13 @@
 # Friendly User Pilot Smoke Test
 
-Ziel: vor dem Versand an Friendly User einmal belegen, dass Beta, Tenant-Isolation, Login, Rollen und Public Board zusammen funktionieren.
+Ziel: vor dem Versand an Friendly User einmal belegen, dass Pilot, Tenant-Isolation, Login, Rollen und Public Board zusammen funktionieren.
 
 ## Voraussetzung
 
-- Beta-Link ist `https://beta.votingtool.benkohler.de`.
+- Pilot-Link ist `https://roadlight.pro`.
 - Der Pilot läuft nicht über `legacy` und nicht über `/admin.html`.
 - Pilot-Tenant ist aktiv und hat mindestens ein Board.
-- Einladungs- und Login-Mails zeigen auf die Beta-Domain.
+- Einladungs- und Login-Mails zeigen auf die Pilot-Domain.
 - Feedback-Kanal ist vorab festgelegt.
 
 ## 1. Tenant-Isolation
@@ -31,7 +31,7 @@ Ziel: vor dem Versand an Friendly User einmal belegen, dass Beta, Tenant-Isolati
 
 - Eine reale Friendly-User-Mail als `admin` einladen.
 - Optional zweite Person als `viewer` einladen.
-- Invite-Mail prüfen: Absender, Link, Beta-Domain.
+- Invite-Mail prüfen: Absender, Link, Pilot-Domain.
 - Invite annehmen.
 - Danach erneut über `/login.html` einloggen.
 - Prüfen: User landet im richtigen Tenant Admin.
@@ -57,7 +57,7 @@ Ziel: vor dem Versand an Friendly User einmal belegen, dass Beta, Tenant-Isolati
 Pilot nicht starten oder pausieren, wenn eines davon eintritt:
 
 - Ein Friendly User sieht fremde Tenants oder Boards.
-- Invite/Login-Link zeigt auf Live oder eine falsche Vercel-Preview.
+- Invite/Login-Link zeigt auf eine falsche Domain oder eine Vercel-Preview.
 - Tenant Admin zeigt unklaren Workspace oder falsche Rolle.
 - Public Board lädt Legacy-Daten im Pilot-Kontext.
 - E-Mail-Versand ist unzuverlässig oder landet reproduzierbar im Spam.
