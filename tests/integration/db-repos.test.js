@@ -77,6 +77,25 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
     'nicht freigegebene Einträge bekommen keinen approved_at-Zeitstempel'
   );
 
+  // migration 0008: approved ohne approved_at ist DB-seitig verboten. Der
+  // Repo-Create stempelt selbst, aber update() koennte die Kombination
+  // schreiben — hier faengt sie die Constraint.
+  let approvedOhneDatum = null;
+  try {
+    await suggestions.update('test_r_s4', { approved: true });
+  } catch (err) {
+    approvedOhneDatum = err;
+  }
+  assert.ok(approvedOhneDatum, 'approved ohne approved_at muss abgewiesen werden');
+  assert.equal(approvedOhneDatum.code, '23514', 'CHECK-Verletzung erwartet');
+  assert.equal(approvedOhneDatum.constraint, 'suggestions_approved_at_check');
+  assert.equal((await suggestions.findById('test_r_s4')).approved, false, 'die Zeile bleibt unveraendert');
+
+  // Mit Zeitstempel geht es durch — die Constraint ist nicht zu breit.
+  const nachtraeglich = await suggestions.setApproved('test_r_s4');
+  assert.equal(nachtraeglich.approved, true);
+  assert.ok(nachtraeglich.approvedAt, 'setApproved setzt beides');
+
   // created_at: der Import bringt das historische Einreichungsdatum mit. Ohne
   // die Spalte im Insert fiel es still auf now() zurück — also genau das Datum
   // verloren, das der Import retten soll.
