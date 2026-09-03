@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
-const { stripSslParams } = require('../db/pool');
+const { stripSslParams, sslDisabled } = require('../db/pool');
 
 // Minimaler .env.local/.env-Loader (Shell-Env hat Vorrang).
 function loadEnv() {
@@ -41,7 +41,7 @@ async function main() {
   const migrationsDir = path.join(__dirname, '..', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
 
-  const client = new Client({ connectionString: stripSslParams(connectionString), ssl: true });
+  const client = new Client({ connectionString: stripSslParams(connectionString), ssl: sslDisabled() ? false : true });
   await client.connect();
   try {
     // --status ist rein lesend: Tabelle NICHT anlegen, nur abfragen falls vorhanden.
