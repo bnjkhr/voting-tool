@@ -661,7 +661,7 @@ async function loadPublicReleasesForApp(appId, tenantId, statusFilter) {
   }
 
   if (usePostgres()) {
-    let releases = await repos.releases.listByApp(appId);
+    let releases = await repos.releases.listByApp(appId, tenantId);
     if (statusList) {
       releases = releases.filter((r) => statusList.includes(r.status));
     }
@@ -5106,8 +5106,20 @@ async function assignSuggestionRelease(tenant, suggestionData, releaseId, actor 
     if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
       return { status: 400, body: { error: 'Invalid release ID format' } };
     }
-    if (!await findTenantRelease(tenant, releaseId)) {
+    const release = await findTenantRelease(tenant, releaseId);
+    if (!release) {
       return { status: 404, body: { error: 'Release nicht gefunden' } };
+    }
+    // Der Tenant allein reicht als Grenze nicht: ein Release gehoert zu genau
+    // einem Board. Ohne diese Pruefung liesse sich ein Eintrag von Board A an
+    // ein Release von Board B haengen — die oeffentliche Roadmap von B wuerde
+    // ihn dann auflisten, weil sie ihre Eintraege ueber die Release-IDs sammelt
+    // und dabei kein app_id prueft.
+    if (release.appId !== suggestionData.appId) {
+      return {
+        status: 400,
+        body: { error: 'Release gehört zu einem anderen Board als der Eintrag' },
+      };
     }
   }
 

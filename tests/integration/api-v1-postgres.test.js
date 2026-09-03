@@ -105,7 +105,8 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
     );
   }
 
-  const ALL_SCOPES = ['suggestions:read', 'suggestions:write', 'suggestions:status', 'comments:read', 'comments:write'];
+  const ALL_SCOPES = ['suggestions:read', 'suggestions:write', 'suggestions:status', 'comments:read', 'comments:write',
+    'boards:write', 'releases:read', 'releases:write'];
   await seedKey('test_v1_key_full', T, fullToken, ALL_SCOPES);
   await seedKey('test_v1_key_read', T, readOnlyToken, ['suggestions:read']);
   await seedKey('test_v1_key_revoked', T, revokedToken, ALL_SCOPES, true);
@@ -427,6 +428,62 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
       },
     });
     assert.equal(res.status, 400, `erwartet 400, bekam ${res.status}: ${res.raw}`);
+  });
+
+  // -------------------------------------------------------------------------
+  // Release-Zuordnung: der Tenant allein ist nicht die Grenze. Ein Release
+  // gehoert zu genau einem Board; ein Eintrag darf nicht an ein Release eines
+  // ANDEREN Boards desselben Workspaces gehaengt werden — die oeffentliche
+  // Roadmap dieses Boards wuerde ihn sonst auflisten.
+  // -------------------------------------------------------------------------
+  await t.test('Release eines anderen Boards wird abgewiesen und aendert nichts', async () => {
+    // Zweites Board im GLEICHEN Tenant, mit eigenem Release.
+    await query(
+      "insert into apps (id, tenant_id, name, slug, ticket_prefix) values ('test_v1_app_b',$1,'Board B','board-b','VB')",
+      [T]
+    );
+    await query(
+      "insert into releases (id, tenant_id, app_id, version, title) values ('test_v1_rel_b',$1,'test_v1_app_b','2.0','Release von Board B')",
+      [T]
+    );
+    // Und ein Release am eigenen Board, als Positivkontrolle.
+    await query(
+      "insert into releases (id, tenant_id, app_id, version, title) values ('test_v1_rel_a',$1,$2,'1.0','Release von Board A')",
+      [T, A]
+    );
+
+    const fremd = await call('PUT', `/api/v1/suggestions/${createdId}/release`, {
+      token: fullToken, body: { releaseId: 'test_v1_rel_b' },
+    });
+    assert.equal(fremd.status, 400, `board-fremdes Release muss 400 liefern, bekam ${fremd.status}: ${fremd.raw}`);
+    assert.match(fremd.body.error, /anderen Board/i);
+
+    let row = (await query('select release_id from suggestions where id = $1', [createdId])).rows[0];
+    assert.equal(row.release_id, null, 'die Zuordnung darf nicht geschrieben worden sein');
+
+    // Das eigene Release geht weiterhin durch — die Pruefung darf nicht zu breit sein.
+    const eigen = await call('PUT', `/api/v1/suggestions/${createdId}/release`, {
+      token: fullToken, body: { releaseId: 'test_v1_rel_a' },
+    });
+    assert.equal(eigen.status, 200, `eigenes Release muss 200 liefern, bekam ${eigen.status}: ${eigen.raw}`);
+    row = (await query('select release_id from suggestions where id = $1', [createdId])).rows[0];
+    assert.equal(row.release_id, 'test_v1_rel_a');
+
+    // Und das Loesen der Zuordnung bleibt moeglich.
+    const geloest = await call('PUT', `/api/v1/suggestions/${createdId}/release`, {
+      token: fullToken, body: { releaseId: null },
+    });
+    assert.equal(geloest.status, 200);
+    row = (await query('select release_id from suggestions where id = $1', [createdId])).rows[0];
+    assert.equal(row.release_id, null, 'releaseId null entfernt die Zuordnung');
+  });
+
+  await t.test('Release-Liste eines Boards zeigt nur Releases dieses Boards', async () => {
+    const res = await call('GET', '/api/v1/apps/board/releases', { token: fullToken });
+    assert.equal(res.status, 200, res.raw);
+    const ids = res.body.map((r) => r.id);
+    assert.ok(ids.includes('test_v1_rel_a'), 'eigenes Release fehlt');
+    assert.equal(ids.includes('test_v1_rel_b'), false, 'Release des anderen Boards darf nicht auftauchen');
   });
 
 });

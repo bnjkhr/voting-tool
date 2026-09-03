@@ -184,6 +184,10 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.equal(pub.status, 'veröffentlicht');
   assert.ok(pub.publishedAt);
   assert.equal((await releases.listPublishedByApp(A)).length, 1);
+  // listByApp ist tenant-gescopt: app_id allein ist keine Tenant-Grenze, sobald
+  // eine releases-Zeile eine von ihrer App abweichende tenant_id traegt.
+  assert.equal((await releases.listByApp(A, T)).length, 1);
+  assert.equal((await releases.listByApp(A, 'other-tenant')).length, 0, 'fremder Tenant sieht das Release nicht');
   await suggestions.update('test_r_s1', { releaseId: 'test_r_rel' });
   assert.equal((await suggestions.listByRelease('test_r_rel')).length, 1);
   // approved + tenant-gescopt für Roadmap/Changelog

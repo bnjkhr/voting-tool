@@ -15,10 +15,17 @@ async function findById(id) {
   return mapRow(rows[0]);
 }
 
-async function listByApp(appId) {
+// Tenant-gescopt wie listApprovedByReleaseIds und countByReleaseIds: app_id
+// allein ist keine Tenant-Grenze, sobald eine releases-Zeile eine von ihrer App
+// abweichende tenant_id traegt (Direktimport, Skript, kuenftiger Board-Move).
+// Der Firestore-Zweig des Aufrufers filtert seit jeher explizit — ohne den
+// Parameter waere der Postgres-Zweig die schwaechere Haelfte derselben Route.
+async function listByApp(appId, tenantId) {
   const { rows } = await query(
-    `select ${COLUMNS} from releases where app_id = $1 order by created_at desc`,
-    [appId]
+    `select ${COLUMNS} from releases
+     where app_id = $1 and tenant_id = $2
+     order by created_at desc`,
+    [appId, tenantId]
   );
   return mapRows(rows);
 }
