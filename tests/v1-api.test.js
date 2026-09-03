@@ -107,6 +107,23 @@ test('requireApiKey looks tokens up by hash and rejects revoked keys', () => {
     'token lookup must hash the incoming token before querying'
   );
 
+  // Der Lookup muss dem DATA_BACKEND-Schalter folgen. Ohne den Postgres-Zweig
+  // könnte sich ein in Postgres angelegter Key nach der Umstellung gar nicht
+  // authentifizieren (die Tenant-Konsole schreibt Keys dort bereits an).
+  const keyLookup = apiSource
+    .split('async function findApiKeyByToken(token) {')[1]
+    ?.split('\nfunction requireApiKey(')[0] || '';
+  assert.ok(keyLookup.length > 0, 'findApiKeyByToken muss existieren');
+  assert.ok(
+    keyLookup.includes('if (usePostgres())')
+      && keyLookup.includes('repos.apiKeys.findByTokenHash(hashApiKeyToken(token))'),
+    'unter Postgres muss der Key über repos.apiKeys.findByTokenHash aufgelöst werden'
+  );
+  assert.ok(
+    keyLookup.includes('repos.apiKeys.touch(key.id)'),
+    'lastUsedAt muss auch im Postgres-Zweig fortgeschrieben werden'
+  );
+
   assert.equal(
     apiSource.includes(".where('token', '=="),
     false,
@@ -131,8 +148,25 @@ test('requireApiKey enforces tenant + scope before any handler runs', () => {
   );
 
   assert.ok(
-    apiSource.includes("await db.collection('tenants').doc(data.tenantId).get()"),
+    apiSource.includes('await findActiveTenantById(data.tenantId)'),
     'tenant must be resolved from the key, not from the URL'
+  );
+
+  // findActiveTenantById ist das backend-bewusste Gegenstück zu
+  // findActiveTenantBySlug: unter DATA_BACKEND=postgres darf hier nicht mehr
+  // gegen Firestore aufgelöst werden.
+  const tenantByIdHelper = apiSource
+    .split('async function findActiveTenantById(tenantId) {')[1]
+    ?.split('\nasync function ')[0] || '';
+  assert.ok(tenantByIdHelper.length > 0, 'findActiveTenantById muss existieren');
+  assert.ok(
+    tenantByIdHelper.includes('if (usePostgres())')
+      && tenantByIdHelper.includes('repos.tenants.findById(tenantId)'),
+    'findActiveTenantById muss unter Postgres aus tenants lesen'
+  );
+  assert.ok(
+    tenantByIdHelper.includes('isActiveTenant('),
+    'inaktive Tenants müssen in beiden Backends als "nicht gefunden" gelten'
   );
 
   assert.ok(
@@ -146,9 +180,11 @@ test('loadApiKeySuggestionById prevents cross-tenant suggestion access', () => {
     apiSource.includes('async function loadApiKeySuggestionById'),
     'cross-tenant guard must live in a shared helper'
   );
+  // Die Tenant-Grenze selbst lebt in loadSuggestionForTenant — eine Stelle für
+  // beide Backends und für beide Aufrufer (Slug-Pfad und API-Key-Pfad).
   assert.ok(
-    apiSource.includes('if (getTenantId(suggestionData) !== req.apiAuth.tenantId)'),
-    'helper must compare suggestion tenant against the API key tenant'
+    apiSource.includes('return loadSuggestionForTenant(req.apiAuth.tenantId, suggestionId);'),
+    'helper must delegate to the shared tenant-scoped lookup with the API key tenant'
   );
   // Same guard inlined for the suggestions list route.
   assert.ok(
@@ -304,6 +340,162 @@ test('tenant admin UI surfaces API keys with scope checkboxes and one-time revea
   );
 });
 
+// ---------------------------------------------------------------------------
+// Postgres-Readiness: der komplette v1-Pfad muss dem DATA_BACKEND-Schalter
+// folgen. Vorher lasen/schrieben mehrere v1-Handler unbedingt gegen Firestore,
+// während generateTicketNumber im selben Handler bereits auf usePostgres()
+// verzweigte — unter DATA_BACKEND=postgres wäre die Ticketnummer aus Postgres
+// gekommen, das Dokument aber nach Firestore geschrieben worden.
+// ---------------------------------------------------------------------------
+
+// Der v1-Abschnitt zwischen den beiden Banner-Kommentaren.
+const v1Section = apiSource
+  .split('// Public API v1 — API-key authenticated, tenant-scoped, agent-friendly')[1]
+  .split('// Tenant admin endpoints for managing API keys (owner/admin only)')[0];
+
+test('kein v1-Zugriff auf Firestore außerhalb eines usePostgres()-Zweigs', () => {
+  assert.ok(v1Section.length > 0, 'v1-Abschnitt muss gefunden werden');
+
+  // Jeden Handler/Helper einzeln betrachten: wer db.collection() anfasst, muss
+  // im selben Block auch den Postgres-Zweig haben. Ein neu hinzugefügter
+  // v1-Handler ohne Backend-Verzweigung fällt damit auf.
+  // Absicherung gegen einen stillen Vacuous-Pass: wenn das Splitten kaputtgeht,
+  // wäre die Schleife unten leer und der Test grün ohne etwas zu prüfen.
+  const allBlocks = v1Section
+    .split(/\n(?=app\.(?:get|post|put|patch|delete)\('\/api\/v1|async function |function )/);
+  const v1Routes = allBlocks.filter(block => /^app\.(get|post|put|patch|delete)\('\/api\/v1/.test(block));
+  // 8 Suggestion-/Kommentar-Routen + 7 Board-/Release-Routen.
+  assert.equal(v1Routes.length, 15, `erwartet 15 v1-Routen im Abschnitt, gefunden: ${v1Routes.length}`);
+
+  // Was danach noch direkt auf Firestore zugreift, braucht eine Backend-Weiche.
+  // Null Treffer ist das Ideal (alles hinter gemeinsamen Helfern).
+  const blocks = allBlocks.filter(block => block.includes("db.collection("));
+
+  for (const block of blocks) {
+    const label = block.split('\n')[0].trim().slice(0, 90);
+    assert.ok(
+      block.includes('usePostgres()'),
+      `v1-Block greift ohne Backend-Weiche auf Firestore zu: ${label}`
+    );
+  }
+});
+
+test('v1-Suggestions lesen und schreiben unter Postgres über die Repositories', () => {
+  const listHandler = v1Section
+    .split("app.get('/api/v1/apps/:appSlug/suggestions'")[1]
+    .split("app.post('/api/v1/apps/:appSlug/suggestions'")[0];
+  // Tenant-Scope UND Filter gehen unter Postgres in die WHERE-Klausel, statt das
+  // ganze Board zu laden und in JS wegzuwerfen.
+  assert.ok(
+    listHandler.includes('repos.suggestions.listByAppFiltered(tenantApp.id, req.apiAuth.tenantId, {'),
+    'Liste muss unter Postgres tenant-gescopt und gefiltert aus dem Repo kommen'
+  );
+  // Der Firestore-Zweig hat keine WHERE-Klausel und muss weiter in JS scopen:
+  // appId allein ist keine Tenant-Grenze (Board-IDs können kopiert werden).
+  assert.ok(
+    /\.filter\(data => getTenantId\(data\) === req\.apiAuth\.tenantId\)/.test(listHandler),
+    'Firestore-Zweig muss den Tenant-Scope in JS erzwingen'
+  );
+
+  const createHandler = v1Section
+    .split("app.post('/api/v1/apps/:appSlug/suggestions'")[1]
+    .split("app.get('/api/v1/suggestions/:suggestionId'")[0];
+  // Der Schreibpfad liegt im gemeinsamen Helper (Backend-Weiche + Screenshots).
+  assert.ok(
+    createHandler.includes('await createSuggestionRecord(req.apiAuth.tenantId, suggestion)'),
+    'Create muss über createSuggestionRecord laufen (sonst Ticketnummer aus PG, Doc in Firestore)'
+  );
+  // Die vergebene ID muss auch ins Activity-Log und in die Response gehen.
+  assert.ok(
+    createHandler.includes("logActivity(suggestionId, importData ? 'imported' : 'created'")
+      && /buildApiSuggestionResponse\(\{\s*\n?\s*id: suggestionId/.test(createHandler),
+    'Activity-Log und Response müssen die tatsächlich vergebene ID bekommen'
+  );
+});
+
+test('v1-PATCH schreibt unter Postgres ohne Firestore-Sentinels und ohne approvedBy', () => {
+  const patchHandler = v1Section
+    .split("app.patch('/api/v1/suggestions/:suggestionId'")[1]
+    .split("app.get('/api/v1/suggestions/:suggestionId/comments'")[0];
+
+  assert.ok(
+    patchHandler.includes('repos.suggestions.update(suggestionData.id, pgUpdates)'),
+    'Update muss unter Postgres über das Repo laufen (suggestionDoc ist dort null)'
+  );
+  // approvedBy hat in suggestions keine Postgres-Spalte (in comments schon).
+  assert.ok(
+    patchHandler.includes('const { approvedBy, ...pgUpdates } = updates;'),
+    'approvedBy darf nicht an das Postgres-Update durchgereicht werden'
+  );
+  // Zeitstempel werden backend-gerecht an der Quelle gewählt, nicht nachträglich
+  // herausgepatcht — sonst schreibt ein vergessenes Feld ein Firestore-Sentinel
+  // in eine timestamptz-Spalte.
+  assert.ok(
+    patchHandler.includes('const now = writeTimestamp();')
+      && patchHandler.includes('updates.tagUpdatedAt = now;')
+      && patchHandler.includes('updates.approvedAt = now;'),
+    'Zeitstempel müssen über writeTimestamp() gesetzt werden'
+  );
+  assert.equal(
+    /serverTimestamp\(\)/.test(patchHandler), false,
+    'kein roher Firestore-Sentinel mehr im v1-PATCH'
+  );
+});
+
+test('v1-Kommentare lesen/schreiben unter Postgres inklusive Screenshot-Attachments', () => {
+  const listHandler = v1Section
+    .split("app.get('/api/v1/suggestions/:suggestionId/comments'")[1]
+    .split("app.post('/api/v1/suggestions/:suggestionId/comments'")[0];
+  assert.ok(
+    listHandler.includes('repos.comments.listForSuggestion(req.params.suggestionId)'),
+    'Kommentarliste muss unter Postgres aus dem comments-Repo kommen'
+  );
+  assert.ok(
+    listHandler.includes("getTenantId(c) === req.apiAuth.tenantId"),
+    'auch der Postgres-Zweig muss auf den Key-Tenant filtern'
+  );
+  assert.ok(
+    listHandler.includes("attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, true)"),
+    'Screenshots liegen unter Postgres als attachments und brauchen Proxy-URLs'
+  );
+
+  const createHandler = v1Section.split("app.post('/api/v1/suggestions/:suggestionId/comments'")[1];
+  assert.ok(
+    createHandler.includes('await createCommentRecord(req.apiAuth.tenantId, comment, {'),
+    'Kommentar muss über createCommentRecord laufen (Backend-Weiche + Screenshots)'
+  );
+  assert.ok(
+    createHandler.includes("approvalStatus: 'approved'")
+      && createHandler.includes('approvedBy: actor'),
+    'API-Kommentare sind Admin-Kommentare, direkt freigegeben, mit dem Key als Urheber'
+  );
+});
+
+test('loadSuggestionForTenant liefert unter Postgres kein Firestore-Doc und scopet beide Backends', () => {
+  const helper = apiSource
+    .split('async function loadSuggestionForTenant(tenantId, suggestionId) {')[1]
+    .split('\nasync function resolveTenantSuggestionById')[0];
+  assert.ok(helper.length > 0, 'loadSuggestionForTenant muss existieren');
+  assert.ok(
+    helper.includes('repos.suggestions.findById(suggestionId)'),
+    'Lookup muss unter Postgres über das Repo laufen'
+  );
+  assert.ok(
+    helper.includes('suggestionDoc: null'),
+    'suggestionDoc muss unter Postgres explizit null sein — Schreibpfade dürfen sich nicht darauf verlassen'
+  );
+  // Cross-Tenant-Schutz in beiden Zweigen, gegen denselben übergebenen Tenant.
+  assert.equal(
+    (helper.match(/getTenantId\((?:suggestionData)\) !== tenantId/g) || []).length, 2,
+    'beide Backends müssen gegen den übergebenen Tenant prüfen'
+  );
+  // Beide Backends liefern die id mit — der v1-PATCH schreibt darüber.
+  assert.ok(
+    helper.includes('const suggestionData = { id: suggestionDoc.id, ...suggestionDoc.data() };'),
+    'auch der Firestore-Zweig muss die id mitliefern'
+  );
+});
+
 test('docs/api.md documents every v1 endpoint, scope and rate limit', () => {
   // Endpoints
   [
@@ -378,7 +570,7 @@ test('requireApiKey sperrt die Nutzung bei Nicht-Pro (bestehende Keys, Downgrade
     .split('function requireApiKey(')[1]
     ?.split('async function loadApiKeySuggestionById')[0] || '';
   assert.ok(middleware.length > 0, 'requireApiKey muss gefunden werden');
-  assert.ok(middleware.includes('requiresProUpgradeResolved(planTenant'),
+  assert.ok(middleware.includes('requiresProUpgradeResolved(tenant, { postgres: usePostgres() })'),
     'Usage-Gate läuft über den fail-open-Wrapper requiresProUpgradeResolved');
   assert.ok(/res\.status\(402\)/.test(middleware), 'gated Requests liefern 402');
 });
@@ -398,30 +590,6 @@ test('Tenant-Admin-UI sperrt die Key-Erstellung im Free-Plan', () => {
     'renderApiKeys erhält die Admin-only-Sichtbarkeit des Formulars'
   );
   assert.ok(tenantAdminHtml.includes('id="apiKeyProNotice"'), 'Pro-Hinweis-Element im Markup');
-});
-
-test('requireApiKey liest den Plan aus der Postgres-Plan-Quelle (nicht Firestore)', () => {
-  const middleware = apiSource
-    .split('function requireApiKey(')[1]
-    ?.split('async function loadApiKeySuggestionById')[0] || '';
-  assert.ok(middleware.length > 0, 'requireApiKey muss gefunden werden');
-  // Nur wenn Gating live ist, den maßgeblichen Tenant (mit `plan`) aus Postgres holen.
-  assert.ok(
-    middleware.includes('billing.proGatingActive({ postgres: usePostgres() })'),
-    'lädt den Plan-Tenant nur bei live Gating'
-  );
-  assert.ok(
-    middleware.includes('repos.tenants.findById(data.tenantId)'),
-    'Plan stammt aus der Postgres-Plan-Quelle, nicht aus dem Firestore-Tenant'
-  );
-  // Fail-open: kein `|| tenant`-Fallback auf den (plan-losen) Firestore-Tenant —
-  // der würde einen zahlenden Pro-Kunden bei einem Lookup-Miss aussperren.
-  assert.ok(
-    !/findById\(data\.tenantId\)\)\s*\|\|\s*tenant/.test(middleware),
-    'kein Firestore-Fallback für den Plan-Tenant (fail-closed-Regression)'
-  );
-  assert.ok(middleware.includes('requiresProUpgradeResolved(planTenant'),
-    'Gate prüft den Plan-Tenant über den fail-open-Wrapper');
 });
 
 test('docs/api.md und api-docs.html weisen API/MCP als Pro-Feature aus', () => {
@@ -493,25 +661,31 @@ test('Board-Anlage über v1 nutzt den geteilten Pfad inkl. Free-Plan-Gate', () =
 });
 
 test('nachgelagerte Pro-Gates lesen den Plan aus der Plan-Quelle, nicht aus Firestore', () => {
-  // Der Tenant hinter einem Schlüssel kommt aus Firestore und trägt kein `plan`.
-  // Würde createTenantBoard ihn direkt prüfen, sähe es einen zahlenden Pro-Kunden
-  // als Free und setzte ihm das Board-Limit vor die Nase.
+  // findActiveTenantById lädt unter Postgres aus der Plan-Quelle — der Tenant
+  // hinter dem Schlüssel trägt damit `plan` und taugt direkt für die Gates.
+  // Vorher kam er aus Firestore (ohne `plan`) und ein zahlender Pro-Kunde wäre
+  // vom Board-Limit ausgesperrt worden.
   const middleware = helperBody('requireApiKey');
   assert.ok(
-    middleware.includes('planTenant,'),
-    'requireApiKey muss den aufgelösten Plan-Tenant an die Handler weiterreichen'
-  );
-
-  // Fail-open ist Billing-Policy und lebt in lib/billing — hier nur die
-  // Verdrahtung. Die Wahrheitstabelle deckt tests/plan-gating.test.js ab.
-  const billing = require('../lib/billing');
-  assert.equal(
-    billing.requiresProUpgradeResolved(null, { postgres: true }), false,
-    'ein nicht auflösbarer Plan darf kein Gate auslösen'
+    middleware.includes('findActiveTenantById(data.tenantId)'),
+    'requireApiKey muss den Tenant backend-abhängig auflösen'
   );
   assert.ok(
-    helperBody('createTenantBoard').includes('billing.requiresProUpgradeResolved(planTenant,'),
-    'das Board-Gate muss den Plan-Tenant über die fail-open-Variante prüfen'
+    middleware.includes('billing.requiresProUpgradeResolved(tenant, { postgres: usePostgres() })'),
+    'das Gate muss auf genau diesen Tenant laufen'
+  );
+  assert.ok(
+    helperBody('findActiveTenantById').includes('repos.tenants.findById(tenantId)'),
+    'unter Postgres muss der Tenant aus der Plan-Quelle kommen'
+  );
+
+  // Fail-open ist Billing-Policy und lebt in lib/billing.
+  const billing = require('../lib/billing');
+  assert.equal(billing.requiresProUpgradeResolved(null, { postgres: true }), false,
+    'ein nicht auflösbarer Plan darf kein Gate auslösen');
+  assert.ok(
+    helperBody('createTenantBoard').includes('billing.requiresProUpgradeResolved(tenant,'),
+    'das Board-Gate muss dieselbe fail-open-Variante nutzen'
   );
 });
 
@@ -650,9 +824,10 @@ test('der Import-Modus greift nur bei explizitem import-Block', () => {
     { importData: null },
     'ohne import-Block darf sich eine normale Einreichung nicht ändern'
   );
-  // Ohne import-Block bleibt der bisherige Pfad: Generator + plain add().
+  // Ohne import-Block bleibt der bisherige Pfad: Generator + normaler Create
+  // über den backend-fähigen Helfer.
   assert.ok(body.includes('await generateTicketNumber(tenantApp.id, req.apiAuth.tenantId)'));
-  assert.ok(body.includes("await db.collection('suggestions').add(suggestion)"));
+  assert.ok(body.includes('await createSuggestionRecord(req.apiAuth.tenantId, suggestion)'));
 });
 
 test('Import setzt votes ohne votes-Dokumente und akzeptiert nur vergangene Daten', () => {
