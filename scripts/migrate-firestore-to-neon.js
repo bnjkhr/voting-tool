@@ -237,7 +237,11 @@ async function run() {
            environment=excluded.environment`,
         [s.id, tenantIdOf(s), s.appId, s.type, s.title || '', s.description || '', s.status || 'neu',
          s.priority || null, Array.isArray(s.labels) ? s.labels : [], s.tag || null, ts(s.tagUpdatedAt),
-         Number.isFinite(s.votes) ? s.votes : 0, s.approved === true, ts(s.approvedAt), s.releaseId || null,
+         Number.isFinite(s.votes) ? s.votes : 0, s.approved === true,
+         // approved ohne approvedAt gibt es im Alt-Bestand; migration 0008
+         // verlangt den Zeitstempel. createdAt ist die beste Annaeherung.
+         s.approved === true ? (ts(s.approvedAt) || ts(s.createdAt) || new Date()) : ts(s.approvedAt),
+         s.releaseId || null,
          s.ticketNumber || null, s.userFingerprint || null, s.notificationEnabled === true,
          s.notificationEmail || null, s.severity || null, s.stepsToReproduce || null, s.expectedBehavior || null,
          s.actualBehavior || null, s.environment ? JSON.stringify(s.environment) : null, ts(s.createdAt)]
