@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-const API_BASE = (process.env.VOTING_TOOL_API_BASE || 'https://votingtool.benkohler.de/api/v1').replace(/\/$/, '');
+const API_BASE = (process.env.VOTING_TOOL_API_BASE || 'https://roadlight.pro/api/v1').replace(/\/$/, '');
 const API_KEY = process.env.VOTING_TOOL_API_KEY;
 
 if (!API_KEY) {

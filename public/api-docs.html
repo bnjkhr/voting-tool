@@ -57,23 +57,41 @@
                 <tr><td><code>suggestions:status</code></td><td>Status, Priorit&auml;t und Labels &auml;ndern</td></tr>
                 <tr><td><code>comments:read</code></td><td>Kommentare lesen</td></tr>
                 <tr><td><code>comments:write</code></td><td>Admin-Kommentare schreiben (auto-freigegeben)</td></tr>
+                <tr><td><code>boards:write</code></td><td>Boards anlegen und umbenennen</td></tr>
+                <tr><td><code>releases:read</code></td><td>Releases lesen</td></tr>
+                <tr><td><code>releases:write</code></td><td>Releases anlegen, &auml;ndern, l&ouml;schen und Eintr&auml;ge zuordnen</td></tr>
             </tbody>
         </table>
-        <p>Fehlt ein erforderlicher Scope, gibt der Endpoint <code>403</code> zur&uuml;ck.</p>
+        <p>
+            Fehlt ein erforderlicher Scope, gibt der Endpoint <code>403</code> zur&uuml;ck. Bestehende
+            Schl&uuml;ssel bekommen durch neue Scopes nichts dazu &ndash; sie m&uuml;ssen an einem
+            Schl&uuml;ssel explizit gesetzt sein.
+        </p>
+        <p>
+            F&uuml;r einen kompletten Workspace-Aufbau per API (Board anlegen, Eintr&auml;ge importieren,
+            Releases nachbauen und zuordnen) braucht der Schl&uuml;ssel:
+            <code>boards:write</code>, <code>suggestions:read</code>, <code>suggestions:write</code>,
+            <code>suggestions:status</code>, <code>releases:read</code>, <code>releases:write</code>.
+        </p>
+        <p class="legal-note">
+            Den Workspace (Tenant) selbst legt weiterhin ein Mensch im UI an &ndash; daf&uuml;r gibt es
+            bewusst keinen v1-Endpunkt.
+        </p>
 
         <h2>Rate Limits</h2>
         <p>Pro Schl&uuml;ssel:</p>
         <ul>
             <li>Read-Endpoints (<code>GET</code>): 120 Requests/Minute</li>
-            <li>Eintr&auml;ge/Kommentare anlegen (<code>POST</code>): 30 Requests/Minute</li>
-            <li>Status &auml;ndern (<code>PATCH</code>): 60 Requests/Minute</li>
+            <li>Anlegen (<code>POST</code>): 30 Requests/Minute</li>
+            <li>&Auml;ndern (<code>PATCH</code> / <code>PUT</code>): 60 Requests/Minute</li>
+            <li>L&ouml;schen (<code>DELETE</code>): 30 Requests/Minute</li>
         </ul>
         <p>&Uuml;berschreitung &rarr; <code>429 Too Many Requests</code>.</p>
 
         <h2>Fehler-Format</h2>
         <pre><code>{ "error": "human-readable message" }</code></pre>
 
-        <h2>Endpoints</h2>
+        <h2>Endpoints: Eintr&auml;ge &amp; Kommentare</h2>
 
         <h3><code>GET /me</code></h3>
         <p>Sanity-Check f&uuml;r den Schl&uuml;ssel. Gibt Tenant- und Scope-Info zur&uuml;ck.</p>
@@ -158,6 +176,64 @@
   "createdAt": "2026-05-21T14:12:33.000Z"
 }</code></pre>
 
+        <h3>Import bestehender Eintr&auml;ge</h3>
+        <p>
+            Beim &Uuml;bertragen eines gewachsenen Boards vergibt der Server sonst Ticketnummer und Datum
+            selbst. Der optionale <code>import</code>-Block &uuml;bernimmt stattdessen die Werte aus der
+            Quelle. Er h&auml;ngt an <code>suggestions:write</code> und greift <strong>nur</strong>, wenn er
+            explizit mitgeschickt wird &ndash; normale Einreichungen &auml;ndern sich nicht.
+        </p>
+        <pre><code>{
+  "type": "feature",
+  "title": "Einkaufsliste teilen",
+  "description": "&hellip;",
+  "import": {
+    "ticketNumber": "FAM-041",
+    "votes": 2,
+    "createdAt": "2026-04-30T09:12:00.000Z"
+  }
+}</code></pre>
+        <table>
+            <thead>
+                <tr><th>Feld</th><th>Verhalten</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ticketNumber</code></td>
+                    <td>
+                        &Uuml;berschreibt den Generator. Muss zum Ticket-Prefix des Boards passen und im Board
+                        eindeutig sein (Kollision &rarr; <code>409</code>). Hebt den Board-Z&auml;hler an: nach
+                        einem Import von <code>FAM-140</code> bekommt der n&auml;chste regul&auml;r angelegte
+                        Eintrag <code>FAM-141</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>votes</code></td>
+                    <td>
+                        Setzt den Stimmen-Z&auml;hler (ganze Zahl &ge; 0). Es werden <strong>keine</strong>
+                        <code>votes</code>-Dokumente erzeugt, damit die Doppelabstimmungs-Sperre sauber bleibt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>createdAt</code></td>
+                    <td>
+                        &Uuml;berschreibt den Serverzeitstempel. Nur Vergangenheit; ung&uuml;ltig oder in der
+                        Zukunft &rarr; <code>400</code>.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <p>Alle Felder sind einzeln optional, mindestens eines muss gesetzt sein.</p>
+        <p class="legal-note">
+            <strong>Nicht importierbar:</strong> Notification-Adressen. Ein Import mit
+            <code>notificationEnabled: true</code> wird mit <code>400</code> abgelehnt &ndash; sonst schickt
+            ein sp&auml;terer Statuswechsel Mails an Leute, die von dem neuen Board nichts wissen.
+        </p>
+        <p>
+            Import-Schreibvorg&auml;nge landen im Audit-Log mit <code>action: "imported"</code> und
+            <code>actor: "api:&lt;keyId&gt;"</code> und sind so von regul&auml;ren Anlagen unterscheidbar.
+        </p>
+
         <h3><code>GET /suggestions/:id</code></h3>
         <p>
             Einzelnen Eintrag laden. Ben&ouml;tigt <code>suggestions:read</code>. 404, wenn Eintrag nicht zum Tenant
@@ -188,6 +264,125 @@
             (<code>data:image/png;base64,&hellip;</code>), max. 5 Bilder, je max. 300&nbsp;KB, gesamt max. 800&nbsp;KB.
         </p>
 
+        <h2>Boards</h2>
+
+        <h3><code>POST /apps</code></h3>
+        <p>
+            Board anlegen. Ben&ouml;tigt <code>boards:write</code>. Der Tenant kommt aus dem Schl&uuml;ssel
+            &ndash; es gibt keinen Tenant-Parameter.
+        </p>
+        <pre><code>{
+  "name": "FamilyManager",
+  "slug": "familymanager",
+  "ticketPrefix": "FAM",
+  "description": "W&uuml;nsche und Bugs aus der Familie"
+}</code></pre>
+        <ul>
+            <li><code>slug</code> optional &ndash; wird sonst aus <code>name</code> abgeleitet.</li>
+            <li><code>ticketPrefix</code> optional &ndash; wird sonst aus <code>name</code> abgeleitet (max. 5 Buchstaben).</li>
+            <li>Slug bereits im Workspace vergeben &rarr; <code>409</code>.</li>
+            <li>
+                Free-Plan: Es gilt dasselbe Board-Limit wie im UI. &Uuml;ber dem Limit &rarr;
+                <code>402</code> mit <code>code: "upgrade_required"</code> und <code>resource: "boards"</code>.
+            </li>
+        </ul>
+        <p>Response (<code>201</code>):</p>
+        <pre><code>{
+  "id": "app_xyz",
+  "slug": "familymanager",
+  "name": "FamilyManager",
+  "description": "W&uuml;nsche und Bugs aus der Familie",
+  "ticketPrefix": "FAM"
+}</code></pre>
+
+        <h3><code>PATCH /apps/:appSlug</code></h3>
+        <p>Board umbenennen bzw. Beschreibung &auml;ndern. Ben&ouml;tigt <code>boards:write</code>.</p>
+        <pre><code>{ "name": "Family Manager", "description": "Neuer Text" }</code></pre>
+        <p>
+            <code>slug</code> und <code>ticketPrefix</code> sind <strong>unver&auml;nderlich</strong> &ndash; am
+            Slug h&auml;ngen bestehende Key-Integrationen und &ouml;ffentliche Board-URLs, am Prefix die bereits
+            vergebenen Ticketnummern. Werden sie mitgeschickt, antwortet der Endpoint mit <code>400</code>.
+        </p>
+
+        <h2>Releases</h2>
+
+        <h3><code>GET /apps/:appSlug/releases</code></h3>
+        <p>
+            Releases eines Boards inklusive der zugeordneten Eintr&auml;ge (<code>items[]</code>, nur
+            freigegebene). Ben&ouml;tigt <code>releases:read</code>.
+        </p>
+        <p>
+            Query-Filter (optional): <code>status</code> &ndash; kommagetrennt, aus <code>geplant</code>,
+            <code>in Arbeit</code>, <code>ver&ouml;ffentlicht</code>.
+        </p>
+        <pre><code>curl -H "Authorization: Bearer vt_live_&hellip;" \
+  "https://roadlight.pro/api/v1/apps/familymanager/releases?status=geplant"</code></pre>
+        <p>Response:</p>
+        <pre><code>[
+  {
+    "id": "rel_abc",
+    "appId": "app_xyz",
+    "version": "2.3.0",
+    "title": "Kalender-Sync",
+    "description": "&hellip;",
+    "status": "geplant",
+    "releaseDate": "2026-10-01T00:00:00.000Z",
+    "items": [
+      {
+        "id": "sug_1",
+        "ticketNumber": "FAM-041",
+        "title": "Einkaufsliste teilen",
+        "type": "feature",
+        "status": "wird umgesetzt"
+      }
+    ]
+  }
+]</code></pre>
+
+        <h3><code>POST /apps/:appSlug/releases</code></h3>
+        <p>
+            Release anlegen. Ben&ouml;tigt <code>releases:write</code>. Das Board kommt aus dem Pfad &ndash;
+            eine <code>appId</code> im Body wird ignoriert.
+        </p>
+        <pre><code>{
+  "version": "2.3.0",
+  "title": "Kalender-Sync",
+  "description": "Was in diesem Release steckt",
+  "status": "geplant",
+  "releaseDate": "2026-10-01"
+}</code></pre>
+        <ul>
+            <li><code>status</code> aus <code>geplant</code>, <code>in Arbeit</code>, <code>ver&ouml;ffentlicht</code>; Default <code>geplant</code>.</li>
+            <li><code>releaseDate</code> optional; ung&uuml;ltiges Datum &rarr; <code>400</code>.</li>
+            <li>Bei <code>ver&ouml;ffentlicht</code> wird <code>publishedAt</code> automatisch gesetzt.</li>
+        </ul>
+
+        <h3><code>PATCH /releases/:releaseId</code></h3>
+        <p>
+            Teilfelder eines Releases &auml;ndern (<code>version</code>, <code>title</code>,
+            <code>description</code>, <code>status</code>, <code>releaseDate</code>). Ben&ouml;tigt
+            <code>releases:write</code>. Ein Release aus einem fremden Workspace ist <code>404</code>.
+        </p>
+        <pre><code>{ "status": "ver&ouml;ffentlicht", "releaseDate": null }</code></pre>
+        <p>
+            <code>"releaseDate": null</code> <strong>l&ouml;scht</strong> das Datum (nicht: ignoriert es).
+            Response ist das aktualisierte Release.
+        </p>
+
+        <h3><code>DELETE /releases/:releaseId</code></h3>
+        <p>
+            Release l&ouml;schen. Ben&ouml;tigt <code>releases:write</code>. Zugeordnete Eintr&auml;ge werden
+            nur entkoppelt, nicht gel&ouml;scht.
+        </p>
+        <pre><code>{ "success": true, "message": "Release gel&ouml;scht", "unlinkedSuggestions": 12 }</code></pre>
+
+        <h3><code>PUT /suggestions/:id/release</code></h3>
+        <p>
+            Eintrag einem Release zuordnen. Ben&ouml;tigt <code>releases:write</code>. <code>null</code> hebt
+            die Zuordnung auf.
+        </p>
+        <pre><code>{ "releaseId": "rel_abc" }</code></pre>
+
         <h2>Konstanten</h2>
         <p><strong>Suggestion-Typen:</strong> <code>feature</code>, <code>bug</code>, <code>ticket</code></p>
         <p><strong>Status (Feature):</strong> <code>neu</code>, <code>wird gepr&uuml;ft</code>, <code>wird umgesetzt</code>, <code>im Test</code>, <code>ist umgesetzt</code>, <code>wird nicht umgesetzt</code></p>
@@ -197,8 +392,11 @@
 
         <h2>Audit</h2>
         <p>
-            Jeder Write-Call (POST/PATCH/DELETE) wird mit <code>actor: "api:&lt;keyId&gt;"</code> protokolliert. Im
-            Tenant-Admin-UI sind die Aktionen in der Eintrags-Historie sichtbar.
+            Jeder eintragsbezogene Write-Call (POST/PATCH/PUT) wird mit
+            <code>actor: "api:&lt;keyId&gt;"</code> protokolliert; Importe bekommen dabei
+            <code>action: "imported"</code> statt <code>"created"</code>. Im Tenant-Admin-UI sind die
+            Aktionen in der Eintrags-Historie sichtbar. Board- und Release-Anlagen h&auml;ngen an keiner
+            Ticket-ID und erscheinen daher nicht in der Eintrags-Historie.
         </p>
 
         <h2>Beispiel: Eintrag aus einem Bash-Script anlegen</h2>
@@ -221,7 +419,7 @@ curl -fsS -X POST \
   }' \
   https://roadlight.pro/api/v1/apps/customer-feedback/suggestions</code></pre>
 
-        <p class="legal-meta">Stand: Juli 2026</p>
+        <p class="legal-meta">Stand: September 2026</p>
     </main>
 </body>
 </html>

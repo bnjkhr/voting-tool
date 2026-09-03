@@ -31,7 +31,7 @@ API-Schlüssel im Tenant-Admin-UI erstellen (`/tenant-admin.html?tenant=<dein-sl
       "args": ["/Users/benkohler/Projekte/voting-tool/mcp/server.js"],
       "env": {
         "VOTING_TOOL_API_KEY": "vt_live_…",
-        "VOTING_TOOL_API_BASE": "https://votingtool.benkohler.de/api/v1"
+        "VOTING_TOOL_API_BASE": "https://roadlight.pro/api/v1"
       }
     }
   }

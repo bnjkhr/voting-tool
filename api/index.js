@@ -13,6 +13,7 @@ const {
   validateCommentScreenshots,
 } = require('./comment-utils');
 const { compareAdminSuggestions } = require('./admin-suggestion-sort');
+const suggestionImport = require('../lib/suggestion-import');
 const { queryCollectionInChunks } = require('./firestore-chunks');
 const {
   LEGACY_PUBLIC_HIDDEN_APP_IDS,
@@ -737,11 +738,14 @@ async function generateTicketNumber(appId, tenantId = LEGACY_TENANT_ID) {
       nextNumber = counterDoc.data().nextNumber || 1;
       resolvedTenantId = getTenantId({ tenantId: counterDoc.data().tenantId || tenantId });
     } else {
-      // Fallback: derive prefix from app name
+      // Fallback ohne Counter-Dokument: erst das explizite Prefix des Boards,
+      // sonst aus dem Namen ableiten. Dieselbe Regel wie beim Import
+      // (createSuggestionWithImportedTicketNumber) — sonst entscheidet je nach
+      // Reihenfolge der erste Schreiber, welches Prefix ein Board bekommt.
       const appDoc = await transaction.get(db.collection('apps').doc(appId));
       const appData = appDoc.exists ? appDoc.data() : {};
       const appName = appData.name || 'APP';
-      prefix = appName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'APP';
+      prefix = buildTicketPrefix(appData.ticketPrefix, appName);
       nextNumber = 1;
       resolvedTenantId = getTenantId(appData);
     }
@@ -752,7 +756,7 @@ async function generateTicketNumber(appId, tenantId = LEGACY_TENANT_ID) {
       tenantId: resolvedTenantId,
     }, { merge: true });
 
-    return `${prefix}-${String(nextNumber).padStart(3, '0')}`;
+    return suggestionImport.formatTicketNumber(prefix, nextNumber);
   });
 
   return result;
@@ -3589,95 +3593,104 @@ app.get('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(), async (req
   }
 });
 
-// Tenant Admin: create a board/app in one tenant
-app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
-  try {
-    const tenant = await resolveAdminTenantFromParam(req, res);
-    if (!tenant) return;
+// Board-Anlage — geteilt von der Tenant-Admin-Konsole und der v1-API. Beide
+// Pfade müssen dieselbe Slug-Kollisionsprüfung, dasselbe Free-Plan-Board-Gate
+// und dieselbe Zähler-Anlage bekommen; ein zweiter, nachgebauter Pfad wäre
+// genau die Stelle, an der das Board-Limit später still auseinanderläuft.
+// `planTenant` ist der Tenant aus der Plan-Quelle. Bei der Admin-Konsole ist das
+// derselbe Tenant (unter Postgres trägt er `plan`); hinter einem API-Schlüssel
+// stammt der Tenant aus Firestore und trägt kein `plan`, deshalb reicht die
+// Middleware den aufgelösten Plan-Tenant separat herein. requiresProUpgradeResolved
+// kapselt dabei die Fail-open-Regel: ein nicht auflösbarer Plan sperrt nicht.
+async function createTenantBoard(tenant, body = {}, { planTenant = tenant } = {}) {
+  const boardName = validateInput(body.boardName || body.name, 120);
+  if (!boardName) {
+    return { status: 400, body: { error: 'Board name is required' } };
+  }
 
-    const boardName = validateInput(req.body?.boardName || req.body?.name, 120);
-    if (!boardName) {
-      return res.status(400).json({ error: 'Board name is required' });
+  const requestedSlug = body.boardSlug || body.slug;
+  const boardSlug = requestedSlug
+    ? parseSlugParam(String(requestedSlug))
+    : buildAppSlug(boardName);
+  if (!boardSlug) {
+    return { status: 400, body: { error: 'Invalid board slug' } };
+  }
+
+  const ticketPrefix = buildTicketPrefix(body.boardTicketPrefix || body.ticketPrefix, boardName);
+  const description = validateInput(body.description, 500) || `Feedback Board für ${tenant.displayName || tenant.name || tenant.slug || tenant.id}`;
+
+  if (usePostgres()) {
+    // Slug-Konflikt innerhalb des Tenants.
+    const existing = await repos.apps.findBySlug(tenant.id, boardSlug);
+    if (existing) {
+      return { status: 409, body: { error: 'Tenant app slug already exists' } };
     }
-
-    const requestedSlug = req.body?.boardSlug || req.body?.slug;
-    const boardSlug = requestedSlug
-      ? parseSlugParam(String(requestedSlug))
-      : buildAppSlug(boardName);
-    if (!boardSlug) {
-      return res.status(400).json({ error: 'Invalid board slug' });
-    }
-
-    const ticketPrefix = buildTicketPrefix(req.body?.boardTicketPrefix || req.body?.ticketPrefix, boardName);
-    const description = validateInput(req.body?.description, 500) || `Feedback Board für ${tenant.displayName || tenant.name || tenant.slug || tenant.id}`;
-
-    if (usePostgres()) {
-      // Slug-Konflikt innerhalb des Tenants.
-      const existing = await repos.apps.findBySlug(tenant.id, boardSlug);
-      if (existing) {
-        return res.status(409).json({ error: 'Tenant app slug already exists' });
-      }
-      // Free-Plan: max. 1 Board. Gate greift nur, wenn Premium live ist
-      // (billing.requiresProUpgrade respektiert BILLING_ENFORCED) und der Plan
-      // nicht Pro ist. Bestehende Boards bleiben immer erhalten — nur die
-      // Neu-Anlage über dem Limit wird blockiert (kulanter Downgrade).
-      if (billing.requiresProUpgrade(tenant, { postgres: usePostgres() })) {
-        const boards = await repos.apps.listByTenant(tenant.id);
-        if (boards.length >= planLimits.FREE_MAX_BOARDS) {
-          return res.status(402).json({
+    // Free-Plan: max. 1 Board. Gate greift nur, wenn Premium live ist
+    // (billing.requiresProUpgrade respektiert BILLING_ENFORCED) und der Plan
+    // nicht Pro ist. Bestehende Boards bleiben immer erhalten — nur die
+    // Neu-Anlage über dem Limit wird blockiert (kulanter Downgrade).
+    if (billing.requiresProUpgradeResolved(planTenant, { postgres: usePostgres() })) {
+      const boards = await repos.apps.listByTenant(tenant.id);
+      if (boards.length >= planLimits.FREE_MAX_BOARDS) {
+        return {
+          status: 402,
+          body: {
             error: `Der Free-Plan erlaubt nur ${planLimits.FREE_MAX_BOARDS} Board. Upgrade auf Pro für unbegrenzte Boards.`,
             code: 'upgrade_required',
             resource: 'boards',
             limit: planLimits.FREE_MAX_BOARDS,
-          });
-        }
+          },
+        };
       }
-      const created = await repos.apps.create({
-        id: crypto.randomUUID(),
-        tenantId: tenant.id,
-        name: boardName,
-        description,
-        slug: boardSlug,
-        ticketPrefix,
-        labels: [],
-      });
-      return res.status(201).json(created);
     }
-
-    // Firestore (Legacy) — unverändert.
-    const slugSnapshot = await db.collection('apps')
-      .where('slug', '==', boardSlug)
-      .get();
-    const hasTenantSlugConflict = slugSnapshot.docs
-      .some(doc => getTenantId(doc.data() || {}) === tenant.id);
-    if (hasTenantSlugConflict) {
-      return res.status(409).json({ error: 'Tenant app slug already exists' });
-    }
-
-    const timestamp = admin.firestore.FieldValue.serverTimestamp();
-    const appRef = db.collection('apps').doc();
-    const appData = {
+    const created = await repos.apps.create({
+      id: crypto.randomUUID(),
       tenantId: tenant.id,
       name: boardName,
       description,
       slug: boardSlug,
       ticketPrefix,
       labels: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    const batch = db.batch();
-    batch.set(appRef, appData);
-    batch.set(db.collection('counters').doc(appRef.id), {
-      tenantId: tenant.id,
-      prefix: ticketPrefix,
-      nextNumber: 1,
-      updatedAt: timestamp,
     });
-    await batch.commit();
+    return { status: 201, body: created };
+  }
 
-    res.status(201).json({
+  // Firestore (Legacy) — unverändert.
+  const slugSnapshot = await db.collection('apps')
+    .where('slug', '==', boardSlug)
+    .get();
+  const hasTenantSlugConflict = slugSnapshot.docs
+    .some(doc => getTenantId(doc.data() || {}) === tenant.id);
+  if (hasTenantSlugConflict) {
+    return { status: 409, body: { error: 'Tenant app slug already exists' } };
+  }
+
+  const timestamp = admin.firestore.FieldValue.serverTimestamp();
+  const appRef = db.collection('apps').doc();
+  const appData = {
+    tenantId: tenant.id,
+    name: boardName,
+    description,
+    slug: boardSlug,
+    ticketPrefix,
+    labels: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  const batch = db.batch();
+  batch.set(appRef, appData);
+  batch.set(db.collection('counters').doc(appRef.id), {
+    tenantId: tenant.id,
+    prefix: ticketPrefix,
+    nextNumber: 1,
+    updatedAt: timestamp,
+  });
+  await batch.commit();
+
+  return {
+    status: 201,
+    body: {
       id: appRef.id,
       tenantId: tenant.id,
       name: boardName,
@@ -3685,7 +3698,67 @@ app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'a
       slug: boardSlug,
       ticketPrefix,
       labels: [],
-    });
+    },
+  };
+}
+
+// Board umbenennen/Beschreibung ändern. Slug und Ticket-Prefix bleiben
+// unveränderlich: am Slug hängen bestehende Key-Integrationen und öffentliche
+// Board-URLs, am Prefix die bereits vergebenen Ticketnummern.
+// Der Tenant-Scope steckt bereits im aufgelösten `tenantApp` (loadApiKeyAppBySlug
+// bzw. die Admin-Auflösung) — hier wird nur noch das Board selbst geschrieben.
+async function updateTenantBoard(tenantApp, body = {}) {
+  const has = key => Object.prototype.hasOwnProperty.call(body, key);
+  const updates = {};
+
+  if (has('slug') || has('ticketPrefix')) {
+    return {
+      status: 400,
+      body: { error: 'slug und ticketPrefix sind unveränderlich' },
+    };
+  }
+
+  if (has('name')) {
+    const name = validateInput(body.name, 120);
+    if (!name) return { status: 400, body: { error: 'Invalid board name' } };
+    updates.name = name;
+  }
+
+  if (has('description')) {
+    if (typeof body.description !== 'string') {
+      return { status: 400, body: { error: 'Invalid board description' } };
+    }
+    // Leerstring löscht die Beschreibung; validateInput liefert dafür null.
+    const description = body.description.trim() === '' ? '' : validateInput(body.description, 500);
+    if (description === null) return { status: 400, body: { error: 'Invalid board description' } };
+    updates.description = description;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { status: 400, body: { error: 'No supported fields provided (name, description)' } };
+  }
+
+  if (usePostgres()) {
+    const updated = await repos.apps.update(tenantApp.id, updates);
+    return { status: 200, body: updated };
+  }
+
+  await db.collection('apps').doc(tenantApp.id).update({
+    ...updates,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { status: 200, body: { ...tenantApp, ...updates } };
+}
+
+// Tenant Admin: create a board/app in one tenant
+app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { status, body } = await createTenantBoard(tenant, req.body || {});
+    res.status(status).json(body);
   } catch (error) {
     console.error('Error creating tenant board:', error);
     res.status(500).json({ error: 'Failed to create tenant board' });
@@ -4743,70 +4816,89 @@ app.get('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(), async 
   }
 });
 
-app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 20), async (req, res) => {
-  try {
-    const tenant = await resolveAdminTenantFromParam(req, res);
-    if (!tenant) return;
+// ---------------------------------------------------------------------------
+// Release-Schreibpfade — geteilt von der Tenant-Admin-Konsole und der v1-API.
+// Beide Oberflächen müssen identisch validieren, denselben Tenant-Scope
+// erzwingen und beide Backends (Firestore/Postgres) gleich behandeln.
+// ---------------------------------------------------------------------------
 
-    const { appId, version, title, description, status, releaseDate } = req.body || {};
+// Lädt ein Release nur, wenn es zum übergebenen Tenant gehört. Ein fremdes
+// Release ist damit nicht unterscheidbar von einem nicht existierenden (404).
+async function findTenantRelease(tenant, releaseId) {
+  if (usePostgres()) {
+    const rel = await repos.releases.findById(releaseId);
+    return rel && rel.tenantId === tenant.id ? rel : null;
+  }
+  const releaseDoc = await db.collection('releases').doc(releaseId).get();
+  if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
+    return null;
+  }
+  return { id: releaseDoc.id, ...releaseDoc.data() };
+}
 
-    if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) {
-      return res.status(400).json({ error: 'Ungültige App-ID' });
+async function createTenantRelease(tenant, body = {}) {
+  const { appId, version, title, description, status, releaseDate } = body;
+
+  if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) {
+    return { status: 400, body: { error: 'Ungültige App-ID' } };
+  }
+
+  let appOk;
+  if (usePostgres()) {
+    const appRow = await repos.apps.findById(appId);
+    appOk = appRow && appRow.tenantId === tenant.id;
+  } else {
+    const appDoc = await db.collection('apps').doc(appId).get();
+    appOk = appDoc.exists && getTenantId(appDoc.data() || {}) === tenant.id;
+  }
+  if (!appOk) {
+    return { status: 404, body: { error: 'App nicht gefunden' } };
+  }
+
+  const validVersion = validateInput(version, 50);
+  if (!validVersion) {
+    return { status: 400, body: { error: 'Version ist erforderlich (max. 50 Zeichen)' } };
+  }
+
+  const parsedReleaseDate = parseReleaseDate(releaseDate);
+  if (parsedReleaseDate === INVALID_RELEASE_DATE) {
+    return { status: 400, body: { error: 'Ungültiges Release-Datum' } };
+  }
+
+  const validStatus = RELEASE_STATUSES.includes(status) ? status : 'geplant';
+  const release = {
+    tenantId: tenant.id,
+    appId,
+    version: validVersion,
+    title: validateInput(title, 200) || '',
+    description: validateInput(description, 5000) || '',
+    status: validStatus,
+    releaseDate: parsedReleaseDate,
+    publishedAt: validStatus === 'veröffentlicht' ? admin.firestore.FieldValue.serverTimestamp() : null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  let newReleaseId;
+  if (usePostgres()) {
+    newReleaseId = crypto.randomUUID();
+    await repos.releases.create({
+      id: newReleaseId, tenantId: tenant.id, appId, version: validVersion,
+      title: release.title, description: release.description,
+      // parsedReleaseDate ist ein Firestore-Timestamp; für timestamptz zu Date.
+      status: validStatus, releaseDate: parsedReleaseDate ? parsedReleaseDate.toDate() : null,
+    });
+    if (validStatus === 'veröffentlicht') {
+      await repos.releases.update(newReleaseId, { publishedAt: new Date() });
     }
+  } else {
+    const docRef = await db.collection('releases').add(release);
+    newReleaseId = docRef.id;
+  }
 
-    let appOk;
-    if (usePostgres()) {
-      const appRow = await repos.apps.findById(appId);
-      appOk = appRow && appRow.tenantId === tenant.id;
-    } else {
-      const appDoc = await db.collection('apps').doc(appId).get();
-      appOk = appDoc.exists && getTenantId(appDoc.data() || {}) === tenant.id;
-    }
-    if (!appOk) {
-      return res.status(404).json({ error: 'App nicht gefunden' });
-    }
-
-    const validVersion = validateInput(version, 50);
-    if (!validVersion) {
-      return res.status(400).json({ error: 'Version ist erforderlich (max. 50 Zeichen)' });
-    }
-
-    const parsedReleaseDate = parseReleaseDate(releaseDate);
-    if (parsedReleaseDate === INVALID_RELEASE_DATE) {
-      return res.status(400).json({ error: 'Ungültiges Release-Datum' });
-    }
-
-    const validStatus = RELEASE_STATUSES.includes(status) ? status : 'geplant';
-    const release = {
-      tenantId: tenant.id,
-      appId,
-      version: validVersion,
-      title: validateInput(title, 200) || '',
-      description: validateInput(description, 5000) || '',
-      status: validStatus,
-      releaseDate: parsedReleaseDate,
-      publishedAt: validStatus === 'veröffentlicht' ? admin.firestore.FieldValue.serverTimestamp() : null,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    let newReleaseId;
-    if (usePostgres()) {
-      newReleaseId = crypto.randomUUID();
-      await repos.releases.create({
-        id: newReleaseId, tenantId: tenant.id, appId, version: validVersion,
-        title: release.title, description: release.description,
-        // parsedReleaseDate ist ein Firestore-Timestamp; für timestamptz zu Date.
-        status: validStatus, releaseDate: parsedReleaseDate ? parsedReleaseDate.toDate() : null,
-      });
-      if (validStatus === 'veröffentlicht') {
-        await repos.releases.update(newReleaseId, { publishedAt: new Date() });
-      }
-    } else {
-      const docRef = await db.collection('releases').add(release);
-      newReleaseId = docRef.id;
-    }
-    res.status(201).json({
+  return {
+    status: 201,
+    body: {
       id: newReleaseId,
       ...release,
       // serverTimestamp() is a write-only sentinel — resolve the timestamps for
@@ -4814,7 +4906,178 @@ app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner'
       publishedAt: validStatus === 'veröffentlicht' ? new Date() : null,
       createdAt: new Date(),
       updatedAt: new Date(),
-    });
+    },
+  };
+}
+
+async function updateTenantRelease(tenant, releaseId, body = {}) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+    return { status: 400, body: { error: 'Invalid release ID format' } };
+  }
+
+  const releaseData = await findTenantRelease(tenant, releaseId);
+  if (!releaseData) {
+    return { status: 404, body: { error: 'Release nicht gefunden' } };
+  }
+
+  const { version, title, description, status, releaseDate } = body;
+  const updateData = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+
+  if (version !== undefined) {
+    const validVersion = validateInput(version, 50);
+    if (!validVersion) {
+      return { status: 400, body: { error: 'Ungültige Version' } };
+    }
+    updateData.version = validVersion;
+  }
+
+  if (title !== undefined) {
+    updateData.title = validateInput(title, 200) || '';
+  }
+
+  if (description !== undefined) {
+    updateData.description = validateInput(description, 5000) || '';
+  }
+
+  if (status !== undefined) {
+    if (!RELEASE_STATUSES.includes(status)) {
+      return { status: 400, body: { error: `Ungültiger Status. Erlaubt: ${RELEASE_STATUSES.join(', ')}` } };
+    }
+    updateData.status = status;
+
+    const previousStatus = releaseData.status;
+    if (status === 'veröffentlicht' && previousStatus !== 'veröffentlicht') {
+      updateData.publishedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+  }
+
+  if (releaseDate !== undefined) {
+    const parsedReleaseDate = parseReleaseDate(releaseDate);
+    if (parsedReleaseDate === INVALID_RELEASE_DATE) {
+      return { status: 400, body: { error: 'Ungültiges Release-Datum' } };
+    }
+    // null löscht das Datum bewusst — nicht als "nicht gesetzt" behandeln.
+    updateData.releaseDate = parsedReleaseDate;
+  }
+
+  if (usePostgres()) {
+    const pgUpdate = { ...updateData };
+    delete pgUpdate.updatedAt;
+    if (pgUpdate.publishedAt) pgUpdate.publishedAt = new Date();
+    // parseReleaseDate liefert einen Firestore-Timestamp; für timestamptz in
+    // eine JS-Date wandeln (null = Datum entfernen bleibt erhalten).
+    if (pgUpdate.releaseDate) pgUpdate.releaseDate = pgUpdate.releaseDate.toDate();
+    await repos.releases.update(releaseId, pgUpdate);
+  } else {
+    await db.collection('releases').doc(releaseId).update(updateData);
+  }
+
+  return {
+    status: 200,
+    body: { success: true, message: 'Release erfolgreich aktualisiert' },
+    // Das aktualisierte Release gleich mitgeben: die v1-API braucht es als
+    // Antwort und müsste es sonst direkt nach dem Schreiben erneut lesen. Die
+    // serverTimestamp()-Sentinels sind write-only und werden hier aufgelöst.
+    release: {
+      ...releaseData,
+      ...updateData,
+      updatedAt: new Date(),
+      ...(updateData.publishedAt ? { publishedAt: new Date() } : {}),
+    },
+  };
+}
+
+async function deleteTenantRelease(tenant, releaseId) {
+  if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+    return { status: 400, body: { error: 'Invalid release ID format' } };
+  }
+
+  const release = await findTenantRelease(tenant, releaseId);
+  if (!release) {
+    return { status: 404, body: { error: 'Release nicht gefunden' } };
+  }
+
+  let unlinkedCount;
+  if (usePostgres()) {
+    const counts = await repos.suggestions.countByReleaseIds([releaseId], tenant.id);
+    unlinkedCount = counts[releaseId] || 0;
+    // ON DELETE SET NULL entkoppelt die verknüpften Suggestions automatisch.
+    await repos.releases.remove(releaseId);
+  } else {
+    const linkedSuggestions = await db.collection('suggestions')
+      .where('releaseId', '==', releaseId)
+      .get();
+
+    const scopedSuggestions = linkedSuggestions.docs
+      .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+
+    // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
+    // one batch — a release on a large tenant can have more linked entries than
+    // that. The release itself is deleted last; the operation is idempotent, so
+    // a retry after a partial failure simply finishes the remaining unlinks.
+    for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
+      const batch = db.batch();
+      scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
+        batch.update(doc.ref, { releaseId: null });
+      });
+      await batch.commit();
+    }
+    await db.collection('releases').doc(releaseId).delete();
+    unlinkedCount = scopedSuggestions.length;
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Release gelöscht',
+      unlinkedSuggestions: unlinkedCount,
+    },
+  };
+}
+
+// Verknüpft einen bereits tenant-geprüften Eintrag mit einem Release (oder hebt
+// die Zuordnung auf). `releaseId: null` = Zuordnung entfernen.
+async function assignSuggestionRelease(tenant, suggestionData, releaseId, actor = 'admin') {
+  const suggestionId = suggestionData.id;
+
+  if (releaseId) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
+      return { status: 400, body: { error: 'Invalid release ID format' } };
+    }
+    if (!await findTenantRelease(tenant, releaseId)) {
+      return { status: 404, body: { error: 'Release nicht gefunden' } };
+    }
+  }
+
+  const previousReleaseId = suggestionData.releaseId || null;
+  if (usePostgres()) {
+    await repos.suggestions.update(suggestionId, { releaseId: releaseId || null });
+  } else {
+    await db.collection('suggestions').doc(suggestionId).update({ releaseId: releaseId || null });
+  }
+
+  await logActivity(suggestionId, 'release_changed', {
+    oldValue: previousReleaseId,
+    newValue: releaseId || null,
+    detail: releaseId ? 'Einem Release zugeordnet' : 'Release-Zuordnung entfernt',
+    actor,
+    tenantId: tenant.id,
+  });
+
+  return {
+    status: 200,
+    body: { success: true, message: releaseId ? 'Release zugeordnet' : 'Release-Zuordnung entfernt' },
+  };
+}
+
+app.post('/api/admin/tenants/:tenantSlug/releases', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 20), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { status, body } = await createTenantRelease(tenant, req.body || {});
+    res.status(status).json(body);
   } catch (error) {
     console.error('Error creating tenant release:', error);
     res.status(500).json({ error: 'Failed to create release' });
@@ -4826,76 +5089,8 @@ app.put('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAcces
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
 
-    const { releaseId } = req.params;
-    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
-      return res.status(400).json({ error: 'Invalid release ID format' });
-    }
-
-    let releaseData;
-    if (usePostgres()) {
-      releaseData = await repos.releases.findById(releaseId);
-      if (!releaseData || releaseData.tenantId !== tenant.id) {
-        return res.status(404).json({ error: 'Release nicht gefunden' });
-      }
-    } else {
-      const releaseDoc = await db.collection('releases').doc(releaseId).get();
-      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
-        return res.status(404).json({ error: 'Release nicht gefunden' });
-      }
-      releaseData = releaseDoc.data();
-    }
-
-    const { version, title, description, status, releaseDate } = req.body || {};
-    const updateData = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-
-    if (version !== undefined) {
-      const validVersion = validateInput(version, 50);
-      if (!validVersion) {
-        return res.status(400).json({ error: 'Ungültige Version' });
-      }
-      updateData.version = validVersion;
-    }
-
-    if (title !== undefined) {
-      updateData.title = validateInput(title, 200) || '';
-    }
-
-    if (description !== undefined) {
-      updateData.description = validateInput(description, 5000) || '';
-    }
-
-    if (status !== undefined) {
-      if (!RELEASE_STATUSES.includes(status)) {
-        return res.status(400).json({ error: `Ungültiger Status. Erlaubt: ${RELEASE_STATUSES.join(', ')}` });
-      }
-      updateData.status = status;
-
-      const previousStatus = releaseData.status;
-      if (status === 'veröffentlicht' && previousStatus !== 'veröffentlicht') {
-        updateData.publishedAt = admin.firestore.FieldValue.serverTimestamp();
-      }
-    }
-
-    if (releaseDate !== undefined) {
-      const parsedReleaseDate = parseReleaseDate(releaseDate);
-      if (parsedReleaseDate === INVALID_RELEASE_DATE) {
-        return res.status(400).json({ error: 'Ungültiges Release-Datum' });
-      }
-      updateData.releaseDate = parsedReleaseDate;
-    }
-
-    if (usePostgres()) {
-      const pgUpdate = { ...updateData };
-      delete pgUpdate.updatedAt;
-      if (pgUpdate.publishedAt) pgUpdate.publishedAt = new Date();
-      // parseReleaseDate liefert einen Firestore-Timestamp; für timestamptz in
-      // eine JS-Date wandeln (null = Datum entfernen bleibt erhalten).
-      if (pgUpdate.releaseDate) pgUpdate.releaseDate = pgUpdate.releaseDate.toDate();
-      await repos.releases.update(releaseId, pgUpdate);
-    } else {
-      await db.collection('releases').doc(releaseId).update(updateData);
-    }
-    res.json({ success: true, message: 'Release erfolgreich aktualisiert' });
+    const { status, body } = await updateTenantRelease(tenant, req.params.releaseId, req.body || {});
+    res.status(status).json(body);
   } catch (error) {
     console.error('Error updating tenant release:', error);
     res.status(500).json({ error: 'Failed to update release' });
@@ -4907,54 +5102,8 @@ app.delete('/api/admin/tenants/:tenantSlug/releases/:releaseId', requireTenantAc
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
 
-    const { releaseId } = req.params;
-    if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
-      return res.status(400).json({ error: 'Invalid release ID format' });
-    }
-
-    let unlinkedCount;
-    if (usePostgres()) {
-      const rel = await repos.releases.findById(releaseId);
-      if (!rel || rel.tenantId !== tenant.id) {
-        return res.status(404).json({ error: 'Release nicht gefunden' });
-      }
-      const counts = await repos.suggestions.countByReleaseIds([releaseId], tenant.id);
-      unlinkedCount = counts[releaseId] || 0;
-      // ON DELETE SET NULL entkoppelt die verknüpften Suggestions automatisch.
-      await repos.releases.remove(releaseId);
-    } else {
-      const releaseDoc = await db.collection('releases').doc(releaseId).get();
-      if (!releaseDoc.exists || getTenantId(releaseDoc.data() || {}) !== tenant.id) {
-        return res.status(404).json({ error: 'Release nicht gefunden' });
-      }
-
-      const linkedSuggestions = await db.collection('suggestions')
-        .where('releaseId', '==', releaseId)
-        .get();
-
-      const scopedSuggestions = linkedSuggestions.docs
-        .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
-
-      // A Firestore batch is capped at 500 writes, so unlink in chunks instead of
-      // one batch — a release on a large tenant can have more linked entries than
-      // that. The release itself is deleted last; the operation is idempotent, so
-      // a retry after a partial failure simply finishes the remaining unlinks.
-      for (let i = 0; i < scopedSuggestions.length; i += RELEASE_UNLINK_BATCH_LIMIT) {
-        const batch = db.batch();
-        scopedSuggestions.slice(i, i + RELEASE_UNLINK_BATCH_LIMIT).forEach(doc => {
-          batch.update(doc.ref, { releaseId: null });
-        });
-        await batch.commit();
-      }
-      await db.collection('releases').doc(releaseId).delete();
-      unlinkedCount = scopedSuggestions.length;
-    }
-
-    res.json({
-      success: true,
-      message: 'Release gelöscht',
-      unlinkedSuggestions: unlinkedCount,
-    });
+    const { status, body } = await deleteTenantRelease(tenant, req.params.releaseId);
+    res.status(status).json(body);
   } catch (error) {
     console.error('Error deleting tenant release:', error);
     res.status(500).json({ error: 'Failed to delete release' });
@@ -4968,7 +5117,6 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release', requ
 
     const tenantSlug = parseSlugParam(req.params.tenantSlug);
     const { suggestionId } = req.params;
-    const { releaseId } = req.body || {};
     if (!tenantSlug || !/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
       return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
     }
@@ -4978,38 +5126,12 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release', requ
       return res.status(errorStatus).json({ error });
     }
 
-    if (releaseId) {
-      if (!/^[a-zA-Z0-9_-]+$/.test(releaseId)) {
-        return res.status(400).json({ error: 'Invalid release ID format' });
-      }
-      let relOk;
-      if (usePostgres()) {
-        const rel = await repos.releases.findById(releaseId);
-        relOk = rel && rel.tenantId === tenant.id;
-      } else {
-        const releaseDoc = await db.collection('releases').doc(releaseId).get();
-        relOk = releaseDoc.exists && getTenantId(releaseDoc.data() || {}) === tenant.id;
-      }
-      if (!relOk) {
-        return res.status(404).json({ error: 'Release nicht gefunden' });
-      }
-    }
-
-    const previousReleaseId = suggestionData.releaseId || null;
-    if (usePostgres()) {
-      await repos.suggestions.update(suggestionId, { releaseId: releaseId || null });
-    } else {
-      await db.collection('suggestions').doc(suggestionId).update({ releaseId: releaseId || null });
-    }
-
-    await logActivity(suggestionId, 'release_changed', {
-      oldValue: previousReleaseId,
-      newValue: releaseId || null,
-      detail: releaseId ? 'Einem Release zugeordnet' : 'Release-Zuordnung entfernt',
-      tenantId: tenant.id,
-    });
-
-    res.json({ success: true, message: releaseId ? 'Release zugeordnet' : 'Release-Zuordnung entfernt' });
+    const { status, body } = await assignSuggestionRelease(
+      tenant,
+      { ...suggestionData, id: suggestionId },
+      (req.body || {}).releaseId,
+    );
+    res.status(status).json(body);
   } catch (error) {
     console.error('Error assigning tenant release:', error);
     res.status(500).json({ error: 'Failed to assign release' });
@@ -6919,9 +7041,12 @@ function requireApiKey(requiredScopes = []) {
       // Pro-Kunde darf für seinen bestehenden Key bei einem Lookup-Fehler kein
       // 402 bekommen. Der Firestore-Tenant taugt hier NICHT als Fallback, weil
       // er kein `plan` trägt und damit fälschlich als Free gälte.
-      if (billing.proGatingActive({ postgres: usePostgres() })) {
-        const { tenant: planTenant, error: lookupError } =
+      const gatingActive = billing.proGatingActive({ postgres: usePostgres() });
+      let planTenant = null;
+      if (gatingActive) {
+        const { tenant: resolvedPlanTenant, error: lookupError } =
           await billing.resolvePlanTenant(() => repos.tenants.findById(data.tenantId));
+        planTenant = resolvedPlanTenant;
         if (lookupError) {
           console.error(
             `Pro-Gating: Plan-Tenant-Lookup für ${data.tenantId} fehlgeschlagen (fail-open):`,
@@ -6944,6 +7069,11 @@ function requireApiKey(requiredScopes = []) {
         keyId: data.id,
         tenantId: data.tenantId,
         tenant,
+        // Der Firestore-Tenant oben trägt kein `plan` — nachgelagerte Pro-Gates
+        // (das Free-Plan-Board-Limit in createTenantBoard) brauchen deshalb den
+        // Tenant aus der Plan-Quelle. null = Gating inaktiv oder Plan nicht
+        // auflösbar; beides bedeutet über requiresProUpgradeResolved: nicht sperren.
+        planTenant,
         scopes: grantedScopes,
         keyName: data.name,
       };
@@ -6960,6 +7090,20 @@ function requireApiKey(requiredScopes = []) {
   };
 }
 
+// Löst ein Board über den Slug auf — immer im Tenant des Schlüssels. Ein
+// fremdes Board ist damit ununterscheidbar von einem nicht existierenden (404).
+async function loadApiKeyAppBySlug(req, appSlugParam) {
+  const appSlug = parseSlugParam(appSlugParam);
+  if (!appSlug) {
+    return { errorStatus: 400, error: 'Invalid app slug' };
+  }
+  const tenantApp = await findTenantAppBySlug(req.apiAuth.tenantId, appSlug);
+  if (!tenantApp) {
+    return { errorStatus: 404, error: 'App not found' };
+  }
+  return { tenantApp };
+}
+
 async function loadApiKeySuggestionById(req, suggestionId) {
   if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
     return { errorStatus: 400, error: 'Invalid suggestion ID' };
@@ -6973,6 +7117,94 @@ async function loadApiKeySuggestionById(req, suggestionId) {
     return { errorStatus: 404, error: 'Suggestion not found' };
   }
   return { suggestionDoc, suggestionData };
+}
+
+// Legt einen importierten Eintrag mit mitgebrachter Ticketnummer an.
+//
+// Zwei Dinge müssen zusammen passieren, sonst kollidiert der nächste regulär
+// generierte Eintrag mit der importierten Nummer: die Nummer muss im Board
+// eindeutig sein, UND der Zähler muss über sie hinaus geschoben werden. Beides
+// plus das Anlegen läuft in einer Firestore-Transaktion, damit zwei parallele
+// Importe derselben Nummer sich nicht gegenseitig überholen.
+//
+// Firestore-Pfad wie der Rest der v1-Suggestion-Routen (die schreiben ebenfalls
+// direkt auf die Collection); für Postgres wird das mit der Datenmigration
+// nachgezogen.
+async function createSuggestionWithImportedTicketNumber(tenantApp, tenantId, suggestion, importData) {
+  const counterRef = db.collection('counters').doc(tenantApp.id);
+  const suggestionRef = db.collection('suggestions').doc();
+  const duplicateQuery = db.collection('suggestions')
+    .where('appId', '==', tenantApp.id)
+    .where('ticketNumber', '==', importData.ticketNumber);
+
+  return db.runTransaction(async (transaction) => {
+    // Firestore verlangt alle Reads vor dem ersten Write.
+    const [duplicates, counterDoc] = await Promise.all([
+      transaction.get(duplicateQuery),
+      transaction.get(counterRef),
+    ]);
+
+    const collision = duplicates.docs
+      .some(doc => getTenantId(doc.data() || {}) === tenantId);
+    if (collision) {
+      return {
+        status: 409,
+        body: { error: `Ticketnummer ${importData.ticketNumber} ist in diesem Board bereits vergeben` },
+      };
+    }
+
+    const counterData = counterDoc.exists ? (counterDoc.data() || {}) : {};
+    const counterUpdate = {
+      tenantId: counterData.tenantId || tenantId,
+      nextNumber: suggestionImport.nextCounterValue(counterData.nextNumber, importData.ticketNumberValue),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    // Ältere Boards haben ggf. noch kein Counter-Dokument; ohne Prefix würde
+    // generateTicketNumber später "undefined-141" ausgeben.
+    if (!counterData.prefix) {
+      counterUpdate.prefix = buildTicketPrefix(tenantApp.ticketPrefix, tenantApp.name || '');
+    }
+
+    transaction.set(counterRef, counterUpdate, { merge: true });
+    transaction.set(suggestionRef, suggestion);
+
+    return { status: 201, body: { id: suggestionRef.id } };
+  });
+}
+
+function buildApiAppResponse(appData) {
+  return {
+    id: appData.id,
+    slug: appData.slug,
+    name: appData.name,
+    description: appData.description || '',
+    ticketPrefix: appData.ticketPrefix || null,
+  };
+}
+
+// Die v1-API gibt Datumsfelder durchgängig als ISO-Strings aus, damit Clients
+// die drei Backend-Shapes (JS-Date, Firestore-Timestamp, {_seconds}) nicht
+// unterscheiden müssen. Die Shape-Erkennung selbst lebt in toDateOrEpoch.
+function toApiDate(value) {
+  return value ? toDateOrEpoch(value).toISOString() : null;
+}
+
+function buildApiReleaseResponse(release) {
+  const response = {
+    id: release.id,
+    appId: release.appId,
+    version: release.version || null,
+    title: release.title || '',
+    description: release.description || '',
+    status: release.status || 'geplant',
+    releaseDate: toApiDate(release.releaseDate),
+    publishedAt: toApiDate(release.publishedAt),
+    createdAt: toApiDate(release.createdAt),
+    updatedAt: toApiDate(release.updatedAt),
+  };
+  // items[] liefert nur die Listen-Route (wie die öffentliche Roadmap).
+  if (Array.isArray(release.items)) response.items = release.items;
+  return response;
 }
 
 function buildApiSuggestionResponse(data) {
@@ -7011,26 +7243,54 @@ app.get('/api/v1/me', requireApiKey(), rateLimitByApiKey(60000, 120), async (req
 app.get('/api/v1/apps', requireApiKey(['suggestions:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
   try {
     const apps = await loadTenantApps(req.apiAuth.tenantId);
-    res.json(apps.map(appData => ({
-      id: appData.id,
-      slug: appData.slug,
-      name: appData.name,
-      description: appData.description || '',
-      ticketPrefix: appData.ticketPrefix || null,
-    })));
+    res.json(apps.map(buildApiAppResponse));
   } catch (error) {
     console.error('Error fetching apps via API key:', error);
     res.status(500).json({ error: 'Failed to load apps' });
   }
 });
 
+// Board anlegen. Läuft über denselben createTenantBoard-Pfad wie die
+// Admin-Konsole — inklusive Free-Plan-Board-Limit und Slug-Kollision (409).
+app.post('/api/v1/apps', requireApiKey(['boards:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
+  try {
+    const { status, body } = await createTenantBoard(
+      req.apiAuth.tenant,
+      req.body || {},
+      { planTenant: req.apiAuth.planTenant },
+    );
+    if (status !== 201) return res.status(status).json(body);
+
+    // Kein Audit-Eintrag: die activity-Collection hängt an einer Ticket-ID,
+    // Board-Anlagen haben keine. Der Key bleibt über createdBy nachvollziehbar.
+    res.status(201).json(buildApiAppResponse(body));
+  } catch (error) {
+    console.error('Error creating board via API key:', error);
+    res.status(500).json({ error: 'Failed to create board' });
+  }
+});
+
+// Board umbenennen. Slug und Ticket-Prefix bleiben unveränderlich, sonst
+// brechen bestehende Key-Integrationen und die bereits vergebenen Nummern.
+app.patch('/api/v1/apps/:appSlug', requireApiKey(['boards:write']), rateLimitByApiKey(60000, 60), async (req, res) => {
+  try {
+    const { tenantApp, errorStatus, error } = await loadApiKeyAppBySlug(req, req.params.appSlug);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const { status, body } = await updateTenantBoard(tenantApp, req.body || {});
+    if (status !== 200) return res.status(status).json(body);
+
+    res.json(buildApiAppResponse(body));
+  } catch (error) {
+    console.error('Error updating board via API key:', error);
+    res.status(500).json({ error: 'Failed to update board' });
+  }
+});
+
 app.get('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
   try {
-    const appSlug = parseSlugParam(req.params.appSlug);
-    if (!appSlug) return res.status(400).json({ error: 'Invalid app slug' });
-
-    const tenantApp = await findTenantAppBySlug(req.apiAuth.tenantId, appSlug);
-    if (!tenantApp) return res.status(404).json({ error: 'App not found' });
+    const { tenantApp, errorStatus, error: appError } = await loadApiKeyAppBySlug(req, req.params.appSlug);
+    if (appError) return res.status(errorStatus).json({ error: appError });
 
     const statusFilter = (req.query.status || '').toString().trim();
     const typeFilter = (req.query.type || '').toString().trim();
@@ -7071,11 +7331,16 @@ app.get('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:read'])
 
 app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
   try {
-    const appSlug = parseSlugParam(req.params.appSlug);
-    if (!appSlug) return res.status(400).json({ error: 'Invalid app slug' });
+    const { tenantApp, errorStatus, error: appError } = await loadApiKeyAppBySlug(req, req.params.appSlug);
+    if (appError) return res.status(errorStatus).json({ error: appError });
 
-    const tenantApp = await findTenantAppBySlug(req.apiAuth.tenantId, appSlug);
-    if (!tenantApp) return res.status(404).json({ error: 'App not found' });
+    // Import-Modus greift nur bei explizitem `import`-Block — eine normale
+    // Einreichung verhält sich unverändert.
+    const { importData, error: importError } = suggestionImport.parseImportBlock(
+      req.body,
+      tenantApp
+    );
+    if (importError) return res.status(400).json({ error: importError });
 
     const actor = `api:${req.apiAuth.keyId}`;
     const { suggestion, error } = buildSuggestionFromRequest(
@@ -7089,17 +7354,48 @@ app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write'
     suggestion.approved = true;
     suggestion.approvedAt = admin.firestore.FieldValue.serverTimestamp();
     suggestion.approvedBy = actor;
-    suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, req.apiAuth.tenantId);
 
-    const docRef = await db.collection('suggestions').add(suggestion);
+    if (importData?.votes !== undefined) {
+      // Nur der Zähler — bewusst ohne votes-Dokumente, damit die
+      // Doppelabstimmungs-Sperre (die über die votes-Collection arbeitet)
+      // nicht mit Phantom-Fingerprints gefüttert wird.
+      suggestion.votes = importData.votes;
+    }
+    if (importData?.createdAt) {
+      suggestion.createdAt = admin.firestore.Timestamp.fromDate(importData.createdAt);
+    }
 
-    await logActivity(docRef.id, 'created', {
-      detail: `${suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag'} "${suggestion.title}" via API erstellt`,
+    let suggestionId;
+    if (importData?.ticketNumber) {
+      suggestion.ticketNumber = importData.ticketNumber;
+      const reserved = await createSuggestionWithImportedTicketNumber(
+        tenantApp,
+        req.apiAuth.tenantId,
+        suggestion,
+        importData
+      );
+      if (reserved.status !== 201) return res.status(reserved.status).json(reserved.body);
+      suggestionId = reserved.body.id;
+    } else {
+      suggestion.ticketNumber = await generateTicketNumber(tenantApp.id, req.apiAuth.tenantId);
+      const docRef = await db.collection('suggestions').add(suggestion);
+      suggestionId = docRef.id;
+    }
+
+    const label = suggestion.type === 'bug' ? 'Bug' : suggestion.type === 'ticket' ? 'Ticket' : 'Vorschlag';
+    await logActivity(suggestionId, importData ? 'imported' : 'created', {
+      detail: importData
+        ? `${label} "${suggestion.title}" via API importiert (${suggestion.ticketNumber})`
+        : `${label} "${suggestion.title}" via API erstellt`,
       actor,
       tenantId: req.apiAuth.tenantId,
     });
 
-    res.status(201).json(buildApiSuggestionResponse({ id: docRef.id, ...suggestion, createdAt: new Date() }));
+    res.status(201).json(buildApiSuggestionResponse({
+      id: suggestionId,
+      ...suggestion,
+      createdAt: importData?.createdAt || new Date(),
+    }));
   } catch (error) {
     console.error('Error creating suggestion via API key:', error);
     res.status(500).json({ error: 'Failed to create suggestion' });
@@ -7281,6 +7577,89 @@ app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:
   } catch (error) {
     console.error('Error creating comment via API key:', error);
     res.status(500).json({ error: 'Failed to create comment' });
+  }
+});
+
+// --- Releases -------------------------------------------------------------
+
+app.get('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:read']), rateLimitByApiKey(60000, 120), async (req, res) => {
+  try {
+    const { tenantApp, errorStatus, error } = await loadApiKeyAppBySlug(req, req.params.appSlug);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const { releases, error: filterError } = await loadPublicReleasesForApp(
+      tenantApp.id,
+      req.apiAuth.tenantId,
+      req.query.status
+    );
+    if (filterError) return res.status(400).json({ error: filterError });
+
+    res.json(releases.map(buildApiReleaseResponse));
+  } catch (error) {
+    console.error('Error listing releases via API key:', error);
+    res.status(500).json({ error: 'Failed to load releases' });
+  }
+});
+
+// Das Board kommt aus dem Pfad, der Tenant aus dem Schlüssel — anders als bei
+// der Admin-Route braucht (und akzeptiert) der Body keine appId.
+app.post('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
+  try {
+    const { tenantApp, errorStatus, error } = await loadApiKeyAppBySlug(req, req.params.appSlug);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const { status, body } = await createTenantRelease(req.apiAuth.tenant, {
+      ...(req.body || {}),
+      appId: tenantApp.id,
+    });
+    res.status(status).json(status === 201 ? buildApiReleaseResponse(body) : body);
+  } catch (error) {
+    console.error('Error creating release via API key:', error);
+    res.status(500).json({ error: 'Failed to create release' });
+  }
+});
+
+app.patch('/api/v1/releases/:releaseId', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 60), async (req, res) => {
+  try {
+    const { status, body, release } = await updateTenantRelease(
+      req.apiAuth.tenant,
+      req.params.releaseId,
+      req.body || {},
+    );
+    if (status !== 200) return res.status(status).json(body);
+
+    res.json(buildApiReleaseResponse(release));
+  } catch (error) {
+    console.error('Error updating release via API key:', error);
+    res.status(500).json({ error: 'Failed to update release' });
+  }
+});
+
+app.delete('/api/v1/releases/:releaseId', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 30), async (req, res) => {
+  try {
+    const { status, body } = await deleteTenantRelease(req.apiAuth.tenant, req.params.releaseId);
+    res.status(status).json(body);
+  } catch (error) {
+    console.error('Error deleting release via API key:', error);
+    res.status(500).json({ error: 'Failed to delete release' });
+  }
+});
+
+app.put('/api/v1/suggestions/:suggestionId/release', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 60), async (req, res) => {
+  try {
+    const { suggestionData, errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+
+    const { status, body } = await assignSuggestionRelease(
+      req.apiAuth.tenant,
+      suggestionData,
+      (req.body || {}).releaseId,
+      `api:${req.apiAuth.keyId}`,
+    );
+    res.status(status).json(body);
+  } catch (error) {
+    console.error('Error assigning release via API key:', error);
+    res.status(500).json({ error: 'Failed to assign release' });
   }
 });
 

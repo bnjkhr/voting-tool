@@ -9,14 +9,10 @@ const scriptSource = fs.readFileSync(path.join(rootDir, 'public/script.js'), 'ut
 const boardHtml = fs.readFileSync(path.join(rootDir, 'public/index.html'), 'utf8');
 const limits = require('../lib/plan-limits');
 
-// Schneidet den Handler-Body ab einer Route-Signatur bis zum nächsten `app.<verb>(`.
-function handlerAfter(signature) {
-  const start = apiSource.indexOf(signature);
-  assert.ok(start > -1, `Route nicht gefunden: ${signature}`);
-  const rest = apiSource.slice(start + signature.length);
-  const next = rest.search(/\napp\.(get|post|put|delete|use)\(/);
-  return rest.slice(0, next > -1 ? next : 2000);
-}
+// Quelltext-Slicer mit Anker-Prüfung (siehe tests/source-slice.js).
+const sourceSlice = require('./source-slice');
+const handlerAfter = signature => sourceSlice.handlerAfter(apiSource, signature);
+const functionBody = name => sourceSlice.functionBody(apiSource, name);
 
 // ---------------------------------------------------------------------------
 // Limits (reine Zahlen)
@@ -197,18 +193,37 @@ test('Fail-open Ende-zu-Ende: Lookup-Fehler sperrt einen Pro-Kunden NICHT (kein 
 // ---------------------------------------------------------------------------
 
 test('Board-Erstellung legt in Postgres tatsächlich an (kein Firestore-Ghost)', () => {
-  const body = handlerAfter("app.post('/api/admin/tenants/:tenantSlug/apps'");
+  const body = functionBody('createTenantBoard');
   assert.ok(/if \(usePostgres\(\)\)/.test(body), 'usePostgres-Branch fehlt');
   assert.ok(body.includes('repos.apps.create('), 'repos.apps.create wird nicht aufgerufen');
   assert.ok(body.includes('repos.apps.findBySlug('), 'Slug-Konflikt-Check im Postgres-Pfad fehlt');
 });
 
 test('Board-Gate hängt am zentralen Pro-Gate und liefert 402', () => {
-  const body = handlerAfter("app.post('/api/admin/tenants/:tenantSlug/apps'");
-  assert.ok(body.includes('billing.requiresProUpgrade(tenant, { postgres: usePostgres() })'),
-    'Board-Limit muss über billing.requiresProUpgrade gaten (respektiert BILLING_ENFORCED)');
+  const body = functionBody('createTenantBoard');
+  // requiresProUpgradeResolved delegiert an requiresProUpgrade und ergänzt die
+  // Fail-open-Regel für einen nicht auflösbaren Plan-Tenant (API-Schlüssel-Pfad).
+  assert.ok(body.includes('billing.requiresProUpgradeResolved(planTenant, { postgres: usePostgres() })'),
+    'Board-Limit muss über das zentrale Pro-Gate laufen (respektiert BILLING_ENFORCED)');
   assert.ok(body.includes('planLimits.FREE_MAX_BOARDS'), 'nutzt die zentrale Board-Grenze');
-  assert.ok(body.includes('res.status(402)') && body.includes("code: 'upgrade_required'"), '402 upgrade_required erwartet');
+  assert.ok(body.includes('status: 402') && body.includes("code: 'upgrade_required'"), '402 upgrade_required erwartet');
+});
+
+test('Admin-Konsole UND v1-API laufen durch dasselbe Board-Gate', () => {
+  // Ein zweiter, nachgebauter Anlage-Pfad wäre genau die Stelle, an der das
+  // Free-Plan-Board-Limit still umgangen würde.
+  const adminRoute = handlerAfter("app.post('/api/admin/tenants/:tenantSlug/apps'");
+  const apiRoute = handlerAfter("app.post('/api/v1/apps', requireApiKey(['boards:write'])");
+  assert.ok(adminRoute.includes('createTenantBoard(tenant, req.body || {})'),
+    'Admin-Route muss den geteilten Helfer aufrufen');
+  assert.ok(apiRoute.includes('createTenantBoard('),
+    'v1-Route muss den geteilten Helfer aufrufen');
+  assert.ok(apiRoute.includes('planTenant: req.apiAuth.planTenant'),
+    'v1-Route muss den Plan-Tenant aus der Plan-Quelle durchreichen, nicht den Firestore-Tenant');
+  assert.equal(apiRoute.includes('planLimits.FREE_MAX_BOARDS'), false,
+    'die v1-Route darf das Limit nicht nachbauen');
+  assert.equal(apiRoute.includes('billing.requiresProUpgrade'), false,
+    'die v1-Route darf das Gate nicht nachbauen');
 });
 
 // ---------------------------------------------------------------------------

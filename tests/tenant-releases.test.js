@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { functionBody } = require('./source-slice');
+
 const rootDir = path.join(__dirname, '..');
 const apiSource = fs.readFileSync(path.join(rootDir, 'api/index.js'), 'utf8');
 const tenantAdminHtml = fs.readFileSync(path.join(rootDir, 'public/tenant-admin.html'), 'utf8');
@@ -62,12 +64,28 @@ test('tenant release delete unlinks suggestions in bounded batches', () => {
 
 test('tenant release writes verify the release belongs to the tenant', () => {
   // Cross-tenant guard: a release id from tenant A must 404 for tenant B.
-  const guard = 'getTenantId(releaseDoc.data() || {}) !== tenant.id';
-  const occurrences = apiSource.split(guard).length - 1;
+  // The guard lives in one shared resolver so the admin console and the v1 API
+  // cannot drift apart; both backends must scope it to the tenant.
   assert.ok(
-    occurrences >= 2,
-    `expected the release ownership guard in PUT and DELETE handlers (found ${occurrences})`,
+    apiSource.includes('async function findTenantRelease(tenant, releaseId)'),
+    'expected a single tenant-scoped release resolver',
   );
+  assert.ok(
+    apiSource.includes('getTenantId(releaseDoc.data() || {}) !== tenant.id'),
+    'expected the Firestore branch to reject releases from other tenants',
+  );
+  assert.ok(
+    apiSource.includes('rel && rel.tenantId === tenant.id'),
+    'expected the Postgres branch to reject releases from other tenants',
+  );
+
+  // Every release write path must go through that resolver.
+  ['updateTenantRelease', 'deleteTenantRelease', 'assignSuggestionRelease'].forEach(fn => {
+    assert.ok(
+      functionBody(apiSource, fn).includes('findTenantRelease(tenant,'),
+      `${fn} must resolve the release through the tenant-scoped guard`,
+    );
+  });
 });
 
 test('tenant release creation verifies the target app belongs to the tenant', () => {

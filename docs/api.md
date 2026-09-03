@@ -9,7 +9,7 @@ Tenant-scoped REST API für externe Tools (z.B. Claude Code, CLIs, Scripts), um 
 ## Base URL
 
 ```
-https://votingtool.benkohler.de/api/v1
+https://roadlight.pro/api/v1
 ```
 
 Lokal:
@@ -39,16 +39,30 @@ Jeder Key ist auf genau einen Tenant gescoped — er sieht ausschließlich Board
 | `suggestions:status` | Status, Priorität und Labels ändern |
 | `comments:read` | Kommentare lesen |
 | `comments:write` | Admin-Kommentare schreiben (auto-freigegeben) |
+| `boards:write` | Boards anlegen und umbenennen |
+| `releases:read` | Releases lesen |
+| `releases:write` | Releases anlegen, ändern, löschen und Einträge zuordnen |
 
-Fehlt ein erforderlicher Scope, gibt der Endpoint `403` zurück.
+Fehlt ein erforderlicher Scope, gibt der Endpoint `403` zurück. Bestehende
+Schlüssel bekommen durch die neuen Scopes nichts dazu — sie müssen an einem
+Schlüssel explizit gesetzt sein.
+
+Für einen kompletten Workspace-Aufbau per API (Board anlegen, Einträge
+importieren, Releases nachbauen und zuordnen) braucht der Schlüssel:
+`boards:write`, `suggestions:read`, `suggestions:write`, `suggestions:status`,
+`releases:read`, `releases:write`.
+
+Den Workspace (Tenant) selbst legt weiterhin ein Mensch im UI an — dafür gibt es
+bewusst keinen v1-Endpunkt.
 
 ## Rate Limits
 
 Pro Schlüssel:
 
 - Read-Endpoints (`GET`): 120 Requests/Minute
-- Einträge/Kommentare anlegen (`POST`): 30 Requests/Minute
-- Status ändern (`PATCH`): 60 Requests/Minute
+- Anlegen (`POST`): 30 Requests/Minute
+- Ändern (`PATCH` / `PUT`): 60 Requests/Minute
+- Löschen (`DELETE`): 30 Requests/Minute
 
 Überschreitung → `429 Too Many Requests`.
 
@@ -58,7 +72,7 @@ Pro Schlüssel:
 { "error": "human-readable message" }
 ```
 
-## Endpoints
+## Endpoints: Einträge & Kommentare
 
 ### `GET /me`
 
@@ -66,7 +80,7 @@ Sanity-Check für den Key. Gibt Tenant- und Scope-Info zurück.
 
 ```bash
 curl -H "Authorization: Bearer vt_live_…" \
-  https://votingtool.benkohler.de/api/v1/me
+  https://roadlight.pro/api/v1/me
 ```
 
 Response:
@@ -84,7 +98,7 @@ Liste der Boards im Tenant. Benötigt `suggestions:read`.
 
 ```bash
 curl -H "Authorization: Bearer vt_live_…" \
-  https://votingtool.benkohler.de/api/v1/apps
+  https://roadlight.pro/api/v1/apps
 ```
 
 Response:
@@ -113,7 +127,7 @@ Query-Filter (optional):
 
 ```bash
 curl -H "Authorization: Bearer vt_live_…" \
-  "https://votingtool.benkohler.de/api/v1/apps/customer-feedback/suggestions?type=bug&status=offen"
+  "https://roadlight.pro/api/v1/apps/customer-feedback/suggestions?type=bug&status=offen"
 ```
 
 ### `POST /apps/:appSlug/suggestions`
@@ -177,6 +191,41 @@ Response (`201`):
 }
 ```
 
+### Import bestehender Einträge
+
+Beim Übertragen eines gewachsenen Boards vergibt der Server sonst Ticketnummer
+und Datum selbst. Der optionale `import`-Block übernimmt stattdessen die Werte
+aus der Quelle. Er ist an `suggestions:write` gebunden und greift **nur**, wenn
+er explizit mitgeschickt wird — normale Einreichungen ändern sich nicht.
+
+```json
+{
+  "type": "feature",
+  "title": "Einkaufsliste teilen",
+  "description": "…",
+  "import": {
+    "ticketNumber": "FAM-041",
+    "votes": 2,
+    "createdAt": "2026-04-30T09:12:00.000Z"
+  }
+}
+```
+
+| Feld | Verhalten |
+|---|---|
+| `ticketNumber` | Überschreibt den Generator. Muss zum Ticket-Prefix des Boards passen und im Board eindeutig sein (Kollision → `409`). Hebt den Board-Zähler an: nach einem Import von `FAM-140` bekommt der nächste regulär angelegte Eintrag `FAM-141`. |
+| `votes` | Setzt den Stimmen-Zähler (ganze Zahl ≥ 0). Es werden **keine** `votes`-Dokumente erzeugt, damit die Doppelabstimmungs-Sperre sauber bleibt. |
+| `createdAt` | Überschreibt den Serverzeitstempel. Nur Vergangenheit; ungültig oder in der Zukunft → `400`. |
+
+Alle Felder sind einzeln optional, mindestens eines muss gesetzt sein.
+
+**Nicht importierbar:** Notification-Adressen. Ein Import mit
+`notificationEnabled: true` wird mit `400` abgelehnt — sonst schickt ein späterer
+Statuswechsel Mails an Leute, die von dem neuen Board nichts wissen.
+
+Import-Schreibvorgänge landen im Audit-Log mit `action: "imported"` und
+`actor: "api:<keyId>"` und sind so von regulären Anlagen unterscheidbar.
+
 ### `GET /suggestions/:id`
 
 Einzelnen Eintrag laden. Benötigt `suggestions:read`. 404, wenn Eintrag nicht zum Tenant des Keys gehört.
@@ -214,6 +263,138 @@ Admin-Kommentar hinzufügen (auto-freigegeben). Benötigt `comments:write`.
 
 `screenshots` ist optional und akzeptiert Base64-Data-URLs (`data:image/png;base64,…`), max. 5 Bilder, je max. 300 KB, gesamt max. 800 KB.
 
+## Boards
+
+### `POST /apps`
+
+Board anlegen. Benötigt `boards:write`. Der Tenant kommt aus dem Schlüssel — es
+gibt keinen Tenant-Parameter.
+
+```json
+{
+  "name": "FamilyManager",
+  "slug": "familymanager",
+  "ticketPrefix": "FAM",
+  "description": "Wünsche und Bugs aus der Familie"
+}
+```
+
+- `slug` optional — wird sonst aus `name` abgeleitet.
+- `ticketPrefix` optional — wird sonst aus `name` abgeleitet (max. 5 Buchstaben).
+- Slug bereits im Workspace vergeben → `409`.
+- Free-Plan: Es gilt dasselbe Board-Limit wie im UI. Über dem Limit →
+  `402` mit `code: "upgrade_required"` und `resource: "boards"`.
+
+Response (`201`):
+
+```json
+{
+  "id": "app_xyz",
+  "slug": "familymanager",
+  "name": "FamilyManager",
+  "description": "Wünsche und Bugs aus der Familie",
+  "ticketPrefix": "FAM"
+}
+```
+
+### `PATCH /apps/:appSlug`
+
+Board umbenennen bzw. Beschreibung ändern. Benötigt `boards:write`.
+
+```json
+{ "name": "Family Manager", "description": "Neuer Text" }
+```
+
+`slug` und `ticketPrefix` sind **unveränderlich** — am Slug hängen bestehende
+Key-Integrationen und öffentliche Board-URLs, am Prefix die bereits vergebenen
+Ticketnummern. Werden sie mitgeschickt, antwortet der Endpoint mit `400`.
+
+## Releases
+
+### `GET /apps/:appSlug/releases`
+
+Releases eines Boards inklusive der zugeordneten Einträge (`items[]`, nur
+freigegebene). Benötigt `releases:read`.
+
+Query-Filter (optional): `status` — kommagetrennt, aus `geplant`, `in Arbeit`,
+`veröffentlicht`.
+
+```bash
+curl -H "Authorization: Bearer vt_live_…" \
+  "https://roadlight.pro/api/v1/apps/familymanager/releases?status=geplant,in%20Arbeit"
+```
+
+Response:
+
+```json
+[
+  {
+    "id": "rel_abc",
+    "appId": "app_xyz",
+    "version": "2.3.0",
+    "title": "Kalender-Sync",
+    "description": "…",
+    "status": "geplant",
+    "releaseDate": "2026-10-01T00:00:00.000Z",
+    "items": [
+      { "id": "sug_1", "ticketNumber": "FAM-041", "title": "…", "type": "feature", "status": "wird umgesetzt" }
+    ]
+  }
+]
+```
+
+### `POST /apps/:appSlug/releases`
+
+Release anlegen. Benötigt `releases:write`. Das Board kommt aus dem Pfad — eine
+`appId` im Body wird ignoriert.
+
+```json
+{
+  "version": "2.3.0",
+  "title": "Kalender-Sync",
+  "description": "Was in diesem Release steckt",
+  "status": "geplant",
+  "releaseDate": "2026-10-01"
+}
+```
+
+- `status` aus `geplant`, `in Arbeit`, `veröffentlicht`; Default `geplant`.
+- `releaseDate` optional, beliebiges parsebares Datum; ungültig → `400`.
+- Bei `veröffentlicht` wird `publishedAt` automatisch gesetzt.
+
+### `PATCH /releases/:releaseId`
+
+Teilfelder eines Releases ändern (`version`, `title`, `description`, `status`,
+`releaseDate`). Benötigt `releases:write`. Ein Release aus einem fremden
+Workspace ist `404`.
+
+```json
+{ "status": "veröffentlicht", "releaseDate": null }
+```
+
+`"releaseDate": null` **löscht** das Datum (nicht: ignoriert es). Response ist
+das aktualisierte Release.
+
+### `DELETE /releases/:releaseId`
+
+Release löschen. Benötigt `releases:write`. Zugeordnete Einträge werden nur
+entkoppelt, nicht gelöscht.
+
+Response:
+
+```json
+{ "success": true, "message": "Release gelöscht", "unlinkedSuggestions": 12 }
+```
+
+### `PUT /suggestions/:id/release`
+
+Eintrag einem Release zuordnen. Benötigt `releases:write`. `null` hebt die
+Zuordnung auf.
+
+```json
+{ "releaseId": "rel_abc" }
+```
+
 ## Konstanten
 
 **Suggestion-Typen:** `feature`, `bug`, `ticket`
@@ -228,7 +409,9 @@ Admin-Kommentar hinzufügen (auto-freigegeben). Benötigt `comments:write`.
 
 ## Audit
 
-Jeder Write-Call (POST/PATCH/DELETE) wird in der `activity`-Collection mit `actor: "api:<keyId>"` protokolliert. Im Tenant-Admin-UI sind die Aktionen in der Eintrags-Historie sichtbar.
+Jeder eintragsbezogene Write-Call (POST/PATCH/PUT) wird in der `activity`-Collection mit `actor: "api:<keyId>"` protokolliert. Importe bekommen dabei `action: "imported"` statt `"created"`. Im Tenant-Admin-UI sind die Aktionen in der Eintrags-Historie sichtbar.
+
+Board- und Release-Anlagen haben keine Ticket-ID und damit keinen Eintrag in der `activity`-Collection.
 
 ## Beispiel: Eintrag aus einem Bash-Script anlegen
 
@@ -250,5 +433,5 @@ curl -fsS -X POST \
     "expectedBehavior": "alle Tests grün",
     "actualBehavior": "tenant-admin.spec.js schlägt fehl"
   }' \
-  https://votingtool.benkohler.de/api/v1/apps/customer-feedback/suggestions
+  https://roadlight.pro/api/v1/apps/customer-feedback/suggestions
 ```
