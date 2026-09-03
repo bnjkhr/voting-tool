@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const sourceSlice = require('./source-slice');
+
 const rootDir = path.join(__dirname, '..');
 const apiSource = fs.readFileSync(path.join(rootDir, 'api/index.js'), 'utf8');
 const tenantAdminHtml = fs.readFileSync(path.join(rootDir, 'public/tenant-admin.html'), 'utf8');
@@ -50,6 +52,41 @@ test('v1 routes are mounted with API key middleware and the documented scopes', 
       signature:
         "app.post('/api/v1/suggestions/:suggestionId/comments', requireApiKey(['comments:write']), rateLimitByApiKey(",
       note: 'writing comments requires comments:write',
+    },
+    {
+      signature:
+        "app.post('/api/v1/apps', requireApiKey(['boards:write']), rateLimitByApiKey(60000, 30)",
+      note: 'creating a board requires boards:write, 30/min',
+    },
+    {
+      signature:
+        "app.patch('/api/v1/apps/:appSlug', requireApiKey(['boards:write']), rateLimitByApiKey(60000, 60)",
+      note: 'renaming a board requires boards:write, 60/min',
+    },
+    {
+      signature:
+        "app.get('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:read']), rateLimitByApiKey(60000, 120)",
+      note: 'listing releases requires releases:read, 120/min',
+    },
+    {
+      signature:
+        "app.post('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 30)",
+      note: 'creating a release requires releases:write, 30/min',
+    },
+    {
+      signature:
+        "app.patch('/api/v1/releases/:releaseId', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 60)",
+      note: 'updating a release requires releases:write, 60/min',
+    },
+    {
+      signature:
+        "app.delete('/api/v1/releases/:releaseId', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 30)",
+      note: 'deleting a release requires releases:write, 30/min',
+    },
+    {
+      signature:
+        "app.put('/api/v1/suggestions/:suggestionId/release', requireApiKey(['releases:write']), rateLimitByApiKey(60000, 60)",
+      note: 'assigning an entry to a release requires releases:write, 60/min',
     },
   ];
 
@@ -282,16 +319,32 @@ test('docs/api.md documents every v1 endpoint, scope and rate limit', () => {
     assert.ok(apiDocs.includes(fragment), `docs/api.md must document ${fragment}`);
   });
 
+  // Board- und Release-Verwaltung
+  [
+    'POST /apps',
+    'PATCH /apps/:appSlug',
+    'GET /apps/:appSlug/releases',
+    'POST /apps/:appSlug/releases',
+    'PATCH /releases/:releaseId',
+    'DELETE /releases/:releaseId',
+    'PUT /suggestions/:id/release',
+  ].forEach(fragment => {
+    assert.ok(apiDocs.includes(fragment), `docs/api.md must document ${fragment}`);
+  });
+
   // Scopes
-  ['suggestions:read', 'suggestions:write', 'suggestions:status', 'comments:read', 'comments:write']
-    .forEach(scope => {
+  [
+    'suggestions:read', 'suggestions:write', 'suggestions:status',
+    'comments:read', 'comments:write',
+    'boards:write', 'releases:read', 'releases:write',
+  ].forEach(scope => {
       assert.ok(apiDocs.includes(scope), `docs/api.md must document the ${scope} scope`);
     });
 
   // Rate limits and base URL
   assert.ok(apiDocs.includes('120 Requests/Minute'));
   assert.ok(apiDocs.includes('30 Requests/Minute'));
-  assert.ok(apiDocs.includes('https://votingtool.benkohler.de/api/v1'));
+  assert.ok(apiDocs.includes('https://roadlight.pro/api/v1'));
   assert.ok(apiDocs.includes('Authorization: Bearer vt_live_'));
 });
 
@@ -384,4 +437,275 @@ test('/billing meldet den Enforce-Status an die UI (Master-Schalter)', () => {
     ?.split('app.post')[0] || '';
   assert.ok(handler.includes('billingEnforced: billing.billingEnforced()'),
     '/billing gibt billingEnforced zurück, damit die UI vor dem Live-Schalten offen bleibt');
+});
+
+// ---------------------------------------------------------------------------
+// Board- und Release-Verwaltung über die v1-API
+// ---------------------------------------------------------------------------
+
+const v1Handler = signature => sourceSlice.handlerAfter(apiSource, signature);
+const helperBody = name => sourceSlice.functionBody(apiSource, name);
+const functionBodyOf = helperBody;
+
+test('neue Scopes existieren und erweitern bestehende Schlüssel nicht', () => {
+  const { API_KEY_SCOPES, normalizeScopes } = require('../api/api-key-utils');
+  ['boards:write', 'releases:read', 'releases:write'].forEach(scope => {
+    assert.ok(API_KEY_SCOPES.includes(scope), `Scope ${scope} muss vergebbar sein`);
+  });
+
+  // Ein bestehender Schlüssel bekommt durch die neuen Scopes nichts dazu —
+  // requireApiKey prüft ausschließlich die gespeicherte Liste.
+  const legacyKey = normalizeScopes(['suggestions:read', 'suggestions:write']);
+  assert.deepEqual(legacyKey, ['suggestions:read', 'suggestions:write']);
+  ['boards:write', 'releases:read', 'releases:write'].forEach(scope => {
+    assert.equal(legacyKey.includes(scope), false, `alter Schlüssel darf ${scope} nicht erben`);
+  });
+
+  // Fehlender Scope -> 403 (unveränderte Middleware-Logik).
+  assert.ok(apiSource.includes('API key is missing required scope(s)'));
+  assert.ok(apiSource.includes('return res.status(403).json({'));
+});
+
+test('das Tenant-Admin-UI kann Schlüssel mit den neuen Scopes ausstellen', () => {
+  ['boards:write', 'releases:read', 'releases:write'].forEach(scope => {
+    assert.ok(
+      tenantAdminHtml.includes(`value="${scope}"`),
+      `tenant admin braucht eine Checkbox für ${scope}`
+    );
+  });
+});
+
+test('Board-Anlage über v1 nutzt den geteilten Pfad inkl. Free-Plan-Gate', () => {
+  const body = v1Handler("app.post('/api/v1/apps', requireApiKey(['boards:write'])");
+  assert.ok(
+    body.includes('createTenantBoard(') && body.includes('req.apiAuth.tenant'),
+    'v1 muss denselben Helfer wie die Admin-Konsole aufrufen (Board-Limit, Slug-Kollision)'
+  );
+  // Der Helfer selbst liefert 409 bei Slug-Kollision und 402 über dem Limit.
+  const helper = helperBody('createTenantBoard');
+  assert.ok(helper.includes('status: 409') && helper.includes('Tenant app slug already exists'),
+    'Slug-Kollision im Tenant muss 409 liefern');
+  assert.ok(helper.includes('status: 402') && helper.includes("code: 'upgrade_required'"),
+    'Free-Plan-Board-Limit muss 402 upgrade_required liefern');
+  // Die Statuscodes des Helfers werden unverändert durchgereicht.
+  assert.ok(/status !== 201.*res\.status\(status\)\.json\(body\)/s.test(body),
+    'Fehlerstatus des Helfers muss unverändert durchgereicht werden');
+});
+
+test('nachgelagerte Pro-Gates lesen den Plan aus der Plan-Quelle, nicht aus Firestore', () => {
+  // Der Tenant hinter einem Schlüssel kommt aus Firestore und trägt kein `plan`.
+  // Würde createTenantBoard ihn direkt prüfen, sähe es einen zahlenden Pro-Kunden
+  // als Free und setzte ihm das Board-Limit vor die Nase.
+  const middleware = helperBody('requireApiKey');
+  assert.ok(
+    middleware.includes('planTenant,'),
+    'requireApiKey muss den aufgelösten Plan-Tenant an die Handler weiterreichen'
+  );
+
+  // Fail-open ist Billing-Policy und lebt in lib/billing — hier nur die
+  // Verdrahtung. Die Wahrheitstabelle deckt tests/plan-gating.test.js ab.
+  const billing = require('../lib/billing');
+  assert.equal(
+    billing.requiresProUpgradeResolved(null, { postgres: true }), false,
+    'ein nicht auflösbarer Plan darf kein Gate auslösen'
+  );
+  assert.ok(
+    helperBody('createTenantBoard').includes('billing.requiresProUpgradeResolved(planTenant,'),
+    'das Board-Gate muss den Plan-Tenant über die fail-open-Variante prüfen'
+  );
+});
+
+test('der Board-Slug bleibt über die API unveränderlich', () => {
+  const helper = helperBody('updateTenantBoard');
+  assert.ok(
+    helper.includes("has('slug')") && helper.includes("has('ticketPrefix')"),
+    'slug/ticketPrefix-Änderungen müssen laut abgelehnt werden, nicht still ignoriert'
+  );
+  assert.ok(helper.includes('slug und ticketPrefix sind unveränderlich'));
+  assert.equal(helper.includes('updates.slug'), false, 'der Slug darf nie geschrieben werden');
+  assert.equal(helper.includes('updates.ticketPrefix'), false, 'das Prefix darf nie geschrieben werden');
+});
+
+test('alle neuen Routen scopen hart auf den Tenant des Schlüssels (fremd = 404)', () => {
+  // Boards laufen über loadApiKeyAppBySlug, das im Tenant des Keys auflöst.
+  assert.ok(
+    apiSource.includes('async function loadApiKeyAppBySlug(req, appSlugParam)'),
+    'Board-Auflösung braucht einen tenant-gescopten Helfer'
+  );
+  assert.ok(
+    apiSource.includes('findTenantAppBySlug(req.apiAuth.tenantId, appSlug)')
+      && apiSource.includes("return { errorStatus: 404, error: 'App not found' };"),
+    'ein fremdes Board muss 404 liefern, nicht 403'
+  );
+
+  [
+    "app.patch('/api/v1/apps/:appSlug', requireApiKey(['boards:write'])",
+    "app.get('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:read'])",
+    "app.post('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:write'])",
+  ].forEach(signature => {
+    assert.ok(
+      v1Handler(signature).includes('loadApiKeyAppBySlug(req, req.params.appSlug)'),
+      `${signature} muss das Board im Tenant des Schlüssels auflösen`
+    );
+  });
+
+  // Releases laufen über findTenantRelease(tenant, id) -> null = 404.
+  ["app.patch('/api/v1/releases/:releaseId'", "app.delete('/api/v1/releases/:releaseId'"]
+    .forEach(signature => {
+      const body = v1Handler(signature);
+      assert.ok(
+        body.includes('req.apiAuth.tenant'),
+        `${signature} muss den Tenant aus dem Schlüssel verwenden, nie aus dem Body`
+      );
+    });
+  assert.ok(
+    apiSource.includes("return { status: 404, body: { error: 'Release nicht gefunden' } };"),
+    'ein fremdes Release muss 404 liefern, nicht 403'
+  );
+
+  // Die Zuordnung Eintrag -> Release prüft beide Seiten im Tenant.
+  const assign = v1Handler("app.put('/api/v1/suggestions/:suggestionId/release'");
+  assert.ok(assign.includes('loadApiKeySuggestionById(req, req.params.suggestionId)'),
+    'der Eintrag muss über den tenant-gescopten Resolver kommen');
+  assert.ok(assign.includes('assignSuggestionRelease('),
+    'die Zuordnung muss über den geteilten Helfer laufen (prüft das Release im Tenant)');
+});
+
+test('Release-Anlage nimmt das Board aus dem Pfad, nicht aus dem Body', () => {
+  const body = v1Handler("app.post('/api/v1/apps/:appSlug/releases', requireApiKey(['releases:write'])");
+  assert.ok(
+    body.includes('appId: tenantApp.id'),
+    'die appId muss aus dem aufgelösten Board kommen — ein appId im Body darf nichts bewirken'
+  );
+  // Selbst wenn der Body eine fremde appId mitschickt, prüft der geteilte
+  // Helfer die Board-Zugehörigkeit noch einmal gegen den Tenant.
+  const helper = helperBody('createTenantRelease');
+  assert.ok(
+    helper.includes('appRow && appRow.tenantId === tenant.id')
+      && helper.includes("getTenantId(appDoc.data() || {}) === tenant.id"),
+    'createTenantRelease muss die Board-Zugehörigkeit in beiden Backends prüfen'
+  );
+  assert.ok(helper.includes("body: { error: 'App nicht gefunden' }"),
+    'ein fremdes Board muss 404 liefern');
+});
+
+test('releaseDate: null löscht das Datum, statt ignoriert zu werden', () => {
+  const helper = helperBody('updateTenantRelease');
+  assert.ok(helper.includes('if (releaseDate !== undefined) {'),
+    'nur undefined bedeutet "nicht gesetzt" — null muss durchlaufen');
+  assert.ok(helper.includes('updateData.releaseDate = parsedReleaseDate;'),
+    'der geparste Wert (null = löschen) muss in den Update wandern');
+  // parseReleaseDate bildet null bewusst auf null ab (Datum entfernen) und
+  // unterscheidet das vom Fehlerfall INVALID_RELEASE_DATE.
+  assert.ok(functionBodyOf('parseReleaseDate').includes('value === null'),
+    'parseReleaseDate muss null als "Datum entfernen" behandeln');
+});
+
+test('v1 gibt Release-Daten als ISO-Strings aus, nicht als Firestore-Shape', () => {
+  assert.ok(
+    apiSource.includes('function buildApiReleaseResponse(release)'),
+    'Release-Antworten brauchen einen einheitlichen Mapper'
+  );
+  assert.ok(
+    apiSource.includes('releases.map(buildApiReleaseResponse)')
+      && apiSource.includes('status === 201 ? buildApiReleaseResponse(body) : body')
+      && apiSource.includes('res.json(buildApiReleaseResponse(release));'),
+    'GET-Liste, POST und PATCH müssen durch den Mapper laufen'
+  );
+  // Die Shape-Erkennung (Date / Timestamp / {_seconds}) kommt aus dem bereits
+  // vorhandenen toDateOrEpoch — hier zählt nur: ISO-String, und kein Datum
+  // bleibt null statt 1970.
+  const mapper = helperBody('toApiDate');
+  assert.ok(mapper.includes('toDateOrEpoch(value).toISOString()'),
+    'der Mapper darf die Shape-Erkennung nicht erneut implementieren');
+  assert.ok(mapper.includes('value ?'), 'kein Datum bleibt null, nicht 1970');
+});
+
+test('Release-Löschung verhält sich identisch zum Admin-Pfad', () => {
+  const adminRoute = v1Handler("app.delete('/api/admin/tenants/:tenantSlug/releases/:releaseId'");
+  const apiRoute = v1Handler("app.delete('/api/v1/releases/:releaseId'");
+  assert.ok(adminRoute.includes('deleteTenantRelease(tenant, req.params.releaseId)'));
+  assert.ok(apiRoute.includes('deleteTenantRelease(req.apiAuth.tenant, req.params.releaseId)'));
+  // Verknüpfte Einträge werden in beiden Fällen gebündelt entkoppelt.
+  const helper = helperBody('deleteTenantRelease');
+  assert.ok(helper.includes('RELEASE_UNLINK_BATCH_LIMIT'));
+  assert.ok(helper.includes('unlinkedSuggestions: unlinkedCount'));
+});
+
+// ---------------------------------------------------------------------------
+// Import-Modus
+// ---------------------------------------------------------------------------
+
+test('der Import-Modus greift nur bei explizitem import-Block', () => {
+  const body = v1Handler("app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write'])");
+  assert.ok(
+    body.includes('suggestionImport.parseImportBlock('),
+    'die Import-Validierung muss im reinen Modul liegen'
+  );
+  // Das Modul entscheidet am `import`-Feld — ohne Block bleibt alles beim
+  // bisherigen Serververhalten.
+  const { parseImportBlock } = require('../api/suggestion-import');
+  assert.deepEqual(
+    parseImportBlock({ type: 'feature', title: 'Normal' }, { ticketPrefix: 'FAM' }),
+    { importData: null },
+    'ohne import-Block darf sich eine normale Einreichung nicht ändern'
+  );
+  // Ohne import-Block bleibt der bisherige Pfad: Generator + plain add().
+  assert.ok(body.includes('await generateTicketNumber(tenantApp.id, req.apiAuth.tenantId)'));
+  assert.ok(body.includes("await db.collection('suggestions').add(suggestion)"));
+});
+
+test('Import setzt votes ohne votes-Dokumente und akzeptiert nur vergangene Daten', () => {
+  const body = v1Handler("app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write'])");
+  assert.ok(body.includes('suggestion.votes = importData.votes;'),
+    'votes setzt nur den Zähler');
+  assert.equal(
+    /import[\s\S]{0,400}db\.collection\('votes'\)/.test(body),
+    false,
+    'der Import darf keine votes-Dokumente erzeugen (Doppelabstimmungs-Sperre)'
+  );
+  assert.ok(body.includes('admin.firestore.Timestamp.fromDate(importData.createdAt)'),
+    'createdAt überschreibt den Serverzeitstempel');
+  // Zukunfts-Check lebt im reinen Modul (siehe tests/suggestion-import.test.js).
+  const { parseImportBlock } = require('../api/suggestion-import');
+  const future = parseImportBlock(
+    { import: { createdAt: '2099-01-01T00:00:00.000Z' } },
+    { ticketPrefix: 'FAM' }
+  );
+  assert.match(future.error, /Vergangenheit/);
+});
+
+test('Import-Schreibvorgänge sind im Audit-Log als Import erkennbar', () => {
+  const body = v1Handler("app.post('/api/v1/apps/:appSlug/suggestions', requireApiKey(['suggestions:write'])");
+  assert.ok(
+    body.includes("logActivity(suggestionId, importData ? 'imported' : 'created'"),
+    'Importe müssen eine eigene Action bekommen'
+  );
+  assert.ok(body.includes('via API importiert'), 'das Detail muss den Import benennen');
+  assert.ok(body.includes('const actor = `api:${req.apiAuth.keyId}`;'),
+    'der Actor bleibt api:<keyId>');
+});
+
+test('api-docs.html deckt die neuen Endpunkte, Scopes und den Import-Block ab', () => {
+  [
+    'POST /apps',
+    'PATCH /apps/:appSlug',
+    'GET /apps/:appSlug/releases',
+    'POST /apps/:appSlug/releases',
+    'PATCH /releases/:releaseId',
+    'DELETE /releases/:releaseId',
+    'PUT /suggestions/:id/release',
+  ].forEach(fragment => {
+    assert.ok(apiDocsHtml.includes(fragment), `api-docs.html muss ${fragment} dokumentieren`);
+  });
+
+  ['boards:write', 'releases:read', 'releases:write'].forEach(scope => {
+    assert.ok(apiDocsHtml.includes(scope), `api-docs.html muss den Scope ${scope} dokumentieren`);
+  });
+
+  assert.ok(apiDocsHtml.includes('&quot;import&quot;') || apiDocsHtml.includes('"import"'),
+    'api-docs.html muss den Import-Block zeigen');
+  assert.ok(/ticketNumber/.test(apiDocsHtml) && /createdAt/.test(apiDocsHtml));
+  assert.ok(/DELETE/.test(apiDocsHtml) && /30 Requests\/Minute/.test(apiDocsHtml),
+    'DELETE-Rate-Limit muss dokumentiert sein');
 });

@@ -16,8 +16,11 @@ test('API_KEY_SCOPES exposes the documented scope set', () => {
   assert.deepEqual(
     [...API_KEY_SCOPES].sort(),
     [
+      'boards:write',
       'comments:read',
       'comments:write',
+      'releases:read',
+      'releases:write',
       'suggestions:read',
       'suggestions:status',
       'suggestions:write',

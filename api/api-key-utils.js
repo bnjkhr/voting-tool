@@ -9,6 +9,9 @@ const API_KEY_SCOPES = [
   'suggestions:status',
   'comments:read',
   'comments:write',
+  'boards:write',
+  'releases:read',
+  'releases:write',
 ];
 
 function generateApiKeyToken() {
