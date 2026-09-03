@@ -52,7 +52,29 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.deepEqual((await suggestions.findById('test_r_s1')).labels, ['ui']);
   await suggestions.removeLabel('test_r_s1', 'ui');
   assert.deepEqual((await suggestions.findById('test_r_s1')).labels, []);
-  assert.equal((await suggestions.listByApp(A)).length, 1);
+  assert.equal((await suggestions.listByAppFiltered(A, T)).length, 1);
+  assert.equal((await suggestions.listByAppFiltered(A, 'other-tenant')).length, 0); // tenant-gescopt
+
+  // v1 POST /apps/:slug/suggestions legt direkt freigegeben an. approved ohne
+  // approved_at wäre eine halbfertige Zeile (Sortierung/Audit); das Repo
+  // stempelt den Zeitstempel deshalb selbst, wenn keiner mitkommt.
+  const viaApi = await suggestions.create({
+    id: 'test_r_s2', tenantId: T, appId: A, type: 'feature',
+    title: 'Via API', approved: true, ticketNumber: 'R-002',
+  });
+  assert.equal(viaApi.approved, true);
+  assert.ok(viaApi.approvedAt, 'approved-Create muss approved_at setzen');
+  const stamped = await suggestions.create({
+    id: 'test_r_s3', tenantId: T, appId: A, type: 'feature',
+    title: 'Mit Zeitstempel', approved: true, approvedAt: new Date('2026-01-02T03:04:05Z'),
+  });
+  assert.equal(stamped.approvedAt.toISOString(), '2026-01-02T03:04:05.000Z',
+    'ein übergebener Zeitstempel wird übernommen');
+  assert.equal(
+    (await suggestions.create({ id: 'test_r_s4', tenantId: T, appId: A, type: 'feature', title: 'Offen' })).approvedAt,
+    null,
+    'nicht freigegebene Einträge bekommen keinen approved_at-Zeitstempel'
+  );
 
   // --- releases + Verknüpfung ---
   const r = await releases.create({ id: 'test_r_rel', tenantId: T, appId: A, version: '1.0', title: 'Launch' });
@@ -128,15 +150,43 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   assert.equal((await apiKeys.findByTokenHash('hash_key')).id, 'test_r_key');
   assert.deepEqual((await apiKeys.findByTokenHash('hash_key')).scopes, ['suggestions:read']);
   assert.equal((await apiKeys.listByTenant(T)).length, 1);
+  // Genau der Lookup, den requireApiKey unter DATA_BACKEND=postgres fährt:
+  // Hash rein -> Key mit Tenant/Scopes raus, danach lastUsedAt fortschreiben.
+  const authKey = await apiKeys.findByTokenHash('hash_key');
+  assert.equal(authKey.tenantId, T, 'Key muss den Tenant für die Scope-/Plan-Prüfung tragen');
+  assert.equal(authKey.lastUsedAt, null, 'frischer Key wurde noch nie benutzt');
+  const touched = await apiKeys.touch('test_r_key');
+  assert.ok(touched.lastUsedAt, 'touch schreibt lastUsedAt fort (Usage-Tracking im v1-Pfad)');
+  assert.equal(await apiKeys.findByTokenHash('kein_treffer'), null,
+    'unbekannter Hash liefert null -> 401 statt Treffer auf eine Fremdzeile');
+
   await apiKeys.revoke('test_r_key');
+  // revoke löscht nicht — requireApiKey findet den Key weiter und antwortet
+  // wegen revokedAt mit 401 'API key revoked' (isApiKeyActive).
   assert.ok((await apiKeys.findByTokenHash('hash_key')).revokedAt);
 
   // --- attachments (inline bytea + Batch-Load + Proxy-Fetch) ---
   const bytes = Buffer.from('89504e470d0a1a0a', 'hex');           // PNG-Magic reicht als Testinhalt
-  const att = await attachments.create({ tenantId: T, parentType: 'suggestion', parentId: 'test_r_s1', data: bytes, contentType: 'image/png' });
+  const [att] = await attachments.createMany([
+    { tenantId: T, parentType: 'suggestion', parentId: 'test_r_s1', data: bytes, contentType: 'image/png' },
+  ]);
   assert.ok(att.id);                                              // von DB generiert
   assert.equal(att.sizeBytes, bytes.length);                      // size aus data abgeleitet
   assert.equal((await attachments.listForParent('suggestion', 'test_r_s1')).length, 1);
+
+  // Mehrere Bilder eines Parents landen in EINEM Insert (statt einer Runde pro
+  // Bild) und behalten Reihenfolge und abgeleitete Grösse.
+  const jpg = Buffer.from('ffd8ffe0', 'hex');
+  const many = await attachments.createMany([
+    { tenantId: T, parentType: 'comment', parentId: 'test_r_c1', data: bytes, contentType: 'image/png' },
+    { tenantId: T, parentType: 'comment', parentId: 'test_r_c1', data: jpg, contentType: 'image/jpeg' },
+  ]);
+  assert.equal(many.length, 2);
+  assert.ok(many.every((a) => a.id), 'IDs kommen aus der DB zurück');
+  assert.deepEqual(many.map((a) => a.contentType), ['image/png', 'image/jpeg'], 'Reihenfolge bleibt erhalten');
+  assert.deepEqual(many.map((a) => a.sizeBytes), [bytes.length, jpg.length], 'size wird je Zeile aus data abgeleitet');
+  assert.equal((await attachments.listForParent('comment', 'test_r_c1')).length, 2);
+  assert.deepEqual(await attachments.createMany([]), [], 'leerer Batch macht keinen Query');
   assert.equal((await attachments.listForParents('suggestion', ['test_r_s1', 'nope'], T)).length, 1);
   assert.equal((await attachments.listForParents('suggestion', ['test_r_s1'], 'other-tenant')).length, 0); // tenant-gescopt
   const fetched = await attachments.findWithData(att.id, T);

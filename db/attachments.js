@@ -14,14 +14,27 @@ const META = `
   id, tenant_id, parent_type, parent_id, storage_key, content_type, size_bytes, created_at
 `;
 
-async function create({ tenantId, parentType, parentId, data, contentType, sizeBytes }) {
-  const { rows } = await query(
+// Legt beliebig viele Attachments in EINEM Insert an. Screenshots kommen immer
+// als Batch (bis zu 5 Bilder pro Kommentar/Bug) — einzeln eingefügt wären das
+// ebenso viele Round-Trips zur DB.
+async function createMany(rows) {
+  if (!rows || rows.length === 0) return [];
+  const values = [];
+  const placeholders = rows.map((row, i) => {
+    const base = i * 6;
+    values.push(
+      row.tenantId, row.parentType, row.parentId, row.data,
+      row.contentType || null, row.sizeBytes ?? (row.data ? row.data.length : null)
+    );
+    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+  });
+  const { rows: inserted } = await query(
     `insert into attachments (tenant_id, parent_type, parent_id, data, content_type, size_bytes)
-     values ($1, $2, $3, $4, $5, $6)
+     values ${placeholders.join(', ')}
      returning ${META}`,
-    [tenantId, parentType, parentId, data, contentType || null, sizeBytes ?? (data ? data.length : null)]
+    values
   );
-  return mapRow(rows[0]);
+  return mapRows(inserted);
 }
 
 async function listForParent(parentType, parentId) {
@@ -66,5 +79,5 @@ async function removeForParent(parentType, parentId) {
 }
 
 module.exports = {
-  create, listForParent, listForParents, findWithData, removeForParent,
+  createMany, listForParent, listForParents, findWithData, removeForParent,
 };

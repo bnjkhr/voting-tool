@@ -28,11 +28,24 @@ async function listPublicForApp(appId) {
   return mapRows(rows);
 }
 
-// Admin: alle Einträge einer App bzw. eines Tenants.
-async function listByApp(appId) {
+// Admin: alle Einträge eines Tenants.
+// Alle Einträge einer App — tenant-gescopt und mit den Filtern der v1-API
+// direkt in der WHERE-Klausel. Sonst wandert das ganze Board über die Leitung, nur um in
+// JS weggeworfen zu werden. type/status sind NOT NULL mit CHECK-Constraint,
+// deshalb ist ein Gleichheitsvergleich hier äquivalent zur JS-Filterung.
+async function listByAppFiltered(appId, tenantId, { type, status, approved } = {}) {
+  const conditions = ['app_id = $1', 'tenant_id = $2'];
+  const values = [appId, tenantId];
+  for (const [column, value] of [['type', type], ['status', status], ['approved', approved]]) {
+    if (value === undefined || value === null || value === '') continue;
+    values.push(value);
+    conditions.push(`${column} = $${values.length}`);
+  }
   const { rows } = await query(
-    `select ${COLUMNS} from suggestions where app_id = $1 order by created_at desc`,
-    [appId]
+    `select ${COLUMNS} from suggestions
+     where ${conditions.join(' and ')}
+     order by created_at desc`,
+    values
   );
   return mapRows(rows);
 }
@@ -81,10 +94,21 @@ async function listApprovedByReleaseIds(releaseIds, tenantId) {
   return mapRows(rows);
 }
 
+// Default für direkt freigegebene Creates (z.B. via API-Key): fehlt der
+// Zeitstempel, wird er hier gesetzt — `approved = true` ohne Datum wäre eine
+// halbfertige Zeile. Spiegelt db/comments.js create(). Kein harter Invariant:
+// update() und der Firestore-Import können approved ohne Datum schreiben;
+// das müsste eine CHECK-Constraint erzwingen.
+function resolveApprovedAt(approved, approvedAt) {
+  if (!approved) return null;
+  return approvedAt || new Date();
+}
+
 async function create(data) {
   const {
     id, tenantId, appId, type, title, description = '', status = 'neu',
     priority = null, labels = [], tag = null, votes = 0, approved = false,
+    approvedAt = null,
     releaseId = null, ticketNumber = null, userFingerprint = null,
     notificationEnabled = false, notificationEmail = null,
     severity = null, stepsToReproduce = null, expectedBehavior = null,
@@ -94,15 +118,15 @@ async function create(data) {
   const { rows } = await query(
     `insert into suggestions (
        id, tenant_id, app_id, type, title, description, status, priority, labels,
-       tag, votes, approved, release_id, ticket_number, user_fingerprint,
+       tag, votes, approved, approved_at, release_id, ticket_number, user_fingerprint,
        notification_enabled, notification_email, severity, steps_to_reproduce,
        expected_behavior, actual_behavior, environment
      ) values (
-       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
      ) returning ${COLUMNS}`,
     [
       id, tenantId, appId, type, title, description, status, priority, labels,
-      tag, votes, approved, releaseId, ticketNumber, userFingerprint,
+      tag, votes, approved, resolveApprovedAt(approved, approvedAt), releaseId, ticketNumber, userFingerprint,
       notificationEnabled, notificationEmail, severity, stepsToReproduce,
       expectedBehavior, actualBehavior, environment ? JSON.stringify(environment) : null,
     ]
@@ -164,6 +188,6 @@ async function remove(id) {
 }
 
 module.exports = {
-  findById, listPublicForApp, listByApp, listByTenant, listByRelease,
+  findById, listPublicForApp, listByAppFiltered, listByTenant, listByRelease,
   listApprovedByReleaseIds, countByReleaseIds, create, update, setApproved, addLabel, removeLabel, remove,
 };
