@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { shouldServeAppShell } = require('../api/spa-fallback');
+const { shouldServeAppShell, isBoardDeepLinkQuery } = require('../api/spa-fallback');
 
 test('serves the board shell for path-based tenant board urls', () => {
     for (const p of ['/acme', '/acme/feedback', '/acme/feedback/roadmap', '/acme/feedback/changelog', '/acme/feedback/t/1234']) {
@@ -45,4 +45,40 @@ test('only GET/HEAD are eligible', () => {
     assert.equal(shouldServeAppShell('POST', '/acme/feedback'), false);
     assert.equal(shouldServeAppShell('PUT', '/acme'), false);
     assert.equal(shouldServeAppShell('HEAD', '/acme/feedback/roadmap'), true);
+});
+
+test('board deep link queries on "/" are recognised', () => {
+    for (const q of [
+        { appId: 'OMXhYVpea6zl36v1cuQs' },
+        { appId: 'OMXhYVpea6zl36v1cuQs', view: 'roadmap' },
+        { tenant: 'acme' },
+        { tenant: 'acme', app: 'feedback' },
+    ]) {
+        assert.equal(isBoardDeepLinkQuery(q), true, `expected board link for ${JSON.stringify(q)}`);
+    }
+});
+
+test('queries that name no board are not board deep links', () => {
+    for (const q of [
+        {},
+        { view: 'roadmap' },
+        { app: 'feedback' },          // ohne tenant benennt "app" nichts
+        { utm_source: 'newsletter' },
+        { appId: '' },
+        { tenant: '   ' },
+        { appId: null },
+        { appId: 123 },               // kein String -> kein Slug
+    ]) {
+        assert.equal(isBoardDeepLinkQuery(q), false, `must not be a board link: ${JSON.stringify(q)}`);
+    }
+    assert.equal(isBoardDeepLinkQuery(undefined), false);
+    assert.equal(isBoardDeepLinkQuery(null), false);
+});
+
+test('repeated query parameters follow the first value, like URLSearchParams.get', () => {
+    // Express liefert ?appId=a&appId=b als Array; url-state.js im Client nimmt
+    // den ersten Wert. Beide Seiten muessen denselben Link gleich beurteilen.
+    assert.equal(isBoardDeepLinkQuery({ appId: ['abc', 'def'] }), true);
+    assert.equal(isBoardDeepLinkQuery({ appId: ['', 'def'] }), false);
+    assert.equal(isBoardDeepLinkQuery({ appId: [] }), false);
 });
