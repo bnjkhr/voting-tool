@@ -58,7 +58,7 @@ const {
   normalizeScopes,
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
-const { shouldServeAppShell } = require('./spa-fallback');
+const { shouldServeAppShell, isBoardDeepLinkQuery } = require('./spa-fallback');
 const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');
@@ -141,8 +141,12 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // nicht die Board-SPA (public/index.html) als Default-Index für "/" greift.
 // Board-URLs (/{tenant}, /{tenant}/{board}, ...) laufen weiter über den
 // SPA-Fallback am Ende der Datei; /index.html bleibt als Board-Shell erreichbar.
+//
+// Ausnahme: Query-Deep-Links (?appId=…, ?tenant=…) benennen ein Board. Die
+// stecken in ausgelieferten App-Builds und bekommen die Shell, nicht Marketing.
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/landing.html'));
+  const page = isBoardDeepLinkQuery(req.query) ? 'index.html' : 'landing.html';
+  res.sendFile(path.join(__dirname, '../public', page));
 });
 
 const INTERNAL_STATIC_PATHS = new Set([

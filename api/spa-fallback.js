@@ -58,4 +58,30 @@ function shouldServeAppShell(method, pathname) {
     return false;
 }
 
-module.exports = { shouldServeAppShell, buildReservedSegments, RESERVED_FIRST_SEGMENTS };
+// Express liefert bei wiederholtem Parameter ein Array. URLSearchParams.get()
+// in url-state.js nimmt den ersten Wert — hier dieselbe Regel, damit Server und
+// Client denselben Link gleich beurteilen.
+function firstQueryValue(value) {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return typeof raw === 'string' ? raw.trim() : '';
+}
+
+// Query-basierte Deep-Links auf "/" benennen ein Board, keine Landingpage:
+//   ?appId=<docId>            -> Legacy-Board (public/url-state.js: buildUrlState)
+//   ?tenant=<slug>[&app=…]    -> Tenant-Board, alte Form vor den Pfad-URLs
+// Diese Links stecken in ausgelieferten App-Builds (FamilyManager, GymBo) und
+// lassen sich nicht nachtraeglich aendern. Ohne diese Weiche liefert "/" die
+// Landingpage und der Link zeigt Marketing statt Board.
+//
+// "app" allein zaehlt nicht: ohne tenant/appId benennt es kein Board, und
+// parseUrlState wertet es dann auch nicht aus.
+function isBoardDeepLinkQuery(query) {
+    return ['appId', 'tenant'].some((key) => firstQueryValue(query?.[key]) !== '');
+}
+
+module.exports = {
+    shouldServeAppShell,
+    isBoardDeepLinkQuery,
+    buildReservedSegments,
+    RESERVED_FIRST_SEGMENTS,
+};
