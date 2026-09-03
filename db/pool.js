@@ -21,6 +21,10 @@ function stripSslParams(connectionString) {
   }
 }
 
+function sslDisabled() {
+  return process.env.PGSSLMODE === 'disable';
+}
+
 function getPool() {
   if (pool) return pool;
   const raw = process.env.DATABASE_URL;
@@ -34,7 +38,10 @@ function getPool() {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
     // Volle TLS-Verifikation (Neon nutzt öffentlich vertrauenswürdige Zertifikate).
-    ssl: true,
+    // Nur ein exaktes PGSSLMODE=disable schaltet TLS ab — für einen lokalen oder
+    // CI-Postgres-Container ohne Zertifikat. Bewusst fail-safe: jeder andere
+    // Wert, auch ein Tippfehler, lässt TLS an. Produktion setzt die Variable nie.
+    ssl: sslDisabled() ? false : true,
   });
   pool.on('error', (err) => console.error('Unerwarteter PG-Pool-Fehler:', err));
   return pool;
@@ -61,4 +68,4 @@ async function withTransaction(cb) {
   }
 }
 
-module.exports = { getPool, query, withTransaction, stripSslParams };
+module.exports = { getPool, query, withTransaction, stripSslParams, sslDisabled };

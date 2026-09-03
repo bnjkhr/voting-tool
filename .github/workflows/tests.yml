@@ -1,0 +1,62 @@
+name: Tests
+
+# Bis hierher lief nichts automatisch: die gruenen Checks am PR waren
+# Vercel-Builds und der Secret-Scan, keine Testlaeufe. Beide Suiten liefen nur,
+# wenn jemand daran dachte.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Ohne DATABASE_URL ueberspringen sich die Integrationstests still — das
+      # ist hier gewollt, dieser Job deckt bewusst nur die Quelltext-Suite ab.
+      - run: npm test
+
+  integration:
+    name: Integration (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: roadlight_test
+        ports:
+          - 5432:5432
+        # Ohne Healthcheck laeuft der erste Query gegen einen noch bootenden
+        # Server und der ganze Job faellt mit ECONNREFUSED um.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/roadlight_test
+      DATABASE_URL_UNPOOLED: postgres://postgres:postgres@127.0.0.1:5432/roadlight_test
+      # Der Service-Container spricht kein TLS. db/pool.js verlangt sonst
+      # verifiziertes TLS (Neon) — nur dieser exakte Wert schaltet es ab.
+      PGSSLMODE: disable
+      # Bewusstes Opt-in aus tests/integration/helpers.js. Die Suite schreibt
+      # echte Zeilen; hier ist die Ziel-DB ein Wegwerf-Container.
+      ALLOW_DB_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Migrationen anwenden
+        run: npm run db:migrate
+      - run: npm run test:integration
