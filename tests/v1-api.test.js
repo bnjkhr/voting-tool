@@ -644,7 +644,7 @@ test('der Import-Modus greift nur bei explizitem import-Block', () => {
   );
   // Das Modul entscheidet am `import`-Feld — ohne Block bleibt alles beim
   // bisherigen Serververhalten.
-  const { parseImportBlock } = require('../api/suggestion-import');
+  const { parseImportBlock } = require('../lib/suggestion-import');
   assert.deepEqual(
     parseImportBlock({ type: 'feature', title: 'Normal' }, { ticketPrefix: 'FAM' }),
     { importData: null },
@@ -667,7 +667,7 @@ test('Import setzt votes ohne votes-Dokumente und akzeptiert nur vergangene Date
   assert.ok(body.includes('admin.firestore.Timestamp.fromDate(importData.createdAt)'),
     'createdAt überschreibt den Serverzeitstempel');
   // Zukunfts-Check lebt im reinen Modul (siehe tests/suggestion-import.test.js).
-  const { parseImportBlock } = require('../api/suggestion-import');
+  const { parseImportBlock } = require('../lib/suggestion-import');
   const future = parseImportBlock(
     { import: { createdAt: '2099-01-01T00:00:00.000Z' } },
     { ticketPrefix: 'FAM' }

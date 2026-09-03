@@ -14,7 +14,7 @@ const {
   nextCounterValue,
   parseImportBlock,
   parseImportTicketNumber,
-} = require('../api/suggestion-import');
+} = require('../lib/suggestion-import');
 
 const BOARD = { ticketPrefix: 'FAM', name: 'FamilyManager' };
 

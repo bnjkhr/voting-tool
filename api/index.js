@@ -13,7 +13,7 @@ const {
   validateCommentScreenshots,
 } = require('./comment-utils');
 const { compareAdminSuggestions } = require('./admin-suggestion-sort');
-const suggestionImport = require('./suggestion-import');
+const suggestionImport = require('../lib/suggestion-import');
 const { queryCollectionInChunks } = require('./firestore-chunks');
 const {
   LEGACY_PUBLIC_HIDDEN_APP_IDS,
