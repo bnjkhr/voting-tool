@@ -761,9 +761,8 @@ test('Release-Anlage nimmt das Board aus dem Pfad, nicht aus dem Body', () => {
   // Helfer die Board-Zugehörigkeit noch einmal gegen den Tenant.
   const helper = helperBody('createTenantRelease');
   assert.ok(
-    helper.includes('appRow && appRow.tenantId === tenant.id')
-      && helper.includes("getTenantId(appDoc.data() || {}) === tenant.id"),
-    'createTenantRelease muss die Board-Zugehörigkeit in beiden Backends prüfen'
+    helper.includes('findTenantApp(tenant, appId)'),
+    'createTenantRelease muss die Board-Zugehörigkeit über findTenantApp prüfen'
   );
   assert.ok(helper.includes("body: { error: 'App nicht gefunden' }"),
     'ein fremdes Board muss 404 liefern');

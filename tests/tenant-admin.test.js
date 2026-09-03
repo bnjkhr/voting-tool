@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { functionBody, handlerAfter } = require('./source-slice');
+
 const rootDir = path.join(__dirname, '..');
 const apiSource = fs.readFileSync(path.join(rootDir, 'api/index.js'), 'utf8');
 const tenantAdminHtml = fs.readFileSync(path.join(rootDir, 'public/tenant-admin.html'), 'utf8');
@@ -284,4 +286,111 @@ test('tenant admin shows dismissible onboarding for signup redirects', () => {
   assert.ok(tenantAdminScript.includes("params.get('onboarding') === '1'"));
   assert.ok(tenantAdminScript.includes('localStorage'));
   assert.ok(tenantAdminScript.includes('tenantAdmin:onboardingDismissed:'));
+});
+
+// ---------------------------------------------------------------------------
+// Board löschen (Konsole)
+// ---------------------------------------------------------------------------
+
+test('Board-Delete ist owner/admin-gescopt und läuft über den geteilten Helfer', () => {
+  assert.ok(
+    apiSource.includes("app.delete('/api/admin/tenants/:tenantSlug/apps/:appId', requireTenantAccess(['owner', 'admin'])"),
+    'Board-Delete braucht denselben Rollen-Guard wie die anderen destruktiven Tenant-Routen'
+  );
+  const route = handlerAfter(apiSource, "app.delete('/api/admin/tenants/:tenantSlug/apps/:appId'");
+  assert.ok(route.includes('resolveAdminTenantFromParam(req, res)'));
+  assert.ok(route.includes('deleteTenantBoard('), 'die Route bleibt ein dünner Wrapper');
+  assert.ok(route.includes('req.body || {}'), 'der Body wird als Ganzes durchgereicht, wie bei den Nachbarrouten');
+  assert.ok(
+    functionBody(apiSource, 'deleteTenantBoard').includes('body.confirm'),
+    'die Bestätigung wird im Helfer ausgewertet, nicht in der Route'
+  );
+});
+
+test('fremde Boards sind über den Delete nicht abfragbar', () => {
+  // findTenantApp ist der einzige Resolver; Board-ID allein ist keine Grenze.
+  const resolver = functionBody(apiSource, 'findTenantApp');
+  assert.ok(resolver.includes('appRow && appRow.tenantId === tenant.id'), 'Postgres-Zweig prüft den Tenant');
+  assert.ok(resolver.includes("getTenantId(appDoc.data() || {}) !== tenant.id"), 'Firestore-Zweig prüft den Tenant');
+
+  const body = functionBody(apiSource, 'deleteTenantBoard');
+  assert.ok(body.includes('findTenantApp(tenant, appId)'), 'Delete muss über den Resolver gehen');
+  // Gleicher Body für "fremd" und "nicht vorhanden", sonst sind IDs probierbar.
+  assert.equal((body.match(/error: 'Board nicht gefunden'/g) || []).length >= 1, true);
+});
+
+test('die Slug-Bestätigung lässt sich nicht mit Leereingabe aushebeln', () => {
+  const body = functionBody(apiSource, 'deleteTenantBoard');
+  // Altbestände können ohne slug-Feld existieren; dann bestätigt die ID.
+  assert.ok(body.includes('board.slug || board.id'), 'Fallback auf die ID für Boards ohne Slug');
+  assert.ok(/if \(!provided \|\| provided !== expected\)/.test(body),
+    'leere Eingabe muss VOR dem Vergleich abgewiesen werden, sonst matcht "" === ""');
+});
+
+test('der Board-Delete verschickt keine Benachrichtigungen', () => {
+  // Der Einzel-Delete ruft notifySuggestionCreator — bei einem Board wären das
+  // hunderte Mails, nach einem Abbruch teils doppelt.
+  const body = functionBody(apiSource, 'deleteTenantBoard');
+  assert.equal(body.includes('notifySuggestionCreator'), false);
+  assert.equal(body.includes('sendUserNotificationEmail'), false);
+});
+
+test('Firestore löscht Blätter vor Eltern und das Board zuletzt', () => {
+  const body = functionBody(apiSource, 'deleteTenantBoard');
+  const pos = needle => body.indexOf(needle);
+  assert.ok(pos("collection('counters').doc(board.id).delete()") > -1, 'der Zähler muss mit weg');
+  assert.ok(
+    pos("collection('counters').doc(board.id).delete()") < pos("collection('apps').doc(board.id).delete()"),
+    'der Zähler ist nur über die Board-ID erreichbar — vor dem Board löschen'
+  );
+  assert.ok(
+    pos("db.collection('releases')") < pos("collection('apps').doc(board.id).delete()"),
+    'das App-Dokument muss zuletzt sterben, sonst sind Reste nicht mehr aufzählbar'
+  );
+  // Ohne .select() zieht die Aufzählung alle base64-Screenshots in den Heap.
+  assert.ok(body.includes(".select('tenantId')"), 'Aufzählung muss projizieren');
+  // Ein verschluckter Lesefehler wäre hier Datenverlust.
+  assert.ok(body.includes('throwOnError: true'), 'Lesefehler dürfen auf dem Löschpfad nicht verschluckt werden');
+});
+
+test('die Postgres-Kaskade räumt auch die FK-losen Tabellen ab', () => {
+  const appsRepo = fs.readFileSync(path.join(rootDir, 'db/apps.js'), 'utf8');
+  const body = functionBody(appsRepo, 'remove');
+  assert.ok(body.includes('withTransaction('), 'alles oder nichts');
+  assert.ok(body.includes('delete from attachments'), 'attachments hat keinen FK auf suggestions');
+  assert.ok(body.includes('delete from activity'), 'activity hat gar keinen FK');
+  assert.ok(
+    body.indexOf('delete from attachments') < body.indexOf('delete from apps'),
+    'Attachments müssen weg, solange ihre Eltern noch existieren'
+  );
+  assert.ok(body.includes('and tenant_id = $2'), 'die Tenant-Grenze liegt im finalen Delete');
+});
+
+test('die Konsole bietet Board-Löschen mit Inline-Bestätigung an', () => {
+  ['delete-board', 'confirm-delete-board', 'cancel-delete-board'].forEach(action => {
+    assert.ok(
+      tenantAdminScript.includes(`data-action="${action}"`),
+      `erwartet delegierte Aktion: ${action}`
+    );
+  });
+  assert.ok(
+    tenantAdminScript.includes("document.getElementById('tenantBoardsList').addEventListener('click'"),
+    'die Boards-Liste braucht einen eigenen delegierten Listener'
+  );
+  assert.ok(tenantAdminScript.includes('askDeleteBoard') && tenantAdminScript.includes('async deleteBoard('));
+  assert.ok(
+    tenantAdminScript.includes("this.tenantAdminPath(`/apps/${encodeURIComponent(appId)}`)"),
+    'Delete muss über den tenant-gescopten Admin-Pfad gehen'
+  );
+  // Der Button hängt hinter der Rollenprüfung, wie bei den Releases.
+  const render = tenantAdminScript.split('renderBoards() {')[1].split('\n    }')[0];
+  assert.ok(render.includes('canManage ?'), 'Löschen-Button nur für Owner/Admin');
+  assert.ok(tenantAdminHtml.includes('.tenant-board-confirm'), 'Styling für die Bestätigungszeile');
+});
+
+test('der Legacy-Board-Delete bleibt unangetastet', () => {
+  assert.ok(
+    apiSource.includes("app.delete('/api/admin/apps/:appId', requireAdminAuth"),
+    'die passwortgeschützte Legacy-Route darf nicht mit umgebaut werden'
+  );
 });

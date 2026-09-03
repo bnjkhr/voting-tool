@@ -2,7 +2,7 @@
 
 // Repository für apps (Boards). Enthält den Ticketnummer-Bump, der die frühere
 // Firestore-Transaktion + eigene 'counters'-Collection ersetzt.
-const { query } = require('./pool');
+const { query, withTransaction } = require('./pool');
 const { mapRow, mapRows, buildUpdate } = require('./rows');
 const { formatTicketNumber } = require('../lib/ticket-number');
 
@@ -53,9 +53,68 @@ async function update(id, fields) {
   return mapRow(rows[0]);
 }
 
-async function remove(id) {
-  // ON DELETE CASCADE räumt suggestions/votes/comments/releases mit ab.
-  await query('delete from apps where id = $1', [id]);
+// Loescht ein Board samt allem, was daran haengt, und liefert die Anzahlen.
+//
+// ON DELETE CASCADE deckt releases und suggestions ab, ueber suggestions auch
+// comments und votes. NICHT abgedeckt: `attachments` (polymorph ueber
+// parent_type/parent_id, kein FK auf suggestions — dort liegen die Screenshot-
+// Bytes) und `activity` (gar kein FK). Beide muessen explizit weg, und zwar
+// BEVOR die Cascade ihre Eltern entfernt — danach sind sie nicht mehr
+// auffindbar. Gleiches Muster wie suggestions.remove().
+async function remove(id, tenantId) {
+  return withTransaction(async (client) => {
+    // 0. Tenant-Grenze ZUERST. withTransaction committet bei normalem Return —
+    //    ein spaeteres `return null` wuerde die Loeschungen darunter also nicht
+    //    zurueckrollen. Stuende die Pruefung erst beim finalen Delete, haette
+    //    remove(id, 'fremder-tenant') die Attachments und die Activity dieses
+    //    Boards bereits vernichtet und dabei "nicht gefunden" gemeldet.
+    //    `for update` haelt die Zeile bis zum Commit.
+    const owned = await client.query(
+      'select 1 from apps where id = $1 and tenant_id = $2 for update',
+      [id, tenantId]
+    );
+    if (owned.rowCount === 0) return null;
+
+    // 1. Attachments beider parent_type-Zweige, solange die Comments noch da sind.
+    const attachments = await client.query(
+      `delete from attachments
+       where (parent_type = 'suggestion'
+              and parent_id in (select id from suggestions where app_id = $1))
+          or (parent_type = 'comment'
+              and parent_id in (select c.id from comments c
+                                join suggestions s on s.id = c.suggestion_id
+                                where s.app_id = $1))`,
+      [id]
+    );
+
+    // 2. activity haengt nur ueber ticket_id an den suggestions.
+    const activity = await client.query(
+      'delete from activity where ticket_id in (select id from suggestions where app_id = $1)',
+      [id]
+    );
+
+    // 3. Zaehlen, solange es noch etwas zu zaehlen gibt — die Cascade meldet
+    //    keine Zeilenzahlen zurueck.
+    const { rows } = await client.query(
+      `select
+         (select count(*) from suggestions where app_id = $1)::int as suggestions,
+         (select count(*) from comments c join suggestions s on s.id = c.suggestion_id
+            where s.app_id = $1)::int as comments,
+         (select count(*) from votes v join suggestions s on s.id = v.suggestion_id
+            where s.app_id = $1)::int as votes,
+         (select count(*) from releases where app_id = $1)::int as releases`,
+      [id]
+    );
+
+    // 4. Das Board selbst. Bleibt zusaetzlich tenant-gescopt.
+    await client.query('delete from apps where id = $1 and tenant_id = $2', [id, tenantId]);
+
+    return {
+      ...rows[0],
+      activity: activity.rowCount,
+      attachments: attachments.rowCount,
+    };
+  });
 }
 
 // Atomarer Ticketnummer-Bump: liefert die auszugebende Nummer und erhöht den
