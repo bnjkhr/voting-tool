@@ -8,3 +8,8 @@ node_modules/
 .playwright-mcp/
 *firebase-adminsdk*.json
 .claude/
+
+# Wegwerf-Arbeitsverzeichnis (Import-Skripte, Datendumps, Scratch).
+# War bisher nur untracked: ein `git add -A` haette Quelldumps mit echten
+# Nutzerdaten committet.
+tmp/
