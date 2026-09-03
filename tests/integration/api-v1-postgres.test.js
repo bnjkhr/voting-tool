@@ -117,6 +117,19 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
   await seedKey('test_v1_key_inactive', T_INACTIVE, inactiveTenantToken, ALL_SCOPES);
 
   const { server, base, call } = await bootApp();
+
+  // Fuer Binaerantworten (Bild-Bytes) — `call` parst JSON.
+  async function fetchBytes(path, token) {
+    const res = await fetch(`${base}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    return {
+      status: res.status,
+      contentType: res.headers.get('content-type'),
+      nosniff: res.headers.get('x-content-type-options'),
+      bytes: Buffer.from(await res.arrayBuffer()),
+    };
+  }
   t.after(() => new Promise((resolve) => server.close(resolve)));
 
   // -------------------------------------------------------------------------
@@ -511,7 +524,10 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
 
     assert.equal(body.screenshots.length, 1);
     assert.equal(body.screenshots[0].startsWith('data:'), false, 'kein base64-Echo in der Antwort');
-    assert.match(body.screenshots[0], /\/attachments\/[0-9a-f-]{36}$/, 'Proxy-URL erwartet');
+    // Die Konsole liest ueber ihren eigenen, session-authentifizierten Proxy —
+    // nicht ueber die v1-Route. Jeder Leser bekommt die URL, die er abrufen kann.
+    assert.match(body.screenshots[0], /^\/api\/admin\/tenants\/test-v1\/attachments\/[0-9a-f-]{36}$/,
+      `Admin-Proxy-URL erwartet, bekam: ${body.screenshots[0]}`);
 
     // Und die Bytes liegen wirklich als attachments-Zeile, nicht im Kommentar.
     const att = await query(
@@ -520,10 +536,71 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
     );
     assert.equal(att.rows[0].n, 1);
 
-    // Dieselbe URL kommt beim Lesen zurueck — POST und GET stimmen ueberein.
-    const list = await call('GET', `/api/v1/suggestions/${createdId}/comments`, { token: fullToken });
-    const same = list.body.find((c) => c.id === body.id);
-    assert.deepEqual(same.screenshots, body.screenshots, 'POST- und GET-Form muessen identisch sein');
+    // POST und GET stimmen INNERHALB desselben Lesers ueberein: das Konsolen-GET
+    // liefert dieselbe Admin-URL zurueck.
+    const consoleList = await fetch(`${base}/api/admin/tenants/test-v1/suggestions/${createdId}/comments`, {
+      headers: { Authorization: `Bearer ${process.env.ADMIN_PASSWORD}` },
+    });
+    const consoleComments = await consoleList.json();
+    const same = consoleComments.find((c) => c.id === body.id);
+    assert.deepEqual(same.screenshots, body.screenshots,
+      'POST- und GET-Form der Konsole muessen identisch sein');
+
+    // Derselbe Kommentar ueber v1 gelesen liefert die v1-URL — andere Route,
+    // gleiches Bild. Das ist der Sinn der Scopes.
+    const v1List = await call('GET', `/api/v1/suggestions/${createdId}/comments`, { token: fullToken });
+    const viaV1 = v1List.body.find((c) => c.id === body.id);
+    assert.match(viaV1.screenshots[0], /^\/api\/v1\/attachments\//);
+    assert.equal(
+      viaV1.screenshots[0].split('/').pop(), body.screenshots[0].split('/').pop(),
+      'beide Routen zeigen auf dieselbe Attachment-ID'
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Screenshots muessen fuer einen API-Key-Client auch abrufbar sein. Unter
+  // Postgres liefern die Lesepfade Proxy-URLs; ohne eigene v1-Route zeigten
+  // die auf den Admin-Proxy, der eine Session verlangt — der Client bekam eine
+  // URL, die er nicht oeffnen kann.
+  // -------------------------------------------------------------------------
+  await t.test('v1-Client kann die Screenshot-URL aus der Antwort wirklich abrufen', async () => {
+    // 1x1-PNG, Bytes bekannt — damit der Round-Trip pruefbar ist.
+    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const created = await call('POST', `/api/v1/suggestions/${createdId}/comments`, {
+      token: fullToken, body: { text: 'Bild fuer den Proxy', screenshots: [`data:image/png;base64,${pngBase64}`] },
+    });
+    assert.equal(created.status, 201, created.raw);
+
+    const url = created.body.screenshots[0];
+    // Die URL muss auf die v1-Route zeigen, nicht auf den Admin-Proxy.
+    assert.match(url, /^\/api\/v1\/attachments\/[0-9a-f-]{36}$/, `unerwartete URL: ${url}`);
+
+    const img = await fetchBytes(url, fullToken);
+    assert.equal(img.status, 200, `Bild muss abrufbar sein, bekam ${img.status}`);
+    assert.equal(img.contentType, 'image/png');
+    assert.equal(img.nosniff, 'nosniff', 'Raster-Whitelist + nosniff gegen SVG-XSS');
+    assert.deepEqual(img.bytes, Buffer.from(pngBase64, 'base64'), 'Bytes muessen unveraendert zurueckkommen');
+
+    // Ohne Key: 401. Mit Key ohne comments:read: 403.
+    assert.equal((await fetchBytes(url)).status, 401);
+    assert.equal((await fetchBytes(url, readOnlyToken)).status, 403, 'suggestions:read reicht nicht');
+
+    // Unbekannte und fremde IDs: 404, nie ein Byte.
+    assert.equal((await fetchBytes('/api/v1/attachments/00000000-0000-0000-0000-000000000000', fullToken)).status, 404);
+    assert.equal((await fetchBytes('/api/v1/attachments/kein-uuid', fullToken)).status, 400);
+
+    // Attachment eines FREMDEN Tenants ist unsichtbar, obwohl die ID gueltig ist.
+    const fremd = await query(
+      `insert into attachments (tenant_id, parent_type, parent_id, data, content_type)
+       values ($1, 'comment', 'egal', $2, 'image/png') returning id`,
+      [T2, Buffer.from(pngBase64, 'base64')]
+    );
+    const fremdId = fremd.rows[0].id;
+    assert.equal((await fetchBytes(`/api/v1/attachments/${fremdId}`, fullToken)).status, 404,
+      'der Tenant kommt aus dem Schluessel — fremde IDs liefern 404');
+    // Und die Zeile existiert wirklich, der 404 kommt nicht daher, dass nichts da ist.
+    const exists = await query('select count(*)::int n from attachments where id = $1', [fremdId]);
+    assert.equal(exists.rows[0].n, 1);
   });
 
 });

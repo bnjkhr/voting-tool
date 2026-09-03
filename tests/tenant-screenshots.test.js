@@ -51,8 +51,12 @@ test('Lesepfade hängen Proxy-URLs an (public vs admin)', () => {
   // Public-Reads ohne admin-Flag, Admin-Reads mit true (authentifizierter Proxy).
   assert.ok(apiSource.includes("attachScreenshotUrls(suggestions, 'suggestion', tenant)"));
   assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', tenant)"));
-  assert.ok(apiSource.includes("attachScreenshotUrls(suggestions, 'suggestion', tenant, true)"));
-  assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', tenant, true)"));
+  assert.ok(apiSource.includes("attachScreenshotUrls(suggestions, 'suggestion', tenant, 'admin')"));
+  assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', tenant, 'admin')"));
+  // v1 liest ueber eine eigene Route — ein API-Key hat keine Admin-Session.
+  assert.ok(apiSource.includes("attachScreenshotUrls(comments, 'comment', req.apiAuth.tenant, 'v1')"));
+  // Ein unbekannter Scope muss laut auffallen, nicht still eine falsche URL bauen.
+  assert.ok(apiSource.includes('Unbekannter Attachment-Scope'));
 });
 
 test('öffentlicher Proxy ist tenant-gescopt UND nur für freigegebene Parents', () => {
