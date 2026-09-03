@@ -151,7 +151,29 @@ async function create(data) {
 //
 // Beruehrt bewusst auch apps.next_ticket_number: die Nummer und der Zaehler
 // sind eine gemeinsame Invariante, kein reiner suggestions-Belang.
+// Verletzung des Unique-Index aus migration 0007. Der vorgelagerte SELECT faengt
+// den Normalfall ab und liefert die schoene Fehlermeldung; hier landet nur das
+// Rennen zweier gleichzeitiger Importe derselben Nummer.
+const TICKET_NUMBER_UNIQUE_INDEX = 'suggestions_app_ticket_number_uidx';
+
+function isTicketNumberConflict(error) {
+  return Boolean(error) && error.code === '23505' && error.constraint === TICKET_NUMBER_UNIQUE_INDEX;
+}
+
 async function createWithImportedTicketNumber({ appId, tenantId, ticketNumber, ticketNumberValue, data }) {
+  try {
+    return await insertWithImportedTicketNumber({ appId, tenantId, ticketNumber, ticketNumberValue, data });
+  } catch (error) {
+    // Der SELECT unten ist ein Check-then-Insert: unter READ COMMITTED sieht er
+    // eine noch nicht committete Parallel-Einfuegung nicht. Den Gleichstand
+    // entscheidet deshalb der Unique-Index, und der Verlierer bekommt denselben
+    // 409 wie beim regulaer erkannten Duplikat — nicht ein 500.
+    if (isTicketNumberConflict(error)) return { conflict: true };
+    throw error;
+  }
+}
+
+async function insertWithImportedTicketNumber({ appId, tenantId, ticketNumber, ticketNumberValue, data }) {
   return withTransaction(async (client) => {
     const exec = (text, params) => client.query(text, params);
 
@@ -227,5 +249,6 @@ async function remove(id) {
 
 module.exports = {
   findById, listPublicForApp, listByAppFiltered, listByTenant, listByRelease,
-  listApprovedByReleaseIds, countByReleaseIds, create, createWithImportedTicketNumber, update, setApproved, addLabel, removeLabel, remove,
+  listApprovedByReleaseIds, countByReleaseIds, create, createWithImportedTicketNumber,
+  isTicketNumberConflict, update, setApproved, addLabel, removeLabel, remove,
 };

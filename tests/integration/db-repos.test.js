@@ -22,6 +22,7 @@ async function cleanup() {
 suite('remaining repositories (suggestions, comments, releases, activity, users, memberships, invites, sessions, login-links, api-keys, attachments)', async (t) => {
   const { query } = require('../../db/pool');
   const suggestions = require('../../db/suggestions');
+  const apps = require('../../db/apps');
   const comments = require('../../db/comments');
   const releases = require('../../db/releases');
   const activity = require('../../db/activity');
@@ -91,6 +92,90 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   });
   assert.ok(fresh.createdAt, 'ohne created_at greift der Spalten-Default now()');
   assert.ok(fresh.createdAt > imported.createdAt, 'der Default ist die Gegenwart, nicht das Importdatum');
+
+  // --- Ticketnummer: eindeutig je Board (migration 0007) ---
+  // Der vorgelagerte SELECT in createWithImportedTicketNumber ist ein
+  // Check-then-Insert und traegt unter Nebenlaeufigkeit nicht. Diese Faelle
+  // treffen den echten Failure Mode: erst den regulaeren Weg, dann das Rennen.
+  const imp = { appId: A, tenantId: T, ticketNumber: 'R-500', ticketNumberValue: 500 };
+  const first = await suggestions.createWithImportedTicketNumber({
+    ...imp, data: { id: 'test_r_imp1', tenantId: T, appId: A, type: 'feature', title: 'Import 1' },
+  });
+  assert.ok(first.row, 'erster Import legt an');
+  assert.equal(first.row.ticketNumber, 'R-500');
+  assert.equal((await apps.findById(A)).nextTicketNumber >= 501, true, 'Zaehler wurde auf 501 gehoben');
+
+  // Sequenziell: der SELECT sieht die committete Zeile -> sauberer conflict.
+  const second = await suggestions.createWithImportedTicketNumber({
+    ...imp, data: { id: 'test_r_imp2', tenantId: T, appId: A, type: 'feature', title: 'Import 2' },
+  });
+  assert.equal(second.conflict, true, 'zweiter Import derselben Nummer ist ein Konflikt');
+  assert.equal(second.row, undefined);
+
+  // Nebenlaeufigkeit deterministisch statt per Promise.all: zwei Verbindungen
+  // werden von Hand so verschraenkt, wie zwei gleichzeitige Importe laufen.
+  // Ein Promise.all-Test war hier zuerst drin und blieb auch OHNE Index gruen —
+  // die Transaktionen serialisierten sich zufaellig ueber den Row-Lock auf
+  // apps. Ein Test, der vor dem Fix nicht rot wird, prueft das Falsche.
+  const { getPool } = require('../../db/pool');
+  const c1 = await getPool().connect();
+  const c2 = await getPool().connect();
+  let raced;
+  try {
+    await c1.query('begin');
+    await c2.query('begin');
+    // Beide sehen "kein Duplikat" — genau das Fenster, das der SELECT offen laesst.
+    const seen1 = await c1.query('select 1 from suggestions where app_id = $1 and ticket_number = $2', [A, 'R-501']);
+    const seen2 = await c2.query('select 1 from suggestions where app_id = $1 and ticket_number = $2', [A, 'R-501']);
+    assert.equal(seen1.rows.length, 0);
+    assert.equal(seen2.rows.length, 0, 'beide Transaktionen halten die Nummer fuer frei');
+
+    await c1.query(
+      `insert into suggestions (id, tenant_id, app_id, type, title, ticket_number)
+       values ('test_r_race1', $1, $2, 'feature', 'Race 1', 'R-501')`, [T, A]);
+    await c1.query('commit');
+
+    // Erst jetzt schreibt der zweite — der SELECT von oben ist laengst veraltet.
+    try {
+      await c2.query(
+        `insert into suggestions (id, tenant_id, app_id, type, title, ticket_number)
+         values ('test_r_race2', $1, $2, 'feature', 'Race 2', 'R-501')`, [T, A]);
+      await c2.query('commit');
+      raced = null;
+    } catch (err) {
+      await c2.query('rollback');
+      raced = err;
+    }
+  } finally {
+    c1.release();
+    c2.release();
+  }
+
+  assert.ok(raced, 'ohne Unique-Index wuerde der zweite Insert durchgehen und ein Duplikat erzeugen');
+  assert.equal(raced.code, '23505', 'die DB weist das Duplikat ab');
+  assert.equal(
+    suggestions.isTicketNumberConflict(raced), true,
+    'createWithImportedTicketNumber erkennt genau diesen Fehler und antwortet mit 409 statt 500'
+  );
+  // Fremde Constraint-Verletzungen duerfen NICHT als Ticketnummer-Konflikt gelten.
+  assert.equal(suggestions.isTicketNumberConflict({ code: '23505', constraint: 'votes_suggestion_id_user_fingerprint_key' }), false);
+  assert.equal(suggestions.isTicketNumberConflict({ code: '23503', constraint: 'suggestions_app_ticket_number_uidx' }), false);
+  assert.equal(suggestions.isTicketNumberConflict(null), false);
+
+  const stored = await query('select count(*)::int as n from suggestions where app_id = $1 and ticket_number = $2', [A, 'R-501']);
+  assert.equal(stored.rows[0].n, 1, 'die DB haelt genau eine Zeile mit R-501');
+
+  // Dieselbe Nummer auf einem ANDEREN Board bleibt erlaubt.
+  await apps.create({ id: 'test_r_app2', tenantId: T, name: 'B2', slug: 'board-2', ticketPrefix: 'R' });
+  const otherBoard = await suggestions.createWithImportedTicketNumber({
+    appId: 'test_r_app2', tenantId: T, ticketNumber: 'R-500', ticketNumberValue: 500,
+    data: { id: 'test_r_imp3', tenantId: T, appId: 'test_r_app2', type: 'feature', title: 'Anderes Board' },
+  });
+  assert.ok(otherBoard.row, 'Ticketnummern sind nur je Board eindeutig, nicht global');
+
+  // Mehrere Zeilen OHNE Nummer bleiben erlaubt (partieller Index).
+  await suggestions.create({ id: 'test_r_nonum1', tenantId: T, appId: A, type: 'feature', title: 'ohne Nummer 1' });
+  await suggestions.create({ id: 'test_r_nonum2', tenantId: T, appId: A, type: 'feature', title: 'ohne Nummer 2' });
 
   // --- releases + Verknüpfung ---
   const r = await releases.create({ id: 'test_r_rel', tenantId: T, appId: A, version: '1.0', title: 'Launch' });
