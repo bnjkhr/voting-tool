@@ -118,6 +118,13 @@ class TenantAdminApp {
             if (!trigger) return;
             this.resetReleaseForm();
         });
+        document.getElementById('tenantBoardsList').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            if (trigger.dataset.action === 'delete-board') this.askDeleteBoard(trigger);
+            else if (trigger.dataset.action === 'confirm-delete-board') this.deleteBoard(trigger);
+            else if (trigger.dataset.action === 'cancel-delete-board') this.renderBoards();
+        });
         document.getElementById('releasesList').addEventListener('click', event => {
             const trigger = event.target.closest('[data-action]');
             if (!trigger) return;
@@ -288,16 +295,24 @@ class TenantAdminApp {
             return;
         }
 
+        const canManage = this.canManageWorkspace();
         host.innerHTML = this.apps.map(app => {
             const publicUrl = this.boardUrl(this.tenantSlug, app.slug);
+            const slug = app.slug || app.id;
             return `
                 <article class="tenant-board-item">
                     <strong>${this.escapeHtml(app.name || app.slug || app.id)}</strong>
                     <div class="tenant-board-meta">
-                        <span>${this.escapeHtml(app.slug || app.id)}</span>
+                        <span>${this.escapeHtml(slug)}</span>
                         <span>${this.escapeHtml(app.ticketPrefix || 'APP')}</span>
                         <a href="${this.escapeHtml(publicUrl)}">Public Board</a>
                     </div>
+                    ${canManage ? `
+                    <div class="tenant-team-actions">
+                        <button class="secondary-btn btn-small" type="button" data-action="delete-board"
+                                data-app-id="${this.escapeHtml(app.id)}"
+                                data-app-slug="${this.escapeHtml(slug)}">Board löschen</button>
+                    </div>` : ''}
                 </article>
             `;
         }).join('');
@@ -706,6 +721,65 @@ class TenantAdminApp {
         form.elements.releaseId.value = '';
         form.elements.releaseAppId.disabled = false;
         document.getElementById('saveReleaseBtn').textContent = 'Release speichern';
+    }
+
+    // Bewusst mehr Reibung als beim Release-Löschen: dort bleiben die Einträge
+    // erhalten, hier verschwinden sie unwiderruflich. Deshalb den Slug abtippen
+    // statt nur bestätigen — der Server verlangt ihn ebenfalls. Inline statt
+    // Browser-Dialog, weil der Slug zum Abtippen danebenstehen muss; ein
+    // confirm() kann kein Eingabefeld aufnehmen, und der Browser-Abfragedialog
+    // ist in dieser Konsole verboten (tests/admin-auth.test.js).
+    askDeleteBoard(trigger) {
+        const { appId, appSlug } = trigger.dataset;
+        const host = trigger.closest('.tenant-board-item');
+        if (!host) return;
+
+        const count = this.suggestions.filter(entry => entry.appId === appId).length;
+        host.querySelector('.tenant-team-actions').innerHTML = `
+            <div class="tenant-board-confirm">
+                <span>${count} Einträge samt Kommentaren, Stimmen und Releases werden unwiderruflich gelöscht. Zum Bestätigen <strong>${this.escapeHtml(appSlug)}</strong> eingeben:</span>
+                <input type="text" data-confirm-slug autocomplete="off" placeholder="${this.escapeHtml(appSlug)}">
+                <button class="secondary-btn btn-small" type="button" data-action="confirm-delete-board"
+                        data-app-id="${this.escapeHtml(appId)}" data-app-slug="${this.escapeHtml(appSlug)}">Endgültig löschen</button>
+                <button class="secondary-btn btn-small" type="button" data-action="cancel-delete-board">Abbrechen</button>
+            </div>
+        `;
+        host.querySelector('[data-confirm-slug]').focus();
+    }
+
+    async deleteBoard(trigger) {
+        if (!this.canManageWorkspace()) {
+            this.showToast('Keine Berechtigung für Boards', 'error');
+            return;
+        }
+
+        const { appId, appSlug: slug } = trigger.dataset;
+        // Aus DERSELBEN Zeile lesen: sind zwei Bestätigungen offen, träfe eine
+        // globale Suche die falsche.
+        const field = trigger.closest('.tenant-board-confirm').querySelector('[data-confirm-slug]');
+        const entered = field ? field.value.trim() : '';
+        if (entered !== slug) {
+            this.showToast(`Bitte "${slug}" exakt eingeben`, 'error');
+            if (field) field.focus();
+            return;
+        }
+
+        try {
+            const response = await this.adminFetch(
+                this.tenantAdminPath(`/apps/${encodeURIComponent(appId)}`),
+                { method: 'DELETE', body: JSON.stringify({ confirm: entered }) }
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Board konnte nicht gelöscht werden');
+
+            const d = result.deleted || {};
+            this.showToast(`Board gelöscht (${d.suggestions || 0} Einträge, ${d.releases || 0} Releases)`, 'success');
+            await Promise.all([this.loadApps(), this.loadStats(), this.loadReleases(), this.loadSuggestions()]);
+        } catch (error) {
+            console.error('Error deleting board:', error);
+            this.showToast(error.message || 'Board konnte nicht gelöscht werden', 'error');
+            this.renderBoards();
+        }
     }
 
     async deleteRelease(releaseId) {

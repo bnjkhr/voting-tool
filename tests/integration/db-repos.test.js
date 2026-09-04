@@ -319,6 +319,39 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   await attachments.removeForParent('suggestion', 'test_r_s1');
   assert.equal((await attachments.listForParent('suggestion', 'test_r_s1')).length, 0);
 
+  // --- apps.remove cascade (FK-lose Tabellen explizit) ---
+  // Der naive Einzeiler "delete from apps" liesse attachments und activity
+  // zurueck: attachments haengt polymorph ohne FK an den suggestions, activity
+  // hat gar keinen FK. Beides waere danach nicht mehr auffindbar.
+  {
+    const APP2 = 'test_r_app_doomed';
+    await apps.create({ id: APP2, tenantId: T, name: 'Doomed', slug: 'doomed', ticketPrefix: 'DM' });
+    await suggestions.create({ id: 'test_r_d1', tenantId: T, appId: APP2, type: 'feature', title: 'Weg' });
+    await activity.log({ tenantId: T, ticketId: 'test_r_d1', action: 'created', detail: 'x' });
+    await releases.create({ id: 'test_r_d_rel', tenantId: T, appId: APP2, version: '1.0', title: 'R' });
+
+    const counts = await apps.remove(APP2, T);
+    assert.equal(counts.suggestions, 1);
+    assert.equal(counts.releases, 1);
+    assert.equal(counts.activity, 1, 'activity muss explizit mit weg');
+    assert.equal(await apps.findById(APP2), null);
+    assert.equal(await suggestions.findById('test_r_d1'), null);
+    assert.equal((await activity.listByTicket('test_r_d1')).length, 0, 'keine verwaisten activity-Zeilen');
+
+    // Fremder Tenant: null signalisiert 404 — und es darf NICHTS geloescht
+    // worden sein. Der Rueckgabewert allein beweist das nicht: withTransaction
+    // committet bei normalem Return, ein zu spaeter Tenant-Check haette die
+    // Attachments und die Activity also schon vernichtet.
+    await suggestions.create({ id: 'test_r_keep', tenantId: T, appId: A, type: 'feature', title: 'Bleibt' });
+    await activity.log({ tenantId: T, ticketId: 'test_r_keep', action: 'created', detail: 'bleibt' });
+
+    assert.equal(await apps.remove(A, 'anderer-tenant'), null, 'fremder Tenant bekommt null');
+    assert.ok(await apps.findById(A), 'das Board des richtigen Tenants bleibt');
+    assert.ok(await suggestions.findById('test_r_keep'), 'seine Eintraege bleiben');
+    assert.equal((await activity.listByTicket('test_r_keep')).length, 1,
+      'und seine Activity — sonst hat der Aufruf trotz null Daten vernichtet');
+  }
+
   // --- suggestions.remove cascade (votes/comments via FK, activity explizit) ---
   await suggestions.remove('test_r_s1');
   assert.equal(await suggestions.findById('test_r_s1'), null);

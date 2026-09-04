@@ -14,7 +14,7 @@ const {
 } = require('./comment-utils');
 const { compareAdminSuggestions } = require('./admin-suggestion-sort');
 const suggestionImport = require('../lib/suggestion-import');
-const { queryCollectionInChunks } = require('./firestore-chunks');
+const { deleteDocsInChunks, queryCollectionInChunks } = require('./firestore-chunks');
 const {
   LEGACY_PUBLIC_HIDDEN_APP_IDS,
   isLegacyPublicAppVisible,
@@ -328,6 +328,20 @@ async function findTenantAppBySlug(tenantId, appSlug) {
   }
 
   return matches[0] || null;
+}
+
+// Board per ID im Tenant aufloesen. Ein fremdes Board ist damit
+// ununterscheidbar von einem nicht existierenden. Gegenstueck zu
+// findTenantAppBySlug; die Logik lag bisher nur inline in createTenantRelease.
+async function findTenantApp(tenant, appId) {
+  if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) return null;
+  if (usePostgres()) {
+    const appRow = await repos.apps.findById(appId);
+    return appRow && appRow.tenantId === tenant.id ? appRow : null;
+  }
+  const appDoc = await db.collection('apps').doc(appId).get();
+  if (!appDoc.exists || getTenantId(appDoc.data() || {}) !== tenant.id) return null;
+  return { id: appDoc.id, ...appDoc.data() };
 }
 
 async function resolveTenantAndAppBySlug({ tenantSlug, appSlug }) {
@@ -3851,6 +3865,111 @@ async function updateTenantBoard(tenantApp, body = {}) {
   return { status: 200, body: { ...tenantApp, ...updates } };
 }
 
+// Wie viele Suggestions pro Durchgang abgeraeumt werden. Begrenzt den
+// Speicherbedarf und die Zahl der Batches — NICHT die Nebenlaeufigkeit:
+// queryCollectionInChunks feuert seine 10er-Chunks per Promise.all, ein
+// Durchgang erzeugt also rund SLICE/10 gleichzeitige Reads je Collection.
+const BOARD_DELETE_SLICE = 200;
+
+// Loescht ein Board samt aller abhaengigen Daten.
+//
+// WICHTIG, Firestore: Die Reihenfolge IST die Korrektheit. Ein Dokument wird nie
+// vor dem geloescht, was nur ueber es erreichbar ist, und das App-Dokument
+// zuletzt. Bricht der Vorgang ab, bleibt das Board sichtbar und ein erneuter
+// Aufruf zaehlt neu auf — er konvergiert. Wuerde das App-Dokument zuerst
+// verschwinden, waeren die restlichen Eintraege nicht mehr aufzaehlbar, taeten
+// aber weiter in den Tenant-Stats auftauchen.
+//
+// BEWUSST KEIN NOTIFY: Der Einzel-Delete verschickt notifySuggestionCreator(...,
+// 'rejected', ...). Hier waeren das bei einem gewachsenen Board hunderte Mails,
+// nach einem Abbruch teils doppelt. Nicht "aus Konsistenz" ergaenzen.
+async function deleteTenantBoard(tenant, appId, body = {}) {
+  if (!appId || !/^[a-zA-Z0-9_-]+$/.test(appId)) {
+    return { status: 400, body: { error: 'Invalid board ID format' } };
+  }
+
+  const board = await findTenantApp(tenant, appId);
+  // Gleicher Body wie "nicht gefunden", damit fremde Board-IDs nicht abfragbar sind.
+  if (!board) {
+    return { status: 404, body: { error: 'Board nicht gefunden' } };
+  }
+
+  // Altbestaende koennen ohne slug-Feld existieren; dann bestaetigt die ID.
+  // Leereingabe vorher abweisen, sonst wuerde '' === '' die Sperre aushebeln.
+  const expected = board.slug || board.id;
+  const provided = typeof body.confirm === 'string' ? body.confirm.trim() : '';
+  if (!provided || provided !== expected) {
+    return {
+      status: 400,
+      body: { error: `Zur Bestätigung bitte den Board-Slug "${expected}" eingeben.` },
+    };
+  }
+
+  let deleted;
+
+  if (usePostgres()) {
+    deleted = await repos.apps.remove(board.id, tenant.id);
+    if (!deleted) return { status: 404, body: { error: 'Board nicht gefunden' } };
+  } else {
+    deleted = { suggestions: 0, comments: 0, votes: 0, releases: 0, activity: 0, attachments: 0 };
+    // --- A: Suggestions und ihre Blaetter, scheibenweise -------------------
+    const suggestionSnap = await db.collection('suggestions')
+      .where('appId', '==', board.id)
+      .select('tenantId')
+      .get();
+    const scoped = suggestionSnap.docs
+      .filter(doc => getTenantId(doc.data() || {}) === tenant.id);
+
+    for (let i = 0; i < scoped.length; i += BOARD_DELETE_SLICE) {
+      const slice = scoped.slice(i, i + BOARD_DELETE_SLICE);
+      const ids = slice.map(doc => doc.id);
+
+      // throwOnError: ein verschluckter Lesefehler wuerde hier Kinder als nicht
+      // vorhanden ausweisen, deren Eltern gleich geloescht werden.
+      const [comments, votes, activity] = await Promise.all([
+        queryCollectionInChunks(db, { collectionName: 'comments', fieldName: 'suggestionId', values: ids, applyChunkQuery: q => q.select(), throwOnError: true }),
+        queryCollectionInChunks(db, { collectionName: 'votes', fieldName: 'suggestionId', values: ids, applyChunkQuery: q => q.select(), throwOnError: true }),
+        queryCollectionInChunks(db, { collectionName: 'activity', fieldName: 'ticketId', values: ids, applyChunkQuery: q => q.select(), throwOnError: true }),
+      ]);
+
+      deleted.comments += await deleteDocsInChunks(db, comments);
+      deleted.votes += await deleteDocsInChunks(db, votes);
+      deleted.activity += await deleteDocsInChunks(db, activity);
+      deleted.suggestions += await deleteDocsInChunks(db, slice);
+    }
+
+    // --- B: Releases, nach den Eintraegen ----------------------------------
+    const releaseSnap = await db.collection('releases')
+      .where('appId', '==', board.id)
+      .select('tenantId')
+      .get();
+    deleted.releases = await deleteDocsInChunks(
+      db,
+      releaseSnap.docs.filter(doc => getTenantId(doc.data() || {}) === tenant.id)
+    );
+
+    // --- C: Zaehler. Die Dokument-ID IST die appId, also nur ueber sie
+    // erreichbar — vor dem App-Dokument loeschen, sonst bleibt er fuer immer
+    // liegen. Kein Tenant-Check: die ID ist bereits verifiziert.
+    await db.collection('counters').doc(board.id).delete();
+
+    // --- D: das Board selbst, zuletzt --------------------------------------
+    await db.collection('apps').doc(board.id).delete();
+    // attachments bleibt 0: in Firestore stecken die Screenshots als base64 in
+    // den Dokumenten selbst und verschwinden mit ihnen. Nicht anwendbar, nicht null.
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Board gelöscht',
+      board: { id: board.id, slug: board.slug || null, name: board.name || null },
+      deleted,
+    },
+  };
+}
+
 // Tenant Admin: create a board/app in one tenant
 app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
   try {
@@ -3862,6 +3981,20 @@ app.post('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(['owner', 'a
   } catch (error) {
     console.error('Error creating tenant board:', error);
     res.status(500).json({ error: 'Failed to create tenant board' });
+  }
+});
+
+// Tenant Admin: delete a board/app in one tenant
+app.delete('/api/admin/tenants/:tenantSlug/apps/:appId', requireTenantAccess(['owner', 'admin']), async (req, res) => {
+  try {
+    const tenant = await resolveAdminTenantFromParam(req, res);
+    if (!tenant) return;
+
+    const { status, body } = await deleteTenantBoard(tenant, req.params.appId, req.body || {});
+    res.status(status).json(body);
+  } catch (error) {
+    console.error('Error deleting tenant board:', error);
+    res.status(500).json({ error: 'Failed to delete tenant board' });
   }
 });
 
@@ -4943,15 +5076,7 @@ async function createTenantRelease(tenant, body = {}) {
     return { status: 400, body: { error: 'Ungültige App-ID' } };
   }
 
-  let appOk;
-  if (usePostgres()) {
-    const appRow = await repos.apps.findById(appId);
-    appOk = appRow && appRow.tenantId === tenant.id;
-  } else {
-    const appDoc = await db.collection('apps').doc(appId).get();
-    appOk = appDoc.exists && getTenantId(appDoc.data() || {}) === tenant.id;
-  }
-  if (!appOk) {
+  if (!await findTenantApp(tenant, appId)) {
     return { status: 404, body: { error: 'App nicht gefunden' } };
   }
 

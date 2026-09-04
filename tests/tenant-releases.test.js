@@ -89,15 +89,20 @@ test('tenant release writes verify the release belongs to the tenant', () => {
 });
 
 test('tenant release creation verifies the target app belongs to the tenant', () => {
-  // Both backends must scope the target app to the resolved tenant before
-  // creating a release, so an appId from tenant A cannot be used by tenant B.
+  // Der Guard lebt in findTenantApp — ein Resolver fuer beide Backends, damit
+  // Release-Anlage und Board-Delete nicht auseinanderlaufen koennen.
+  const resolver = functionBody(apiSource, 'findTenantApp');
   assert.ok(
-    apiSource.includes("appRow && appRow.tenantId === tenant.id"),
+    resolver.includes('appRow && appRow.tenantId === tenant.id'),
     'expected the Postgres branch to reject apps from other tenants',
   );
   assert.ok(
-    apiSource.includes("getTenantId(appDoc.data() || {}) === tenant.id"),
+    resolver.includes("getTenantId(appDoc.data() || {}) !== tenant.id"),
     'expected the Firestore branch to reject apps from other tenants',
+  );
+  assert.ok(
+    functionBody(apiSource, 'createTenantRelease').includes('findTenantApp(tenant, appId)'),
+    'createTenantRelease must resolve the board through that guard',
   );
 });
 

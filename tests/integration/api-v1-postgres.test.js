@@ -603,4 +603,134 @@ suite('v1 API gegen Postgres (DATA_BACKEND=postgres)', async (t) => {
     assert.equal(exists.rows[0].n, 1);
   });
 
+
+  // -------------------------------------------------------------------------
+  // Board loeschen: die Kaskade ist der Punkt. attachments haengt polymorph
+  // ohne FK an den suggestions, activity hat gar keinen FK — beide wuerden bei
+  // einem naiven "delete from apps" verwaisen. Das koennen die Quelltext-Tests
+  // nicht sehen, nur eine echte DB.
+  // -------------------------------------------------------------------------
+  await t.test('Board-Delete laesst keine verwaisten Zeilen zurueck', async () => {
+    const DEL = 'test_v1_doomed_app';
+    await query(
+      `insert into apps (id, tenant_id, name, slug, ticket_prefix) values ($1,$2,'Doomed','doomed','DOOM')`,
+      [DEL, T]
+    );
+
+    // Eigener Schluessel: rateLimitByApiKey zaehlt pro keyId, und das
+    // POST-Budget des geteilten Schluessels ist zu diesem Zeitpunkt der Suite
+    // aufgebraucht.
+    const delToken = generateApiKeyToken();
+    await seedKey('test_v1_key_del', T, delToken,
+      ['suggestions:read', 'suggestions:write', 'comments:write', 'releases:write']);
+
+    // Ueber die API befuellen, damit genau die Zeilen entstehen, die auch im
+    // Betrieb entstehen — inklusive attachments aus einem Screenshot.
+    const created = await call('POST', '/api/v1/apps/doomed/suggestions', {
+      token: delToken,
+      body: { type: 'feature', title: 'Verschwindet gleich', description: 'Mit allem drum herum' },
+    });
+    assert.equal(created.status, 201, created.raw);
+
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const comment = await call('POST', `/api/v1/suggestions/${created.body.id}/comments`, {
+      token: delToken,
+      body: { text: 'Kommentar mit Bild', screenshots: [png] },
+    });
+    assert.equal(comment.status, 201, comment.raw);
+
+    const release = await call('POST', '/api/v1/apps/doomed/releases', {
+      token: delToken,
+      body: { version: '9.9.9', title: 'Letztes Release' },
+    });
+    assert.equal(release.status, 201, release.raw);
+
+    // Vorbedingung: es gibt wirklich etwas zu verlieren.
+    const before = await query(
+      `select
+         (select count(*) from suggestions where app_id=$1)::int s,
+         (select count(*) from releases where app_id=$1)::int r,
+         (select count(*) from comments c join suggestions x on x.id=c.suggestion_id where x.app_id=$1)::int c,
+         (select count(*) from activity where ticket_id in (select id from suggestions where app_id=$1))::int a,
+         (select count(*) from attachments where parent_type='comment'
+            and parent_id in (select c2.id from comments c2 join suggestions x2 on x2.id=c2.suggestion_id where x2.app_id=$1))::int att`,
+      [DEL]
+    );
+    assert.ok(before.rows[0].s > 0 && before.rows[0].r > 0 && before.rows[0].c > 0, 'Testdaten fehlen');
+    assert.ok(before.rows[0].a > 0, 'activity-Zeilen erwartet');
+    assert.equal(before.rows[0].att, 1, 'attachment-Zeile erwartet');
+
+    // Falscher Slug wird abgewiesen — und loescht nichts.
+    const wrong = await fetch(`${base}/api/admin/tenants/test-v1/apps/${DEL}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${process.env.ADMIN_PASSWORD}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'falsch' }),
+    });
+    assert.equal(wrong.status, 400, 'falscher Slug muss 400 liefern');
+    assert.equal((await query('select count(*)::int n from apps where id=$1', [DEL])).rows[0].n, 1,
+      'nach einem 400 darf nichts geloescht sein');
+
+    // Leereingabe darf die Sperre nicht aushebeln.
+    const empty = await fetch(`${base}/api/admin/tenants/test-v1/apps/${DEL}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${process.env.ADMIN_PASSWORD}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: '' }),
+    });
+    assert.equal(empty.status, 400, 'leerer Slug muss 400 liefern');
+
+    // Jetzt richtig.
+    const res = await fetch(`${base}/api/admin/tenants/test-v1/apps/${DEL}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${process.env.ADMIN_PASSWORD}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'doomed' }),
+    });
+    const body = await res.json();
+    assert.equal(res.status, 200, `erwartet 200, bekam ${res.status}: ${JSON.stringify(body)}`);
+    assert.equal(body.deleted.suggestions, before.rows[0].s);
+    assert.equal(body.deleted.releases, before.rows[0].r);
+    assert.equal(body.deleted.attachments, before.rows[0].att);
+
+    // Und nichts bleibt liegen.
+    const after = await query(
+      `select
+         (select count(*) from apps where id=$1)::int app,
+         (select count(*) from suggestions where app_id=$1)::int s,
+         (select count(*) from releases where app_id=$1)::int r`,
+      [DEL]
+    );
+    assert.deepEqual(after.rows[0], { app: 0, s: 0, r: 0 });
+
+    const orphans = await query(
+      `select
+         (select count(*) from activity where ticket_id = $1)::int a,
+         (select count(*) from attachments where parent_type='comment' and parent_id = $2)::int att,
+         (select count(*) from comments where id = $2)::int c`,
+      [created.body.id, comment.body.id]
+    );
+    assert.deepEqual(orphans.rows[0], { a: 0, att: 0, c: 0 },
+      'activity und attachments duerfen nicht verwaisen');
+
+    // Das andere Board des Tenants ist unberuehrt.
+    assert.equal((await query('select count(*)::int n from apps where id=$1', [A])).rows[0].n, 1);
+  });
+
+  await t.test('ein Board aus einem fremden Tenant ist nicht loeschbar', async () => {
+    const A2 = 'test_v1_other_app';
+    await query(
+      `insert into apps (id, tenant_id, name, slug, ticket_prefix) values ($1,$2,'Fremd','board2','OTH')`,
+      [A2, T2]
+    );
+
+    // Board-ID allein ist keine Tenant-Grenze — die Konsole von test-v1 darf
+    // ein Board von test-v1-other nicht anfassen, auch nicht mit korrektem Slug.
+    const res = await fetch(`${base}/api/admin/tenants/test-v1/apps/${A2}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${process.env.ADMIN_PASSWORD}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'board2' }),
+    });
+    assert.equal(res.status, 404, 'fremdes Board muss 404 liefern, nicht 403');
+    assert.equal((await query('select count(*)::int n from apps where id=$1', [A2])).rows[0].n, 1,
+      'das fremde Board muss stehen bleiben');
+  });
+
 });
