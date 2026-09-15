@@ -7,6 +7,7 @@ class SignupApp {
         this.result = document.getElementById('signupResult');
         this.submitButton = document.getElementById('signupBtn');
         this.slugTouched = false;
+        this.guard = new FormGuard(this.form);
         this.init();
     }
 
@@ -48,10 +49,15 @@ class SignupApp {
             boardName: (formData.get('boardName') || '').toString().trim(),
             ticketPrefix: (formData.get('ticketPrefix') || '').toString().trim(),
             confirmBusinessCustomer: formData.get('confirmBusinessCustomer') === 'on',
+            ...this.guard.fields(),
         };
 
         if (!payload.email || !payload.workspaceName || !payload.confirmBusinessCustomer) {
             this.setStatus('E-Mail, Workspace Name und Unternehmerbestätigung sind erforderlich.', 'error');
+            return;
+        }
+        if (!this.guard.isReady()) {
+            this.setStatus(FormGuard.NOT_READY_MESSAGE, 'error');
             return;
         }
 
@@ -90,6 +96,7 @@ class SignupApp {
             this.setStatus(error.message || 'Workspace konnte nicht erstellt werden', 'error');
         } finally {
             this.submitButton.disabled = false;
+            this.guard.reset();
         }
     }
 
