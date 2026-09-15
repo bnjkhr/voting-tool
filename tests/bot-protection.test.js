@@ -193,6 +193,13 @@ test('Formulare tragen Honeypot, Turnstile-Container und laden form-guard.js vor
   assert.ok(read('public/login.js').includes('...this.guard.fields()'));
 });
 
+test('Datenschutzerklärung nennt Cloudflare Turnstile, das form-guard.js nachlädt', () => {
+  assert.ok(read('public/form-guard.js').includes('challenges.cloudflare.com/turnstile'));
+  const privacy = read('public/datenschutz.html');
+  ['Cloudflare Turnstile', 'Cloudflare, Inc.', 'https://www.cloudflare.com/turnstile-privacy-policy/']
+    .forEach((snippet) => assert.ok(privacy.includes(snippet), `datenschutz.html: ${snippet} fehlt`));
+});
+
 // ---------------------------------------------------------------------------
 // Magic Link: Scanner dürfen den Link nicht verbrauchen
 // ---------------------------------------------------------------------------

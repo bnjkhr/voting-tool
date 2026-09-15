@@ -58,11 +58,38 @@
             sowie den Zeitpunkt Ihrer Zustimmung zu den Vertragsbedingungen. Zahlungsdaten wie Karten- oder
             Kontonummern verarbeitet Stripe direkt; Roadlight speichert diese nicht vollst&auml;ndig.
         </p>
+        <h3>f) Schutz vor automatisierten Anmeldungen (Bot-Schutz)</h3>
+        <p>
+            Um zu verhindern, dass Bots Workspaces mit fremden E-Mail-Adressen anlegen oder Login-Links an
+            Unbeteiligte versenden, pr&uuml;fen wir Registrierung und Login-Anforderung. Dazu &uuml;bermittelt Ihr
+            Browser mit dem Formular die <strong>Zeit seit dem Laden der Seite</strong> und den Inhalt eines f&uuml;r
+            Menschen unsichtbaren Formularfelds; beides wird nicht gespeichert. Au&szlig;erdem begrenzen wir anhand der
+            bereits erzeugten Login-Links, wie viele Login-Links <strong>pro E-Mail-Adresse</strong> in kurzer Zeit
+            verschickt werden.
+        </p>
+        <p>
+            Auf den Seiten zur Registrierung und zur Anmeldung setzen wir zus&auml;tzlich <strong>Cloudflare Turnstile</strong>
+            ein, einen Dienst der Cloudflare, Inc., 101 Townsend St, San Francisco, CA 94107, USA. Turnstile unterscheidet
+            Menschen von Bots, ohne dass Sie ein R&auml;tsel l&ouml;sen m&uuml;ssen. Beim Aufruf dieser Seiten l&auml;dt Ihr
+            Browser das Turnstile-Skript von Cloudflare. Dabei verarbeitet Cloudflare nach eigenen Angaben Ihre
+            <strong>IP-Adresse</strong>, den <strong>User-Agent</strong> Ihres Browsers, einen <strong>TLS-Fingerabdruck</strong>
+            sowie den Site-Key und die Herkunft unserer Website. Inhalte, die Sie in das Formular eingeben, erh&auml;lt
+            Cloudflare nicht. Das Ergebnis der Pr&uuml;fung wird als einmal verwendbares Token an unseren Server
+            &uuml;bermittelt und dort bei Cloudflare verifiziert.
+        </p>
+        <p>
+            Cloudflare verarbeitet diese Daten als unser Auftragsverarbeiter. Zur Verbesserung der eigenen
+            Bot-Erkennung nutzt Cloudflare die Daten nach eigenen Angaben zus&auml;tzlich als eigenst&auml;ndig
+            Verantwortlicher auf Grundlage seines berechtigten Interesses. N&auml;here Informationen finden Sie in den
+            <a href="https://www.cloudflare.com/turnstile-privacy-policy/" rel="noopener">Datenschutzhinweisen zu Turnstile</a>
+            und in der <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener">Datenschutzerkl&auml;rung von Cloudflare</a>.
+        </p>
 
         <h2>3. Zwecke und Rechtsgrundlagen</h2>
         <ul>
             <li>Bereitstellung des Dienstes, Registrierung, Login, Einreichungen &ndash; <strong>Art. 6 Abs. 1 lit. b DSGVO</strong> (Vertrag/vorvertragliche Ma&szlig;nahmen).</li>
             <li>Missbrauchsvermeidung bei Abstimmungen, Betrieb und Sicherheit, Server-Logs &ndash; <strong>Art. 6 Abs. 1 lit. f DSGVO</strong> (berechtigtes Interesse an einem sicheren, funktionierenden Dienst).</li>
+            <li>Bot-Schutz bei Registrierung und Login einschlie&szlig;lich Cloudflare Turnstile &ndash; <strong>Art. 6 Abs. 1 lit. f DSGVO</strong> (berechtigtes Interesse, automatisierte Anmeldungen und den Versand von E-Mails an Unbeteiligte zu verhindern).</li>
             <li>Status-Benachrichtigungen per E-Mail &ndash; <strong>Art. 6 Abs. 1 lit. a DSGVO</strong> (Einwilligung, jederzeit widerrufbar).</li>
             <li>Abschluss, Abrechnung und Verwaltung von Roadlight Pro &ndash; <strong>Art. 6 Abs. 1 lit. b DSGVO</strong> (Vertragserf&uuml;llung) sowie Art. 6 Abs. 1 lit. c DSGVO (gesetzliche Aufbewahrungspflichten).</li>
         </ul>
@@ -74,9 +101,12 @@
             <li><strong>Neon Inc.</strong> (USA, mit Rechenzentrum in der EU) &ndash; Datenbank-Hosting (PostgreSQL) und Speicherung der Anwendungsdaten inkl. Screenshots.</li>
             <li><strong>Resend, Inc.</strong> (USA) &ndash; Versand transaktionaler E-Mails (Login-Links, Benachrichtigungen).</li>
             <li><strong>Stripe Payments Europe, Ltd.</strong> (Irland) und verbundene Stripe-Unternehmen &ndash; Zahlungsabwicklung, Abonnementverwaltung und Rechnungsstellung.</li>
+            <li><strong>Cloudflare, Inc.</strong> (USA) &ndash; Bot-Schutz bei Registrierung und Login (Cloudflare Turnstile).</li>
         </ul>
         <p>
             Mit diesen Anbietern bestehen <strong>Auftragsverarbeitungsvertr&auml;ge (Art. 28 DSGVO)</strong>.
+            Soweit Cloudflare Turnstile-Daten zur Verbesserung der eigenen Bot-Erkennung nutzt, handelt Cloudflare
+            als eigenst&auml;ndig Verantwortlicher (siehe Abschnitt 2&nbsp;f).
         </p>
 
         <h2>5. Daten&uuml;bermittlung in Drittl&auml;nder</h2>
@@ -94,6 +124,8 @@
             kurzer Zeit ab. Konto-, Board- und Eintragsdaten speichern wir, bis Sie den zugeh&ouml;rigen Workspace bzw.
             den jeweiligen Eintrag l&ouml;schen. IP-Adressen und User-Agent-Angaben im Zusammenhang mit Abstimmungen
             werden nur so lange gespeichert, wie es zur Missbrauchsvermeidung erforderlich ist.
+            Das Turnstile-Token und die Ausf&uuml;llzeit des Formulars speichern wir nicht; sie werden nur bei der
+            jeweiligen Anfrage gepr&uuml;ft.
             Abrechnungs- und Vertragsdaten werden entsprechend den gesetzlichen handels- und steuerrechtlichen
             Aufbewahrungspflichten gespeichert.
         </p>
@@ -104,6 +136,12 @@
             ein. Im lokalen Speicher Ihres Browsers werden lediglich technisch notwendige Einstellungen abgelegt
             (gew&auml;hltes Farbschema sowie bereits abgegebene Stimmen), damit die Anwendung funktioniert. Eine
             Einwilligung ist hierf&uuml;r nicht erforderlich.
+        </p>
+        <p>
+            Auf den Seiten zur Registrierung und zur Anmeldung wertet Cloudflare Turnstile Informationen aus Ihrem
+            Browser aus (siehe Abschnitt 2&nbsp;f). Dieser Zugriff ist f&uuml;r die von Ihnen gew&uuml;nschte, vor
+            Missbrauch gesch&uuml;tzte Registrierung und Anmeldung unbedingt erforderlich und erfolgt daher ohne
+            Einwilligung auf Grundlage von <strong>&sect;&nbsp;25 Abs.&nbsp;2 Nr.&nbsp;2 TDDDG</strong>.
         </p>
 
         <h2>8. Ihre Rechte</h2>
