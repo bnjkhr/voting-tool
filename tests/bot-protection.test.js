@@ -81,36 +81,62 @@ test('isEmailQuotaExceeded: ältere Links als 24 Stunden zählen nicht', () => {
 // Turnstile
 // ---------------------------------------------------------------------------
 
+const HOSTS = new Set(['roadlight.pro', 'app.roadlight.pro']);
+const siteverify = (result, ok = true) => async () => ({ ok, json: async () => result });
+const verifyOptions = (fetchImpl) => ({ secretKey: 'sec', action: 'login', hostnames: HOSTS, fetchImpl });
+
 test('turnstileConfig: nur beide Schlüssel zusammen schalten Turnstile scharf', () => {
   assert.equal(turnstileConfig({}), null);
   assert.equal(turnstileConfig({ TURNSTILE_SECRET_KEY: 's' }), null);
   assert.equal(turnstileConfig({ TURNSTILE_SITE_KEY: 'k' }), null);
-  assert.deepEqual(turnstileConfig({ TURNSTILE_SITE_KEY: 'k', TURNSTILE_SECRET_KEY: 's' }), { siteKey: 'k', secretKey: 's' });
+  assert.deepEqual(
+    turnstileConfig({ TURNSTILE_SITE_KEY: 'k', TURNSTILE_SECRET_KEY: 's', TURNSTILE_HOSTNAMES: ' roadlight.pro, app.roadlight.pro ,' }),
+    { siteKey: 'k', secretKey: 's', hostnames: HOSTS }
+  );
 });
 
-test('verifyTurnstile: schickt Secret, Token und IP an Cloudflare', async () => {
+test('verifyTurnstile: schickt Secret, Token und IP an Cloudflare, prüft action und hostname', async () => {
   let sent;
   const fetchImpl = async (url, options) => {
     sent = { url, form: new URLSearchParams(options.body) };
-    return { json: async () => ({ success: true }) };
+    return { ok: true, json: async () => ({ success: true, action: 'login', hostname: 'app.roadlight.pro' }) };
   };
-  assert.equal(await verifyTurnstile('tok', '203.0.113.7', { secretKey: 'sec', fetchImpl }), null);
+  assert.equal(await verifyTurnstile('tok', '203.0.113.7', verifyOptions(fetchImpl)), null);
   assert.equal(sent.url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
   assert.equal(sent.form.get('secret'), 'sec');
   assert.equal(sent.form.get('response'), 'tok');
   assert.equal(sent.form.get('remoteip'), '203.0.113.7');
 });
 
-test('verifyTurnstile: fehlendes oder ungültiges Token wird abgewiesen', async () => {
-  const fetchImpl = async () => ({ json: async () => ({ success: false }) });
-  assert.equal(await verifyTurnstile('', null, { secretKey: 'sec', fetchImpl }), 'turnstile_missing');
-  assert.equal(await verifyTurnstile('tok', null, { secretKey: 'sec', fetchImpl }), 'turnstile_failed');
+test('verifyTurnstile: fehlendes, zu langes oder ungültiges Token wird abgewiesen', async () => {
+  const fetchImpl = siteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+  assert.equal(await verifyTurnstile('', null, verifyOptions(fetchImpl)), 'turnstile_missing');
+  assert.equal(await verifyTurnstile(42, null, verifyOptions(fetchImpl)), 'turnstile_missing');
+  assert.equal(await verifyTurnstile('x'.repeat(2049), null, verifyOptions(fetchImpl)), 'turnstile_missing');
+  assert.equal(await verifyTurnstile('tok', null, verifyOptions(fetchImpl)), 'turnstile_failed', 'z. B. wiederverwendetes Token');
 });
 
-test('verifyTurnstile: Cloudflare nicht erreichbar sperrt niemanden aus', async (t) => {
+test('verifyTurnstile: falsche action oder fremder hostname wird abgewiesen', async () => {
+  const wrongAction = siteverify({ success: true, action: 'signup', hostname: 'roadlight.pro' });
+  const wrongHost = siteverify({ success: true, action: 'login', hostname: 'example.com' });
+  assert.equal(await verifyTurnstile('tok', null, verifyOptions(wrongAction)), 'turnstile_action');
+  assert.equal(await verifyTurnstile('tok', null, verifyOptions(wrongHost)), 'turnstile_hostname');
+});
+
+test('verifyTurnstile: ohne TURNSTILE_HOSTNAMES wird abgewiesen, ohne Cloudflare zu fragen', async (t) => {
   t.mock.method(console, 'error', () => {});
-  const fetchImpl = async () => { throw new Error('ECONNRESET'); };
-  assert.equal(await verifyTurnstile('tok', null, { secretKey: 'sec', fetchImpl }), null);
+  let called = false;
+  const fetchImpl = async () => { called = true; return { ok: true, json: async () => ({ success: true }) }; };
+  const options = { ...verifyOptions(fetchImpl), hostnames: new Set() };
+  assert.equal(await verifyTurnstile('tok', null, options), 'turnstile_hostnames_missing');
+  assert.equal(called, false);
+});
+
+test('verifyTurnstile: Cloudflare nicht erreichbar oder HTTP-Fehler wird abgewiesen', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const unreachable = async () => { throw new Error('ECONNRESET'); };
+  assert.equal(await verifyTurnstile('tok', null, verifyOptions(unreachable)), 'turnstile_unreachable');
+  assert.equal(await verifyTurnstile('tok', null, verifyOptions(siteverify({ success: true }, false))), 'turnstile_unreachable');
 });
 
 // ---------------------------------------------------------------------------
@@ -134,14 +160,14 @@ test('requireHumanForm: Mensch ohne Turnstile-Konfiguration kommt durch', async 
 
 test('requireHumanForm: mit Turnstile wird das Token geprüft, IP aus X-Forwarded-For', async (t) => {
   t.mock.method(console, 'warn', () => {});
-  const env = { TURNSTILE_SITE_KEY: 'k', TURNSTILE_SECRET_KEY: 's' };
+  const env = { TURNSTILE_SITE_KEY: 'k', TURNSTILE_SECRET_KEY: 's', TURNSTILE_HOSTNAMES: 'roadlight.pro' };
   let remoteIp;
   const fetchImpl = async (url, options) => {
     const form = new URLSearchParams(options.body);
     remoteIp = form.get('remoteip');
-    return { json: async () => ({ success: form.get('response') === 'good' }) };
+    return { ok: true, json: async () => ({ success: form.get('response') === 'good', action: 'signup', hostname: 'roadlight.pro' }) };
   };
-  const middleware = requireHumanForm({ minFillMs: 3000, env, fetchImpl });
+  const middleware = requireHumanForm({ minFillMs: 3000, action: 'signup', env, fetchImpl });
 
   const rejected = await runMiddleware(middleware, { formElapsedMs: 5000, turnstileToken: 'bad' });
   assert.equal(rejected.nextCalled, false);
@@ -157,8 +183,12 @@ test('requireHumanForm: mit Turnstile wird das Token geprüft, IP aus X-Forwarde
 // ---------------------------------------------------------------------------
 
 test('Signup und Login-Link-Anforderung laufen durch den Bot-Schutz', () => {
-  assert.match(apiSource, /app\.post\('\/api\/signup\/workspaces', [^\n]*requireHumanForm\(/);
-  assert.match(apiSource, /app\.post\('\/api\/auth\/login-links', [^\n]*requireHumanForm\(/);
+  // Die Action im Server muss zu der passen, mit der das Formular sein Widget rendert.
+  assert.match(apiSource, /app\.post\('\/api\/signup\/workspaces', [^\n]*requireHumanForm\(\{[^}]*action: 'signup'/);
+  assert.match(apiSource, /app\.post\('\/api\/auth\/login-links', [^\n]*requireHumanForm\(\{[^}]*action: 'login'/);
+  assert.ok(read('public/signup.js').includes("new FormGuard(this.form, 'signup')"));
+  assert.ok(read('public/login.js').includes("new FormGuard(this.form, 'login')"));
+  assert.ok(read('public/form-guard.js').includes('action: this.action'));
   assert.ok(apiSource.includes("app.get('/api/auth/bot-protection'"));
 });
 

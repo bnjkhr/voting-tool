@@ -25,7 +25,7 @@ class LoginApp {
             this.consumeButton.addEventListener('click', () => this.consumeLoginLink());
             this.setStatus('Klicke auf „Jetzt anmelden“, um die Anmeldung abzuschließen.', '');
         } else {
-            this.guard = new FormGuard(this.form);
+            this.guard = new FormGuard(this.form, 'login');
         }
     }
 

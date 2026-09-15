@@ -2,8 +2,10 @@
 // misst die Ausfüllzeit, liest das Honeypot-Feld und rendert Cloudflare
 // Turnstile, sobald der Server einen Site-Key liefert.
 class FormGuard {
-    constructor(form) {
+    // action muss zur Action passen, die der Server für dieses Formular erwartet.
+    constructor(form, action) {
         this.form = form;
+        this.action = action;
         this.startedAt = Date.now();
         this.turnstileToken = '';
         this.turnstileRequired = false;
@@ -34,6 +36,7 @@ class FormGuard {
             });
             this.widgetId = window.turnstile.render(container, {
                 sitekey: turnstileSiteKey,
+                action: this.action,
                 language: 'de',
                 callback: token => { this.turnstileToken = token; },
                 'expired-callback': () => { this.turnstileToken = ''; },

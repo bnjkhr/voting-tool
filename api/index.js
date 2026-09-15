@@ -1495,7 +1495,7 @@ app.get('/api/auth/bot-protection', (req, res) => {
 });
 
 // Public auth: request a one-time login link for an existing invited user
-app.post('/api/auth/login-links', rateLimit(60000, 5), requireHumanForm({ minFillMs: 1500 }), async (req, res) => {
+app.post('/api/auth/login-links', rateLimit(60000, 5), requireHumanForm({ minFillMs: 1500, action: 'login' }), async (req, res) => {
   try {
     let email;
     try {
@@ -1547,7 +1547,7 @@ app.post('/api/auth/login-links', rateLimit(60000, 5), requireHumanForm({ minFil
 });
 
 // Public signup: create a new workspace and send the owner a magic login link
-app.post('/api/signup/workspaces', rateLimit(60000, 3), requireHumanForm({ minFillMs: 3000 }), async (req, res) => {
+app.post('/api/signup/workspaces', rateLimit(60000, 3), requireHumanForm({ minFillMs: 3000, action: 'signup' }), async (req, res) => {
   try {
     if (req.body?.confirmBusinessCustomer !== true) {
       return res.status(400).json({
