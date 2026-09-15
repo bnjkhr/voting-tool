@@ -14,6 +14,12 @@ const {
 } = require('./comment-utils');
 const { compareAdminSuggestions } = require('./admin-suggestion-sort');
 const suggestionImport = require('../lib/suggestion-import');
+const {
+  EMAIL_QUOTA_LOOKBACK_MS,
+  isEmailQuotaExceeded,
+  requireHumanForm,
+  turnstileConfig,
+} = require('../lib/bot-protection');
 const { deleteDocsInChunks, queryCollectionInChunks } = require('./firestore-chunks');
 const {
   LEGACY_PUBLIC_HIDDEN_APP_IDS,
@@ -1465,8 +1471,31 @@ async function resolvePendingLoginLinkByToken(token) {
   return { loginLinkDoc, loginLink, user };
 }
 
+const EMAIL_QUOTA_EXCEEDED = {
+  error: 'Für diese E-Mail-Adresse wurden gerade zu viele Login-Links angefordert. Bitte versuche es später erneut.',
+  code: 'email_rate_limited',
+};
+
+// Limit pro E-Mail-Adresse: zählt die jüngsten login_links in der DB, damit es
+// anders als rateLimit() instanzübergreifend greift. Nur Postgres — Firestore
+// bedient die Tenant-Anmeldung produktiv nicht mehr.
+async function isLoginLinkQuotaExceeded(email) {
+  if (!usePostgres()) return false;
+  const now = new Date();
+  const since = new Date(now.getTime() - EMAIL_QUOTA_LOOKBACK_MS);
+  const createdAtList = await repos.loginLinks.listCreatedAtSince(email, since);
+  return isEmailQuotaExceeded(createdAtList, now);
+}
+
+// Public: Turnstile-Site-Key für die Formulare (null = Turnstile aus)
+app.get('/api/auth/bot-protection', (req, res) => {
+  // Ändert sich nur mit der Env: CDN-Cache spart den Function-Aufruf pro Seitenaufruf.
+  res.set('Cache-Control', 'public, max-age=60, s-maxage=300');
+  res.json({ turnstileSiteKey: turnstileConfig()?.siteKey || null });
+});
+
 // Public auth: request a one-time login link for an existing invited user
-app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
+app.post('/api/auth/login-links', rateLimit(60000, 5), requireHumanForm({ minFillMs: 1500 }), async (req, res) => {
   try {
     let email;
     try {
@@ -1488,6 +1517,9 @@ app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
     }
     if (user.status && user.status !== 'active') {
       return res.status(403).json({ error: 'User is disabled' });
+    }
+    if (await isLoginLinkQuotaExceeded(email)) {
+      return res.status(429).json(EMAIL_QUOTA_EXCEEDED);
     }
 
     const token = buildInviteToken();
@@ -1515,7 +1547,7 @@ app.post('/api/auth/login-links', rateLimit(60000, 5), async (req, res) => {
 });
 
 // Public signup: create a new workspace and send the owner a magic login link
-app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
+app.post('/api/signup/workspaces', rateLimit(60000, 3), requireHumanForm({ minFillMs: 3000 }), async (req, res) => {
   try {
     if (req.body?.confirmBusinessCustomer !== true) {
       return res.status(400).json({
@@ -1530,6 +1562,9 @@ app.post('/api/signup/workspaces', rateLimit(60000, 3), async (req, res) => {
       config = buildSignupWorkspaceConfig(req.body || {});
     } catch (error) {
       return res.status(400).json({ error: error.message || 'Invalid signup data' });
+    }
+    if (await isLoginLinkQuotaExceeded(email)) {
+      return res.status(429).json(EMAIL_QUOTA_EXCEEDED);
     }
 
     const now = new Date();

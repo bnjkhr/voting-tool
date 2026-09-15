@@ -39,6 +39,16 @@ async function consume(id) {
   return mapRow(rows[0]);
 }
 
+// Erstellzeitpunkte aller Links (jeder Status) einer Adresse seit `since` —
+// Grundlage für das Limit pro E-Mail-Adresse.
+async function listCreatedAtSince(email, since) {
+  const { rows } = await query(
+    'select created_at from login_links where email = $1 and created_at > $2',
+    [email, since]
+  );
+  return rows.map((row) => row.created_at);
+}
+
 module.exports = {
-  findByTokenHash, create, consume,
+  findByTokenHash, create, consume, listCreatedAtSince,
 };

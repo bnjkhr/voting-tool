@@ -140,6 +140,15 @@
         .login-result a {
             overflow-wrap: anywhere;
         }
+
+        /* Honeypot für Bots: für Menschen und Screenreader unsichtbar. */
+        .form-trap {
+            position: absolute;
+            left: -10000px;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+        }
     </style>
 </head>
 <body>
@@ -155,8 +164,13 @@
                         E-Mail
                         <input name="email" type="email" autocomplete="email" required>
                     </label>
+                    <div class="form-trap" aria-hidden="true">
+                        <label>Website <input name="website" type="text" tabindex="-1" autocomplete="off"></label>
+                    </div>
+                    <div data-turnstile></div>
                     <button id="loginBtn" class="primary-btn" type="submit">Login-Link erstellen</button>
                 </form>
+                <button id="consumeBtn" class="primary-btn" type="button" style="display: none;">Jetzt anmelden</button>
                 <div id="loginResult" class="login-result"></div>
                 <div id="loginStatus" class="login-status"></div>
                 <p style="margin-top: 18px;">Noch kein Workspace? <a href="/signup.html">Workspace erstellen</a></p>
@@ -171,6 +185,7 @@
     </footer>
 
     <script src="admin-auth.js"></script>
+    <script src="form-guard.js"></script>
     <script src="login.js"></script>
 </body>
 </html>
