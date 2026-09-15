@@ -7,7 +7,7 @@ class SignupApp {
         this.result = document.getElementById('signupResult');
         this.submitButton = document.getElementById('signupBtn');
         this.slugTouched = false;
-        this.guard = new FormGuard(this.form);
+        this.guard = new FormGuard(this.form, 'signup');
         this.init();
     }
 
