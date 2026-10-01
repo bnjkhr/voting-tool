@@ -79,9 +79,37 @@ function isBoardDeepLinkQuery(query) {
     return ['appId', 'tenant'].some((key) => firstQueryValue(query?.[key]) !== '');
 }
 
+// Domains, die nur das Legacy-Board ausliefern (keine Roadlight-Landingpage).
+// Seit der Landingpage auf "/" (#39) bekam auch votingtool.benkohler.de dort
+// Roadlight-Marketing statt der App-Auswahl. Weitere Hosts per
+// LEGACY_BOARD_HOSTS (kommagetrennt).
+const DEFAULT_LEGACY_BOARD_HOSTS = ['votingtool.benkohler.de'];
+
+function legacyBoardHosts(env = process.env) {
+    const extra = String(env.LEGACY_BOARD_HOSTS || '')
+        .split(',')
+        .map((host) => host.trim().toLowerCase())
+        .filter(Boolean);
+    return new Set([...DEFAULT_LEGACY_BOARD_HOSTS, ...extra]);
+}
+
+// Host ohne Port; hinter Vercel steht die angefragte Domain im Host-Header,
+// x-forwarded-host hat Vorrang, falls ein Proxy davorsitzt.
+function requestHost(headers = {}) {
+    const raw = String(headers['x-forwarded-host'] || headers.host || '').split(',')[0].trim().toLowerCase();
+    return raw.replace(/:\d+$/, '');
+}
+
+function isLegacyBoardHost(headers, env = process.env) {
+    const host = requestHost(headers);
+    return host !== '' && legacyBoardHosts(env).has(host);
+}
+
 module.exports = {
     shouldServeAppShell,
     isBoardDeepLinkQuery,
+    isLegacyBoardHost,
+    DEFAULT_LEGACY_BOARD_HOSTS,
     buildReservedSegments,
     RESERVED_FIRST_SEGMENTS,
 };
