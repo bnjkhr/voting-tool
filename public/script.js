@@ -46,6 +46,11 @@ class VotingApp {
         this.filtersExpanded = false;
         this.currentView = 'suggestions';
         this.allSuggestions = [];
+        // App, zu der allSuggestions gehört. Die Ähnlichkeitssuche im Formular
+        // darf nicht gegen die Einträge einer zuvor geöffneten App laufen.
+        this.suggestionsAppId = null;
+        this.searchQuery = '';
+        this.similarSearchTimer = null;
         this.tenantSlug = null;
         this.currentReportType = 'feature';
         this.bugScreenshots = [];
@@ -86,6 +91,12 @@ class VotingApp {
             },
             'open-roadmap-item': (el) => {
                 this.openRoadmapItem(el.dataset.itemId);
+            },
+            'open-suggestion': (el) => {
+                this.openRoadmapItem(el.dataset.suggestionId);
+            },
+            'create-from-search': () => {
+                this.showSuggestionForm({ title: this.searchQuery.trim() });
             },
             'trigger-file-input': (el) => {
                 const input = document.getElementById(el.dataset.fileInputId);
@@ -188,6 +199,16 @@ class VotingApp {
             this.updateEntryNotificationUI(e.target.checked);
         });
 
+        // Suche: filtert die Liste bei jedem Tastendruck (rein lokal, kein Request).
+        document.getElementById('suggestionSearch').addEventListener('input', (e) => {
+            this.setSearchQuery(e.target.value);
+        });
+
+        // Ähnliche Einträge, während Titel/Beschreibung getippt werden.
+        ['suggestionTitle', 'suggestionDescription'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => this.scheduleSimilarSuggestions());
+        });
+
         const themeBtn = document.getElementById('themeToggleBtn');
         if (themeBtn) {
             themeBtn.addEventListener('click', () => this.toggleTheme());
@@ -227,7 +248,9 @@ class VotingApp {
         this.currentApp = null;
         this.currentView = 'suggestions';
         this.allSuggestions = [];
+        this.suggestionsAppId = null;
         this.currentFilters = { status: 'all', type: 'all' };
+        this.resetSearch();
         this.filtersExpanded = false;
         document.getElementById('suggestionsTopbar')?.classList.remove('filters-expanded');
         document.getElementById('currentAppName').textContent = 'App Name';
@@ -251,13 +274,168 @@ class VotingApp {
         document.getElementById('mobileNewBtn').style.display = showFab && this.currentView === 'suggestions' ? '' : 'none';
     }
 
-    showSuggestionForm() {
+    async showSuggestionForm({ title = '' } = {}) {
         this.showSection('suggestionForm');
         document.getElementById('newSuggestionForm').reset();
         this.bugScreenshots = [];
         document.getElementById('bugScreenshotPreview').innerHTML = '';
         this.updateReportTypeUI('feature');
         this.updateEntryNotificationUI(false);
+        document.getElementById('suggestionTitle').value = title;
+        this.renderSimilarSuggestions([]);
+
+        // Aus Roadmap/Changelog heraus sind die Einträge dieser App evtl. noch
+        // nicht geladen; ohne sie gäbe es keine Vorschläge beim Tippen.
+        if (this.currentApp && this.suggestionsAppId !== this.currentApp.id) {
+            await this.loadSuggestions(this.currentApp);
+        }
+        this.updateSimilarSuggestions();
+    }
+
+    scheduleSimilarSuggestions() {
+        clearTimeout(this.similarSearchTimer);
+        this.similarSearchTimer = setTimeout(() => this.updateSimilarSuggestions(), 200);
+    }
+
+    updateSimilarSuggestions() {
+        clearTimeout(this.similarSearchTimer);
+        const form = document.getElementById('suggestionForm');
+        if (!form || form.classList.contains('hidden')) return;
+        if (!this.currentApp || this.suggestionsAppId !== this.currentApp.id) {
+            this.renderSimilarSuggestions([]);
+            return;
+        }
+
+        const matches = SuggestionSearch.findSimilar(this.allSuggestions, {
+            title: document.getElementById('suggestionTitle').value,
+            description: document.getElementById('suggestionDescription').value,
+        }, { limit: 3 });
+        this.renderSimilarSuggestions(matches.map(match => match.suggestion));
+    }
+
+    renderSimilarSuggestions(suggestions) {
+        const panel = document.getElementById('similarSuggestions');
+        if (!panel) return;
+
+        if (suggestions.length === 0) {
+            panel.classList.add('hidden');
+            panel.innerHTML = '';
+            return;
+        }
+
+        const items = suggestions.map(suggestion => {
+            const type = this.normalizeSuggestionType(suggestion.type);
+            const status = suggestion.status || '';
+            const isResolved = VotingApp.RESOLVED_STATUSES.includes(status);
+            const statusStyle = VotingApp.TAG_STYLES[status] || VotingApp.DEFAULT_TAG_STYLE;
+
+            // Gleiches Markup wie in der Liste, damit voteSuggestion() greift.
+            const leading = type === 'feature'
+                ? `<div class="vote-column">
+                        <button
+                            type="button"
+                            class="upvote-btn ${suggestion.hasVoted ? 'voted' : ''}"
+                            ${suggestion.hasVoted || isResolved ? 'disabled' : ''}
+                            data-action="vote-suggestion"
+                            data-suggestion-id="${this.escapeHtml(suggestion.id)}"
+                            title="${suggestion.hasVoted ? 'Bereits abgestimmt' : 'Dafür abstimmen'}"
+                            aria-label="Für „${this.escapeHtml(suggestion.title)}“ abstimmen"
+                        >▲</button>
+                        <span class="vote-count ${suggestion.hasVoted ? 'voted' : ''}">${suggestion.votes || 0}</span>
+                    </div>`
+                : `<div class="similar-item-icon" aria-hidden="true">${type === 'bug' ? '\uD83D\uDC1E' : '\uD83C\uDFAB'}</div>`;
+
+            const typeMeta = this.getTypeFilterMeta(type);
+
+            return `
+                <li class="similar-item">
+                    ${leading}
+                    <div class="similar-item-body">
+                        <p class="similar-item-title">
+                            ${suggestion.ticketNumber ? `<span class="ticket-number">${this.escapeHtml(suggestion.ticketNumber)}</span>` : ''}
+                            <span>${this.escapeHtml(suggestion.title)}</span>
+                        </p>
+                        ${suggestion.description ? `<p class="similar-item-description">${this.escapeHtml(suggestion.description)}</p>` : ''}
+                        <div class="similar-item-meta">
+                            <span class="label" style="--label-color: ${typeMeta.color};">
+                                <span class="label-dot" aria-hidden="true"></span>
+                                <span>${this.escapeHtml(typeMeta.label)}</span>
+                            </span>
+                            ${status ? `
+                                <span class="label" style="--label-color: ${statusStyle.color};">
+                                    <span class="label-dot" aria-hidden="true"></span>
+                                    <span>${this.escapeHtml(status)}</span>
+                                </span>
+                            ` : ''}
+                            <button type="button" class="similar-item-open" data-action="open-suggestion" data-suggestion-id="${this.escapeHtml(suggestion.id)}">
+                                Zum Eintrag →
+                            </button>
+                        </div>
+                    </div>
+                </li>
+            `;
+        }).join('');
+
+        panel.innerHTML = `
+            <p class="similar-suggestions-title">Gibt’s schon etwas in die Richtung?</p>
+            <p class="similar-suggestions-hint">
+                Ist das hier, was du meinst? Dann stimm lieber dort ab oder ergänze einen Kommentar –
+                so landet alles an einer Stelle. Passt nichts davon, reich deinen Eintrag einfach ein.
+            </p>
+            <ul class="similar-list">${items}</ul>
+        `;
+        panel.classList.remove('hidden');
+    }
+
+    setSearchQuery(query) {
+        this.searchQuery = String(query || '');
+        this.applySearch();
+    }
+
+    resetSearch() {
+        this.searchQuery = '';
+        const input = document.getElementById('suggestionSearch');
+        if (input) input.value = '';
+    }
+
+    // Blendet Karten passend zur Suche ein/aus, statt neu zu rendern: ein
+    // Re-Render würde bei jedem Tastendruck die Kommentare neu laden.
+    applySearch() {
+        const suggestionsList = document.getElementById('suggestionsList');
+        if (!suggestionsList) return;
+
+        const query = this.searchQuery.trim();
+        let total = 0;
+        let visible = 0;
+
+        suggestionsList.querySelectorAll('.suggestion-card').forEach(card => {
+            total += 1;
+            const suggestion = this.getSuggestionById(card.dataset.suggestionId);
+            const matches = !query || !suggestion || SuggestionSearch.matchesQuery(suggestion, query);
+            card.classList.toggle('hidden', !matches);
+            if (matches) visible += 1;
+        });
+
+        let emptyState = document.getElementById('searchEmptyState');
+        if (!query || total === 0 || visible > 0) {
+            if (emptyState) emptyState.classList.add('hidden');
+            return;
+        }
+
+        if (!emptyState) {
+            emptyState = document.createElement('div');
+            emptyState.id = 'searchEmptyState';
+            // Bewusst ohne .loading: renderSuggestions() räumt die erste .loading weg.
+            emptyState.className = 'search-empty';
+            suggestionsList.appendChild(emptyState);
+        }
+
+        const filtersActive = this.currentFilters.status !== 'all' || this.currentFilters.type !== 'all';
+        emptyState.innerHTML = `
+            <span>Keine Einträge zu „${this.escapeHtml(query)}“ gefunden${filtersActive ? ' (mit den aktiven Filtern)' : ''}.</span>
+            <button type="button" class="primary-btn" data-action="create-from-search">Neuen Eintrag dazu erstellen</button>
+        `;
+        emptyState.classList.remove('hidden');
     }
 
     updateReportTypeUI(type) {
@@ -515,6 +693,8 @@ class VotingApp {
         roadmapView.classList.toggle('hidden', this.currentView !== 'roadmap');
         changelogView.classList.toggle('hidden', this.currentView !== 'changelog');
 
+        document.getElementById('boardSearch').classList.toggle('hidden', this.currentView !== 'suggestions');
+
         const showFab = this.currentView !== 'changelog';
         fabBtn.style.display = showFab ? 'inline-flex' : 'none';
         mobileNewBtn.style.display = (showFab && this.currentView === 'suggestions') ? '' : 'none';
@@ -594,7 +774,11 @@ class VotingApp {
                 throw new Error('Invalid response format from server');
             }
 
+            // Antwort für eine inzwischen verlassene App verwerfen.
+            if (this.currentApp && this.currentApp.id !== app.id) return;
+
             this.allSuggestions = suggestions;
+            this.suggestionsAppId = app.id;
             this.renderFilterBar();
             this.renderSuggestions(this.filterSuggestions(suggestions));
         } catch (error) {
@@ -716,18 +900,31 @@ class VotingApp {
             if (!voteCountEl) return;
 
             const currentCount = parseInt(voteCountEl.textContent);
+            const nextCount = isVoted ? Math.max(0, currentCount - 1) : currentCount + 1;
+
+            // Derselbe Eintrag kann zweimal im DOM stehen (Liste und „Gibt's
+            // schon"-Hinweis im Formular); beide Stellen und das Modell syncen.
+            document.querySelectorAll('[data-action="vote-suggestion"]').forEach(voteButton => {
+                if (voteButton.dataset.suggestionId !== suggestionId) return;
+                const countEl = voteButton.parentElement.querySelector('.vote-count');
+                voteButton.classList.toggle('voted', !isVoted);
+                if (countEl) {
+                    countEl.classList.toggle('voted', !isVoted);
+                    countEl.textContent = nextCount;
+                }
+            });
+
+            const suggestion = this.getSuggestionById(suggestionId);
+            if (suggestion) {
+                suggestion.hasVoted = !isVoted;
+                suggestion.votes = nextCount;
+            }
 
             if (isVoted) {
                 this.showToast('Vote erfolgreich entfernt!', 'success');
-                button.classList.remove('voted');
-                voteCountEl.classList.remove('voted');
-                voteCountEl.textContent = Math.max(0, currentCount - 1);
                 this.votedSuggestions.delete(suggestionId);
             } else {
                 this.showToast('Vote erfolgreich abgegeben!', 'success');
-                button.classList.add('voted');
-                voteCountEl.classList.add('voted');
-                voteCountEl.textContent = currentCount + 1;
                 this.votedSuggestions.add(suggestionId);
             }
 
@@ -990,6 +1187,7 @@ class VotingApp {
                 }
             `;
             suggestionsList.appendChild(noResultsMsg);
+            this.applySearch();
             return;
         }
 
@@ -1121,7 +1319,7 @@ class VotingApp {
             }
 
             return `
-                <div class="suggestion-card" id="suggestion-${suggestion.id}" style="${cardOpacity}">
+                <div class="suggestion-card" id="suggestion-${suggestion.id}" data-suggestion-id="${this.escapeHtml(suggestion.id)}" style="${cardOpacity}">
                     <div class="suggestion-layout">
                         ${iconColumn}
                         <div class="suggestion-content">
@@ -1153,6 +1351,8 @@ class VotingApp {
             suggestionsList.appendChild(child);
         });
 
+        this.applySearch();
+
         suggestions
             .filter(suggestion => suggestion.commentCount > 0)
             .forEach(suggestion => {
@@ -1169,10 +1369,13 @@ class VotingApp {
 
         this.currentView = 'suggestions';
         this.currentFilters = { status: 'all', type: 'all' };
+        // Sonst könnte die aktive Suche genau den Ziel-Eintrag ausblenden.
+        this.resetSearch();
         this.updateViewTabs();
         this.showSuggestions();
         document.getElementById('suggestionsList').classList.remove('hidden');
         document.getElementById('suggestionsFilters').classList.remove('hidden');
+        document.getElementById('boardSearch').classList.remove('hidden');
         document.getElementById('roadmapView').classList.add('hidden');
         document.getElementById('changelogView').classList.add('hidden');
         this.navigateToUrlState(this.getCurrentUrlState());
@@ -1202,6 +1405,7 @@ class VotingApp {
 
         if (appChanged) {
             this.currentFilters = { status: 'all', type: 'all' };
+            this.resetSearch();
         }
 
         this.updateViewTabs();
