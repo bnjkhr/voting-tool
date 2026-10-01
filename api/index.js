@@ -65,6 +65,7 @@ const {
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
 const { shouldServeAppShell, isBoardDeepLinkQuery } = require('./spa-fallback');
+const { allowBoardEmbedding } = require('./frame-policy');
 const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');
@@ -151,7 +152,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Ausnahme: Query-Deep-Links (?appId=…, ?tenant=…) benennen ein Board. Die
 // stecken in ausgelieferten App-Builds und bekommen die Shell, nicht Marketing.
 app.get('/', (req, res) => {
-  const page = isBoardDeepLinkQuery(req.query) ? 'index.html' : 'landing.html';
+  const isBoard = isBoardDeepLinkQuery(req.query);
+  if (isBoard) allowBoardEmbedding(res);
+  const page = isBoard ? 'index.html' : 'landing.html';
   res.sendFile(path.join(__dirname, '../public', page));
 });
 
@@ -173,6 +176,7 @@ app.use((req, res, next) => {
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, '../public'), {
   setHeaders: (res, filePath) => {
+    if (path.basename(filePath) === 'index.html') allowBoardEmbedding(res);
     if (/\.(woff2?|ttf|otf|eot)$/i.test(filePath)) {
       // Schriften sind stabil -> aggressiv cachen.
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -8158,6 +8162,7 @@ app.get('*', (req, res, next) => {
   if (!shouldServeAppShell(req.method, req.path)) {
     return next();
   }
+  allowBoardEmbedding(res);
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
