@@ -65,7 +65,7 @@ const {
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
 const { shouldServeAppShell, isBoardDeepLinkQuery } = require('./spa-fallback');
-const { allowBoardEmbedding } = require('./frame-policy');
+const { allowBoardEmbedding } = require('../lib/frame-policy');
 const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');

@@ -16,7 +16,7 @@ process.env.FIREBASE_PRIVATE_KEY = crypto.generateKeyPairSync('rsa', {
 }).privateKey;
 
 const app = require('../api/index.js');
-const { boardFrameAncestors } = require('../api/frame-policy.js');
+const { boardFrameAncestors } = require('../lib/frame-policy.js');
 
 let server;
 let base;
