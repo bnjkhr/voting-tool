@@ -64,7 +64,7 @@ const {
   normalizeScopes,
   parseApiKeyAuthHeader,
 } = require('./api-key-utils');
-const { shouldServeAppShell, isBoardDeepLinkQuery } = require('./spa-fallback');
+const { shouldServeAppShell, isBoardDeepLinkQuery, isLegacyBoardHost } = require('./spa-fallback');
 const { allowBoardEmbedding } = require('../lib/frame-policy');
 const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
@@ -151,11 +151,17 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 //
 // Ausnahme: Query-Deep-Links (?appId=…, ?tenant=…) benennen ein Board. Die
 // stecken in ausgelieferten App-Builds und bekommen die Shell, nicht Marketing.
+// Board-Shell ohne Validatoren ausliefern: Mit ETag/Last-Modified antwortet der
+// Server auf Revalidierung mit 304, und der Browser behält die gecachten Header
+// — inklusive eines alten X-Frame-Options, das das Einbetten weiter blockiert.
+const BOARD_SHELL_SEND_OPTIONS = { etag: false, lastModified: false };
+
 app.get('/', (req, res) => {
-  const isBoard = isBoardDeepLinkQuery(req.query);
+  // Legacy-Domain: "/" ist dort die App-Auswahl des Boards, kein Marketing.
+  const isBoard = isBoardDeepLinkQuery(req.query) || isLegacyBoardHost(req.headers);
   if (isBoard) allowBoardEmbedding(res);
   const page = isBoard ? 'index.html' : 'landing.html';
-  res.sendFile(path.join(__dirname, '../public', page));
+  res.sendFile(path.join(__dirname, '../public', page), isBoard ? BOARD_SHELL_SEND_OPTIONS : undefined);
 });
 
 const INTERNAL_STATIC_PATHS = new Set([
@@ -8163,7 +8169,7 @@ app.get('*', (req, res, next) => {
     return next();
   }
   allowBoardEmbedding(res);
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+  res.sendFile(path.join(__dirname, '../public/index.html'), BOARD_SHELL_SEND_OPTIONS);
 });
 
 // Lokale Entwicklung und Stripe-CLI-Webhook-Tests. Vercel importiert nur das
