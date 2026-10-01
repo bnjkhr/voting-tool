@@ -59,6 +59,13 @@
                         <button class="view-tab" data-view="changelog">Changelog</button>
                     </div>
 
+                    <div class="board-search" id="boardSearch">
+                        <svg class="board-search-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="search" id="suggestionSearch" class="board-search-input"
+                               placeholder="Einträge durchsuchen…" aria-label="Einträge durchsuchen"
+                               autocomplete="off" maxlength="100">
+                    </div>
+
                     <div class="filter-control" id="filterControl"></div>
                     <div class="filter-bar-host" id="suggestionsFilters"></div>
                 </div>
@@ -113,6 +120,9 @@
                         <textarea id="suggestionDescription" required maxlength="500"
                                   placeholder="Detaillierte Beschreibung des Features..." rows="4"></textarea>
                     </div>
+
+                    <!-- Ähnliche Einträge zum Entwurf; wird beim Tippen von Titel/Beschreibung befüllt. -->
+                    <div class="similar-suggestions hidden" id="similarSuggestions" aria-live="polite"></div>
 
                     <div id="bugFields" class="hidden">
                         <div class="form-group">
@@ -244,6 +254,7 @@
     </footer>
 
     <script src="/url-state.js"></script>
+    <script src="/suggestion-search.js"></script>
     <script src="/script.js"></script>
 </body>
 </html>
