@@ -25,8 +25,8 @@ Einzelfall positive Kenntnis von einer privaten Nutzung hat.
 
 ### 1. Geltungsbereich
 Diese Nutzungsbedingungen regeln die Nutzung des Dienstes „Roadlight" (nachfolgend
-„Dienst"), erreichbar unter roadlight.pro, betrieben von Ben Kohler, Auf dem Kreuz
-32/1, 89073 Ulm (nachfolgend „Betreiber"). Der Dienst richtet sich ausschließlich
+„Dienst"), erreichbar unter roadlight.pro, betrieben von Ben Kohler Digital Services (Inhaber: Ben Kohler), Auf dem
+Kreuz 32/1, 89073 Ulm (nachfolgend „Betreiber"). Der Dienst richtet sich ausschließlich
 an Unternehmer im Sinne des § 14 BGB, juristische Personen des öffentlichen Rechts
 und öffentlich-rechtliche Sondervermögen. Verträge mit Verbrauchern im Sinne des
 § 13 BGB werden nicht geschlossen. Mit der Registrierung eines Workspaces,
