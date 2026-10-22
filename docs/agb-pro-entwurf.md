@@ -146,4 +146,4 @@ Ist der Kunde Kaufmann, juristische Person des öffentlichen Rechts oder
 öffentlich-rechtliches Sondervermögen, ist Gerichtsstand Ulm. Sollte eine Bestimmung
 unwirksam sein, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
 
-Stand: B2B-Arbeitsfassung, 1. September 2026.
+Stand: B2B-Arbeitsfassung, 22. Oktober 2026.
