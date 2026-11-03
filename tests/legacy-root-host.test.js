@@ -23,6 +23,8 @@ const { isLegacyBoardHost } = require('../api/spa-fallback.js');
 const publicDir = path.join(__dirname, '../public');
 const LANDING = fs.readFileSync(path.join(publicDir, 'landing.html'), 'utf8');
 const SHELL = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');
+// Die Shell trägt je Anfrage eigene Vorschau-Tags (lib/og-meta.js).
+const { stripBoardMeta: withoutMeta } = require('../lib/og-meta.js');
 
 let server;
 let port;
@@ -50,13 +52,13 @@ test('Legacy-Domain bekommt auf "/" das Board, nicht die Landingpage', async () 
     for (const host of ['votingtool.benkohler.de', 'VotingTool.Benkohler.de', 'votingtool.benkohler.de:443']) {
         const res = await get('/', { host });
         assert.equal(res.status, 200, host);
-        assert.equal(res.body, SHELL, `Board-Shell erwartet für ${host}`);
+        assert.equal(withoutMeta(res.body), withoutMeta(SHELL), `Board-Shell erwartet für ${host}`);
     }
 });
 
 test('x-forwarded-host zählt vor dem Host-Header', async () => {
     const res = await get('/', { host: 'internal.vercel.app', 'x-forwarded-host': 'votingtool.benkohler.de' });
-    assert.equal(res.body, SHELL);
+    assert.equal(withoutMeta(res.body), withoutMeta(SHELL));
 });
 
 test('Roadlight-Domains behalten die Landingpage', async () => {
@@ -69,7 +71,7 @@ test('Roadlight-Domains behalten die Landingpage', async () => {
 test('Board-Shell kommt ohne ETag/Last-Modified, damit kein 304 alte Header konserviert', async () => {
     for (const [urlPath, host] of [['/', 'votingtool.benkohler.de'], ['/?appId=OMXhYVpea6zl36v1cuQs', 'roadlight.pro'], ['/acme/gymbo', 'roadlight.pro']]) {
         const res = await get(urlPath, { host });
-        assert.equal(res.body, SHELL, urlPath);
+        assert.equal(withoutMeta(res.body), withoutMeta(SHELL), urlPath);
         assert.equal(res.headers.etag, undefined, `${urlPath}: kein ETag`);
         assert.equal(res.headers['last-modified'], undefined, `${urlPath}: kein Last-Modified`);
         assert.equal(res.headers['x-frame-options'], undefined, `${urlPath}: kein X-Frame-Options`);
