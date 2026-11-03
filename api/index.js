@@ -66,6 +66,7 @@ const {
 } = require('./api-key-utils');
 const { shouldServeAppShell, isBoardDeepLinkQuery, isLegacyBoardHost } = require('./spa-fallback');
 const { allowBoardEmbedding } = require('../lib/frame-policy');
+const { buildBoardMeta, injectBoardMeta, requestOrigin } = require('../lib/og-meta');
 const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
 const repos = require('../db');
@@ -151,17 +152,67 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 //
 // Ausnahme: Query-Deep-Links (?appId=…, ?tenant=…) benennen ein Board. Die
 // stecken in ausgelieferten App-Builds und bekommen die Shell, nicht Marketing.
-// Board-Shell ohne Validatoren ausliefern: Mit ETag/Last-Modified antwortet der
-// Server auf Revalidierung mit 304, und der Browser behält die gecachten Header
-// — inklusive eines alten X-Frame-Options, das das Einbetten weiter blockiert.
-const BOARD_SHELL_SEND_OPTIONS = { etag: false, lastModified: false };
+
+// Link-Vorschau: Die Shell bekommt Titel, Beschreibung und OG-Bild passend zu
+// App und Ansicht (lib/og-meta.js). Crawler führen kein JS aus, deshalb hier.
+// Der App-Name kommt aus Firestore (Legacy-Apps per ?appId=); ein kurzer Cache
+// und ein Zeitlimit halten die Shell schnell, im Zweifel gilt die neutrale
+// Vorschau. Pfad-Boards (/{tenant}/{board}) bekommen ebenfalls die neutrale.
+const BOARD_SHELL_HTML = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+const OG_APP_CACHE_MS = 10 * 60 * 1000;
+const OG_APP_LOOKUP_TIMEOUT_MS = 1500;
+const OG_APP_CACHE_MAX = 500; // appId kommt aus der URL: Größe begrenzen
+const ogAppCache = new Map();
+
+async function findOgApp(appId) {
+  if (typeof appId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(appId)) return null;
+  const cached = ogAppCache.get(appId);
+  if (cached && cached.expires > Date.now()) return cached.app;
+
+  let timer;
+  const lookup = db.collection('apps').doc(appId).get().then((doc) => {
+    const data = doc.exists ? doc.data() : null;
+    return data && isLegacyPublicAppVisible(data) ? { name: data.name, slug: data.slug } : null;
+  });
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(undefined), OG_APP_LOOKUP_TIMEOUT_MS); });
+  try {
+    const app = await Promise.race([lookup, timeout]);
+    if (app !== undefined) {
+      ogAppCache.delete(appId);
+      if (ogAppCache.size >= OG_APP_CACHE_MAX) ogAppCache.delete(ogAppCache.keys().next().value);
+      ogAppCache.set(appId, { app, expires: Date.now() + OG_APP_CACHE_MS });
+    }
+    return app || null;
+  } catch (error) {
+    console.error('OG app lookup failed:', error.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendBoardShell(req, res) {
+  allowBoardEmbedding(res);
+  const app = await findOgApp(req.query.appId);
+  const meta = buildBoardMeta({
+    app,
+    view: req.query.view,
+    origin: requestOrigin(req.headers),
+    url: req.originalUrl,
+  });
+  // Ohne Validatoren ausliefern (res.end statt res.send, das ein ETag setzt):
+  // Mit ETag antwortet der Server auf Revalidierung mit 304, und der Browser
+  // behält die gecachten Header — inklusive eines alten X-Frame-Options, das
+  // das Einbetten weiter blockiert.
+  res.set('Cache-Control', 'public, max-age=0');
+  res.type('html').end(injectBoardMeta(BOARD_SHELL_HTML, meta));
+}
 
 app.get('/', (req, res) => {
   // Legacy-Domain: "/" ist dort die App-Auswahl des Boards, kein Marketing.
   const isBoard = isBoardDeepLinkQuery(req.query) || isLegacyBoardHost(req.headers);
-  if (isBoard) allowBoardEmbedding(res);
-  const page = isBoard ? 'index.html' : 'landing.html';
-  res.sendFile(path.join(__dirname, '../public', page), isBoard ? BOARD_SHELL_SEND_OPTIONS : undefined);
+  if (isBoard) return sendBoardShell(req, res);
+  res.sendFile(path.join(__dirname, '../public/landing.html'));
 });
 
 const INTERNAL_STATIC_PATHS = new Set([
@@ -8168,8 +8219,7 @@ app.get('*', (req, res, next) => {
   if (!shouldServeAppShell(req.method, req.path)) {
     return next();
   }
-  allowBoardEmbedding(res);
-  res.sendFile(path.join(__dirname, '../public/index.html'), BOARD_SHELL_SEND_OPTIONS);
+  return sendBoardShell(req, res);
 });
 
 // Lokale Entwicklung und Stripe-CLI-Webhook-Tests. Vercel importiert nur das

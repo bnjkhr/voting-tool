@@ -28,6 +28,8 @@ const app = require('../api/index.js');
 const publicDir = path.join(__dirname, '../public');
 const LANDING = fs.readFileSync(path.join(publicDir, 'landing.html'), 'utf8');
 const SHELL = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');
+// Die Shell trägt je Anfrage eigene Vorschau-Tags (lib/og-meta.js).
+const { stripBoardMeta: withoutMeta } = require('../lib/og-meta.js');
 
 let server;
 let base;
@@ -54,13 +56,13 @@ test('legacy app deep links get the board shell, not the landing page', async ()
         '/?appId=rVDAahPXAtUrPF8CImio',
         '/?appId=OMXhYVpea6zl36v1cuQs&view=roadmap',
     ]) {
-        assert.equal(await bodyOf(url), SHELL, `expected board shell for ${url}`);
+        assert.equal(withoutMeta(await bodyOf(url)), withoutMeta(SHELL), `expected board shell for ${url}`);
     }
 });
 
 test('query based tenant deep links get the board shell', async () => {
     for (const url of ['/?tenant=acme', '/?tenant=acme&app=feedback', '/?tenant=acme&app=feedback&view=changelog']) {
-        assert.equal(await bodyOf(url), SHELL, `expected board shell for ${url}`);
+        assert.equal(withoutMeta(await bodyOf(url)), withoutMeta(SHELL), `expected board shell for ${url}`);
     }
 });
 
