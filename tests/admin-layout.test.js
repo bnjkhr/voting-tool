@@ -44,3 +44,17 @@ test('legacy admin page points users to the SaaS admin surfaces', () => {
   assert.ok(adminHtml.includes('Legacy-Live-Betrieb'));
   assert.ok(adminHtml.includes('SaaS / Friendly User-Test'));
 });
+
+test('admin shows the to-do stack before the management sections and collapses them', () => {
+  const stackIndex = adminHtml.indexOf('id="todoStack"');
+  assert.ok(stackIndex > -1, 'expected a to-do stack');
+  assert.ok(stackIndex < adminHtml.indexOf('class="app-management"'), 'stack must come first');
+  assert.equal(countOccurrences(adminHtml, '<details class="management-section"'), 3);
+});
+
+test('tenant admin shows the to-do stack above a collapsible filter', () => {
+  const tenantHtml = fs.readFileSync(path.join(__dirname, '../public/tenant-admin.html'), 'utf8');
+  const stackIndex = tenantHtml.indexOf('id="todoStack"');
+  assert.ok(stackIndex > -1 && stackIndex < tenantHtml.indexOf('id="filterPanel"'));
+  assert.ok(tenantHtml.includes('<details class="tenant-admin-panel tenant-collapsible" id="filterPanel">'));
+});
