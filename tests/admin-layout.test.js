@@ -44,3 +44,10 @@ test('legacy admin page points users to the SaaS admin surfaces', () => {
   assert.ok(adminHtml.includes('Legacy-Live-Betrieb'));
   assert.ok(adminHtml.includes('SaaS / Friendly User-Test'));
 });
+
+test('admin shows the to-do stack before the management sections and collapses them', () => {
+  const stackIndex = adminHtml.indexOf('id="todoStack"');
+  assert.ok(stackIndex > -1, 'expected a to-do stack');
+  assert.ok(stackIndex < adminHtml.indexOf('class="app-management"'), 'stack must come first');
+  assert.equal(countOccurrences(adminHtml, '<details class="management-section"'), 3);
+});
