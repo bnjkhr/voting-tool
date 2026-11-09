@@ -819,6 +819,55 @@
             margin-top: var(--spacing-md);
         }
 
+        .todo-stack {
+            background: var(--surface);
+            border: 1px solid var(--primary-color);
+            border-radius: var(--radius-md);
+            margin-bottom: var(--spacing-md);
+            overflow: hidden;
+        }
+        .todo-stack.is-hidden { display: none; }
+        .todo-stack-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--spacing-sm);
+            padding: var(--spacing-md) var(--spacing-lg);
+            background: var(--primary-color);
+            color: var(--text-inverse);
+        }
+        .todo-stack-head strong { font-size: 1rem; }
+        .todo-stack-head span { font-size: 0.8rem; opacity: 0.9; }
+        .todo-stack-body { display: grid; gap: var(--spacing-sm); padding: var(--spacing-md); }
+        .todo-card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md);
+            display: grid;
+            gap: var(--spacing-sm);
+        }
+        .todo-card h3 { margin: 0; font-size: 1rem; }
+        .todo-card-actions { display: flex; gap: var(--spacing-sm); flex-wrap: wrap; }
+        .todo-card-actions button { flex: 1 1 auto; }
+        .todo-more { text-align: center; }
+        details.tenant-collapsible > summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 0;
+            padding: var(--spacing-md) var(--spacing-lg);
+            background: var(--background-alt);
+            font-weight: 700;
+            font-size: 1rem;
+            min-height: 44px;
+        }
+        details.tenant-collapsible > summary::-webkit-details-marker { display: none; }
+        details.tenant-collapsible > summary::after { content: '▸'; color: var(--text-secondary); }
+        details.tenant-collapsible[open] > summary::after { content: '▾'; }
+        details.tenant-collapsible[open] > summary { border-bottom: 1px solid var(--border); }
+
         @media (max-width: 900px) {
             .tenant-admin-header {
                 flex-direction: column;
@@ -870,8 +919,9 @@
 
         <main class="tenant-admin-views">
             <section class="tenant-view is-active" data-view="entries">
-                <div class="tenant-admin-panel">
-                    <h3>Filter</h3>
+                <section id="todoStack" class="todo-stack is-hidden" aria-label="Zu bearbeiten"></section>
+                <details class="tenant-admin-panel tenant-collapsible" id="filterPanel">
+                    <summary>Filter</summary>
                     <div class="tenant-admin-panel-body tenant-filter-bar">
                         <label>
                             App
@@ -909,7 +959,7 @@
                             </select>
                         </label>
                     </div>
-                </div>
+                </details>
                 <div class="tenant-admin-panel">
                     <h2>Einträge</h2>
                     <div id="suggestionsList" class="tenant-admin-panel-body tenant-admin-list">

@@ -131,6 +131,19 @@ class TenantAdminApp {
             if (trigger.dataset.action === 'edit-release') this.editRelease(trigger.dataset.releaseId);
             else if (trigger.dataset.action === 'delete-release') this.deleteRelease(trigger.dataset.releaseId);
         });
+        document.getElementById('todoStack').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const { action, id } = trigger.dataset;
+            if (action === 'approve-suggestion') this.approveSuggestion(id);
+            else if (action === 'open-suggestion') this.openSuggestion(id);
+            else if (action === 'toggle-todo-more') {
+                this.todoExpanded = !this.todoExpanded;
+                this.renderTodoStack();
+            }
+        });
+        const filterPanel = document.getElementById('filterPanel');
+        if (filterPanel && !window.matchMedia('(max-width: 768px)').matches) filterPanel.open = true;
         document.getElementById('suggestionsList').addEventListener('change', event => {
             const trigger = event.target.closest('[data-change-action]');
             if (!trigger) return;
@@ -567,7 +580,69 @@ class TenantAdminApp {
         });
     }
 
+    getTodoItems() {
+        if (!this.canManageWorkspace()) return [];
+        return this.suggestions.filter(item => !item.approved || item.pendingCommentCount > 0);
+    }
+
+    renderTodoStack() {
+        const host = document.getElementById('todoStack');
+        const items = this.getTodoItems();
+        host.classList.toggle('is-hidden', items.length === 0);
+        if (items.length === 0) {
+            host.innerHTML = '';
+            return;
+        }
+
+        const pendingEntries = items.filter(item => !item.approved).length;
+        const pendingComments = items.reduce((sum, item) => sum + (item.pendingCommentCount || 0), 0);
+        const limit = 3;
+        const visible = this.todoExpanded ? items : items.slice(0, limit);
+        const cards = visible.map(item => `
+            <article class="todo-card">
+                <div class="tenant-badges">
+                    ${item.approved ? '' : '<span class="tenant-badge is-warning">Wartet auf Freigabe</span>'}
+                    ${item.pendingCommentCount > 0 ? `<span class="tenant-badge is-warning">${item.pendingCommentCount} Kommentar(e) warten</span>` : ''}
+                    <span class="tenant-badge">${this.escapeHtml(item.app?.name || 'Unbekannte App')}</span>
+                </div>
+                <h3>${this.escapeHtml(item.title)}</h3>
+                <div class="todo-card-actions">
+                    ${item.approved ? '' : `<button class="primary-btn" type="button" data-action="approve-suggestion" data-id="${this.escapeHtml(item.id)}">Freigeben</button>`}
+                    <button class="secondary-btn" type="button" data-action="open-suggestion" data-id="${this.escapeHtml(item.id)}">${item.pendingCommentCount > 0 ? 'Prüfen' : 'Öffnen'}</button>
+                </div>
+            </article>
+        `).join('');
+        const more = items.length > limit
+            ? `<button class="secondary-btn todo-more" type="button" data-action="toggle-todo-more">${this.todoExpanded ? 'Weniger anzeigen' : `${items.length - limit} weitere anzeigen`}</button>`
+            : '';
+
+        host.innerHTML = `
+            <div class="todo-stack-head">
+                <strong>${items.length} zu bearbeiten</strong>
+                <span>${pendingEntries} Einträge · ${pendingComments} Kommentare</span>
+            </div>
+            <div class="todo-stack-body">${cards}${more}</div>
+        `;
+    }
+
+    async openSuggestion(id) {
+        // Filter zurücksetzen, damit der Eintrag in der Liste sichtbar ist.
+        ['appFilter', 'typeFilter', 'statusFilter', 'approvalFilter', 'releaseFilter'].forEach(fid => {
+            document.getElementById(fid).value = '';
+        });
+        this.applyFilters();
+        const card = document.getElementById(`suggestion-${id}`);
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const item = this.suggestions.find(s => s.id === id);
+        const box = document.getElementById(`comments-${id}`);
+        if (item?.pendingCommentCount > 0 && box && !box.classList.contains('is-visible')) {
+            await this.toggleComments(id);
+        }
+    }
+
     renderSuggestions() {
+        this.renderTodoStack();
         const host = document.getElementById('suggestionsList');
         const suggestions = this.getFilteredSuggestions();
 

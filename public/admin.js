@@ -171,7 +171,65 @@ class AdminApp {
         this.renderSuggestions(this.suggestions);
     }
 
+    renderTodoStack() {
+        const host = document.getElementById('todoStack');
+        if (!host) return;
+        const items = (this.suggestions || []).filter(s => s.approved !== true || s.pendingCommentCount > 0);
+        host.hidden = items.length === 0;
+        if (items.length === 0) {
+            host.innerHTML = '';
+            return;
+        }
+
+        const pendingEntries = items.filter(s => s.approved !== true).length;
+        const pendingComments = items.reduce((sum, s) => sum + (s.pendingCommentCount || 0), 0);
+        const limit = 3;
+        const visible = this.todoExpanded ? items : items.slice(0, limit);
+        const appName = s => (this.apps.find(a => a.id === s.appId) || {}).name || '';
+        const cards = visible.map(s => `
+            <article class="todo-card">
+                <div>
+                    ${s.approved === true ? '' : '<span class="admin-pill" style="--admin-pill-color: #f59e0b;">Wartet auf Freigabe</span>'}
+                    ${s.pendingCommentCount > 0 ? `<span class="admin-pill" style="--admin-pill-color: #3A72C4;">${s.pendingCommentCount} neue${s.pendingCommentCount === 1 ? 'r' : ''} Kommentar${s.pendingCommentCount === 1 ? '' : 'e'}</span>` : ''}
+                    <span class="admin-pill">${this.escapeHtml(appName(s))}</span>
+                </div>
+                <h4>${this.escapeHtml(s.title)}</h4>
+                <div class="todo-card-actions">
+                    ${s.approved === true ? '' : `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${s.id}', '${this.escapeHtml(s.title)}')">Freigeben</button>`}
+                    <button class="secondary-btn" onclick="adminApp.openSuggestion('${s.id}')">${s.pendingCommentCount > 0 ? 'Prüfen' : 'Öffnen'}</button>
+                </div>
+            </article>
+        `).join('');
+        const more = items.length > limit
+            ? `<button class="secondary-btn" onclick="adminApp.toggleTodoMore()">${this.todoExpanded ? 'Weniger anzeigen' : `${items.length - limit} weitere anzeigen`}</button>`
+            : '';
+
+        host.innerHTML = `
+            <div class="todo-stack-head">
+                <strong>${items.length} zu bearbeiten</strong>
+                <span>${pendingEntries} Einträge · ${pendingComments} Kommentare</span>
+            </div>
+            <div class="todo-stack-body">${cards}${more}</div>
+        `;
+    }
+
+    toggleTodoMore() {
+        this.todoExpanded = !this.todoExpanded;
+        this.renderTodoStack();
+    }
+
+    openSuggestion(id) {
+        ['appFilter', 'typeFilter', 'statusFilter', 'priorityFilter'].forEach(fid => {
+            const el = document.getElementById(fid);
+            if (el) el.value = '';
+        });
+        this.applyFilters();
+        const el = document.getElementById(`suggestion-${id}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     renderSuggestions(suggestions) {
+        this.renderTodoStack();
         const suggestionsList = document.getElementById('suggestionsList');
 
         // Populate app filter dropdown
@@ -257,7 +315,7 @@ class AdminApp {
             const trashIcon = '<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>';
 
             return `
-                <div class="${itemClasses.join(' ')}">
+                <div class="${itemClasses.join(' ')}" id="suggestion-${suggestion.id}">
                     <div class="admin-card-actions">
                         ${!isApproved ? `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">Freigeben</button>` : ''}
                         <button class="admin-icon-btn" title="Eintrag löschen" aria-label="Eintrag löschen" onclick="adminApp.deleteSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">${trashIcon}</button>
