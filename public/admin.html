@@ -96,6 +96,21 @@
             overscroll-behavior: contain;
         }
 
+        .todo-stack { background: var(--surface); border: 1px solid var(--primary-color); border-radius: var(--radius-md); margin-bottom: var(--spacing-lg); overflow: hidden; }
+        .todo-stack[hidden] { display: none; }
+        .todo-stack-head { display: flex; justify-content: space-between; align-items: center; gap: var(--spacing-sm); padding: var(--spacing-md) var(--spacing-lg); background: var(--primary-color); color: #fff; }
+        .todo-stack-head span { font-size: 0.8rem; opacity: 0.9; }
+        .todo-stack-body { display: grid; gap: var(--spacing-sm); padding: var(--spacing-md); }
+        .todo-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--spacing-md); display: grid; gap: var(--spacing-sm); }
+        .todo-card h4 { margin: 0; font-size: 1rem; }
+        .todo-card-actions { display: flex; gap: var(--spacing-sm); flex-wrap: wrap; }
+        .todo-card-actions button { flex: 1 1 auto; min-height: 44px; }
+        details.management-section > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; min-height: 44px; font-family: var(--font-heading); font-weight: 700; font-size: 1rem; padding: var(--spacing-md) var(--spacing-lg); background: var(--background-alt); }
+        details.management-section > summary::-webkit-details-marker { display: none; }
+        details.management-section > summary::after { content: '▸'; color: var(--text-secondary); }
+        details.management-section[open] > summary::after { content: '▾'; }
+        details.management-section[open] > summary { border-bottom: 1px solid var(--border); }
+
         .management-section {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -885,21 +900,23 @@
                 <a href="/" class="admin-back-link">← Zurück zur Website</a>
             </div>
 
+            <section id="todoStack" class="todo-stack" aria-label="Zu bearbeiten" hidden></section>
+
             <!-- Management Sections -->
             <div class="app-management">
                 <aside class="admin-sidebar" aria-label="Planung und Filter">
                 <!-- Releases Management -->
-                <div class="management-section">
+                <details class="management-section" data-collapse-mobile>
+                    <summary>Releases verwalten</summary>
                     <div class="releases-list">
-                        <h3>Releases verwalten</h3>
                         <div id="releasesList">
                             <div class="loading">Releases werden geladen...</div>
                         </div>
                     </div>
-                </div>
+                </details>
 
-                    <div class="management-section">
-                        <h3>Filter</h3>
+                    <details class="management-section" data-collapse-mobile>
+                        <summary>Filter</summary>
                         <div class="filter-panel">
                             <div class="form-group">
                                 <label for="appFilter">App</label>
@@ -933,17 +950,17 @@
                                 </select>
                             </div>
                         </div>
-                    </div>
+                    </details>
 
                     <!-- Apps Management -->
-                    <div class="management-section">
+                    <details class="management-section" data-collapse-mobile>
+                        <summary>Apps verwalten</summary>
                         <div class="apps-list">
-                            <h3>Apps verwalten</h3>
                             <div id="appsList">
                                 <div class="loading">Apps werden geladen...</div>
                             </div>
                         </div>
-                    </div>
+                    </details>
                 </aside>
 
                 <section class="admin-main" aria-label="Anfragen">
@@ -1072,5 +1089,10 @@
     </div>
 
     <script src="admin.js"></script>
+    <script>
+        if (!window.matchMedia('(max-width: 768px)').matches) {
+            document.querySelectorAll('details[data-collapse-mobile]').forEach(function (el) { el.open = true; });
+        }
+    </script>
 </body>
 </html>
