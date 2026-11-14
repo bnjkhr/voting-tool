@@ -13,3 +13,6 @@ node_modules/
 # War bisher nur untracked: ein `git add -A` haette Quelldumps mit echten
 # Nutzerdaten committet.
 tmp/
+
+# Lokale Werkzeug-Caches (nicht versionieren)
+.npm-cache/
