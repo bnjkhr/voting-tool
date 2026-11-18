@@ -259,8 +259,8 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   // --- sessions ---
   await sessions.create({ id: 'test_r_sess', userId: U, tokenHash: 'hash_sess', expiresAt: new Date(Date.now() + 3600e3) });
   assert.equal((await sessions.findByTokenHash('hash_sess')).id, 'test_r_sess');
-  const touched = await sessions.touch('test_r_sess', 30, 180);
-  assert.ok(touched.expiresAt.getTime() > Date.now() + 29 * 86400e3); // gleitender Ablauf
+  const touchedSession = await sessions.touch('test_r_sess', 30, 180);
+  assert.ok(touchedSession.expiresAt.getTime() > Date.now() + 29 * 86400e3); // gleitender Ablauf
   // Obergrenze: created_at + maxAgeDays begrenzt die Verlängerung.
   const capped = await sessions.touch('test_r_sess', 30, 0);
   assert.ok(capped.expiresAt.getTime() <= capped.createdAt.getTime() + 1000);
