@@ -45,6 +45,7 @@ const {
   buildInviteTokenHash,
   buildInviteToken,
   buildMembershipData,
+  SESSION_TTL_DAYS,
   buildSessionData,
   buildTenantInviteData,
   buildUserData,
@@ -66,6 +67,7 @@ const {
 } = require('./api-key-utils');
 const { shouldServeAppShell, isBoardDeepLinkQuery, isLegacyBoardHost } = require('./spa-fallback');
 const { allowBoardEmbedding } = require('../lib/frame-policy');
+const { canonicalLoginRedirect } = require('../lib/canonical-login-host');
 const { buildBoardMeta, injectBoardMeta, requestOrigin } = require('../lib/og-meta');
 const { formatTicketNumber } = require('../lib/ticket-number');
 // Postgres/Neon-Repositories (nur aktiv wenn DATA_BACKEND='postgres'; sonst Firestore).
@@ -144,6 +146,14 @@ app.use((req, res, next) => {
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Login läuft auf dem Konsolen-Host, weil die Session im localStorage pro
+// Origin liegt (lib/canonical-login-host.js).
+app.use((req, res, next) => {
+  const target = canonicalLoginRedirect(req.headers, req.originalUrl || req.url);
+  if (target) return res.redirect(302, target);
+  return next();
+});
 
 // Root-Route liefert die Landingpage. Muss VOR express.static stehen, damit
 // nicht die Board-SPA (public/index.html) als Default-Index für "/" greift.
@@ -3179,7 +3189,7 @@ async function resolveSessionAuth(req) {
     const user = await repos.users.findById(session.userId);
     if (!user) return null;
     if (user.status && user.status !== 'active') return null;
-    await repos.sessions.touch(session.id);
+    await repos.sessions.touch(session.id, SESSION_TTL_DAYS);
     return { type: 'session', session, user };
   }
 
@@ -3201,7 +3211,10 @@ async function resolveSessionAuth(req) {
   const user = { id: userDoc.id, ...userDoc.data() };
   if (user.status && user.status !== 'active') return null;
 
-  await sessionDoc.ref.set({ lastUsedAt: new Date() }, { merge: true });
+  const usedAt = new Date();
+  const renewedExpiresAt = new Date(usedAt);
+  renewedExpiresAt.setDate(renewedExpiresAt.getDate() + SESSION_TTL_DAYS);
+  await sessionDoc.ref.set({ lastUsedAt: usedAt, expiresAt: renewedExpiresAt }, { merge: true });
   return { type: 'session', session, user };
 }
 

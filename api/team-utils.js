@@ -93,11 +93,14 @@ function buildMembershipData({ tenantId, userId, role, now = new Date() }) {
   };
 }
 
+// Gültigkeit einer Session in Tagen; verlängert sich bei jeder Nutzung.
+const SESSION_TTL_DAYS = 30;
+
 function buildSessionData({
   userId,
   token,
   now = new Date(),
-  expiresInDays = 30,
+  expiresInDays = SESSION_TTL_DAYS,
 }) {
   const createdAt = new Date(now);
   const expiresAt = new Date(createdAt);
@@ -162,6 +165,7 @@ module.exports = {
   INVITE_STATUSES,
   MEMBERSHIP_ROLES,
   MEMBERSHIP_STATUSES,
+  SESSION_TTL_DAYS,
   buildLoginLinkData,
   buildMembershipData,
   buildInviteToken,

@@ -27,11 +27,14 @@ async function create({ id, userId, tokenHash, expiresAt }) {
   return mapRow(rows[0]);
 }
 
-async function touch(id) {
+// Gleitender Ablauf: jede Nutzung schiebt expires_at auf jetzt + ttlDays.
+async function touch(id, ttlDays) {
   const { rows } = await query(
-    `update sessions set last_used_at = now(), updated_at = now()
+    `update sessions
+     set last_used_at = now(), updated_at = now(),
+         expires_at = now() + make_interval(days => $2::int)
      where id = $1 returning ${COLUMNS}`,
-    [id]
+    [id, ttlDays]
   );
   return mapRow(rows[0]);
 }

@@ -24,8 +24,77 @@ class LoginApp {
             this.consumeButton.style.display = '';
             this.consumeButton.addEventListener('click', () => this.consumeLoginLink());
             this.setStatus('Klicke auf „Jetzt anmelden“, um die Anmeldung abzuschließen.', '');
+            return;
+        }
+
+        const sessionToken = this.readUserSession();
+        if (sessionToken) {
+            this.resumeExistingSession(sessionToken);
         } else {
-            this.guard = new FormGuard(this.form, 'login');
+            this.showForm();
+        }
+    }
+
+    showForm() {
+        this.form.style.display = '';
+        if (!this.guard) this.guard = new FormGuard(this.form, 'login');
+    }
+
+    readUserSession() {
+        try {
+            return window.adminAuth?.getUserSession?.() || localStorage.getItem('userSessionToken') || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    // Nur den Nutzer-Session-Token entfernen, nie das adminToken.
+    dropUserSession() {
+        try {
+            localStorage.removeItem('userSessionToken');
+        } catch (error) {
+            // Speicher gesperrt: nichts zu entfernen.
+        }
+        if (window.adminAuth) window.adminAuth.userSessionToken = null;
+    }
+
+    // Gleiche Regel wie isSafeRedirectPath in api/team-utils.js.
+    isSafeRedirectPath(value) {
+        if (typeof value !== 'string' || value.length === 0) return false;
+        if (value[0] !== '/') return false;
+        if (value[1] === '/' || value[1] === '\\') return false;
+        return true;
+    }
+
+    async resumeExistingSession(sessionToken) {
+        this.form.style.display = 'none';
+        this.setStatus('Du bist noch angemeldet …', '');
+        try {
+            const response = await fetch('/api/auth/session', {
+                headers: { 'X-User-Session': sessionToken },
+            });
+            if (response.status === 401) {
+                this.dropUserSession();
+                this.setStatus('', '');
+                this.showForm();
+                return;
+            }
+            if (!response.ok) throw new Error(`Session-Prüfung fehlgeschlagen (${response.status})`);
+
+            const data = await response.json();
+            const tenantSlug = data.memberships?.[0]?.tenantSlug;
+            if (this.isSafeRedirectPath(this.redirectUrl)) {
+                window.location.replace(this.redirectUrl);
+            } else if (tenantSlug) {
+                window.location.replace(`/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`);
+            } else {
+                this.setStatus('', '');
+                this.showForm();
+            }
+        } catch (error) {
+            // Netzwerk- oder Serverfehler: Token behalten, Formular anbieten.
+            this.setStatus('', '');
+            this.showForm();
         }
     }
 

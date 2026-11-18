@@ -259,7 +259,8 @@ suite('remaining repositories (suggestions, comments, releases, activity, users,
   // --- sessions ---
   await sessions.create({ id: 'test_r_sess', userId: U, tokenHash: 'hash_sess', expiresAt: new Date(Date.now() + 3600e3) });
   assert.equal((await sessions.findByTokenHash('hash_sess')).id, 'test_r_sess');
-  await sessions.touch('test_r_sess');
+  const touched = await sessions.touch('test_r_sess', 30);
+  assert.ok(touched.expiresAt.getTime() > Date.now() + 29 * 86400e3); // gleitender Ablauf
   await sessions.revoke('test_r_sess');
   assert.equal(await sessions.findByTokenHash('hash_sess'), null); // revoked -> nicht mehr aktiv
 
