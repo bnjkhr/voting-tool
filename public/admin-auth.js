@@ -153,6 +153,14 @@ class AdminAuth {
     }
 
     logout() {
+        const userSession = this.getUserSession();
+        if (userSession) {
+            fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'X-User-Session': userSession },
+                keepalive: true,
+            }).catch(() => {});
+        }
         this.clearToken();
         this.showLogin('Abgemeldet.');
     }

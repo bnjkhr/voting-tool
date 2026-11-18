@@ -45,7 +45,9 @@ const {
   buildInviteTokenHash,
   buildInviteToken,
   buildMembershipData,
+  SESSION_MAX_AGE_DAYS,
   SESSION_TTL_DAYS,
+  toDate,
   buildSessionData,
   buildTenantInviteData,
   buildUserData,
@@ -151,7 +153,10 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Origin liegt (lib/canonical-login-host.js).
 app.use((req, res, next) => {
   const target = canonicalLoginRedirect(req.headers, req.originalUrl || req.url);
-  if (target) return res.redirect(302, target);
+  if (target) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, target);
+  }
   return next();
 });
 
@@ -1566,6 +1571,32 @@ app.get('/api/auth/bot-protection', (req, res) => {
 });
 
 // Public auth: request a one-time login link for an existing invited user
+// Logout widerruft die Session serverseitig. Antwortet immer 204, damit
+// weder Token-Existenz noch Fehler nach außen sichtbar werden.
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const sessionToken = req.headers['x-user-session'];
+    if (sessionToken && !Array.isArray(sessionToken)) {
+      const tokenHash = buildInviteTokenHash(sessionToken);
+      if (usePostgres()) {
+        const session = await repos.sessions.findByTokenHash(tokenHash);
+        if (session) await repos.sessions.revoke(session.id);
+      } else {
+        const snapshot = await db.collection('sessions')
+          .where('tokenHash', '==', tokenHash)
+          .where('status', '==', 'active')
+          .limit(2)
+          .get();
+        await Promise.all(snapshot.docs.map(doc =>
+          doc.ref.set({ status: 'revoked', updatedAt: new Date() }, { merge: true })));
+      }
+    }
+  } catch (error) {
+    console.error('Error revoking session:', error);
+  }
+  res.status(204).end();
+});
+
 app.post('/api/auth/login-links', rateLimit(60000, 5), requireHumanForm({ minFillMs: 1500, action: 'login' }), async (req, res) => {
   try {
     let email;
@@ -3189,7 +3220,7 @@ async function resolveSessionAuth(req) {
     const user = await repos.users.findById(session.userId);
     if (!user) return null;
     if (user.status && user.status !== 'active') return null;
-    await repos.sessions.touch(session.id, SESSION_TTL_DAYS);
+    await repos.sessions.touch(session.id, SESSION_TTL_DAYS, SESSION_MAX_AGE_DAYS);
     return { type: 'session', session, user };
   }
 
@@ -3212,8 +3243,14 @@ async function resolveSessionAuth(req) {
   if (user.status && user.status !== 'active') return null;
 
   const usedAt = new Date();
-  const renewedExpiresAt = new Date(usedAt);
+  let renewedExpiresAt = new Date(usedAt);
   renewedExpiresAt.setDate(renewedExpiresAt.getDate() + SESSION_TTL_DAYS);
+  const createdAt = toDate(session.createdAt);
+  if (createdAt) {
+    const hardLimit = new Date(createdAt);
+    hardLimit.setDate(hardLimit.getDate() + SESSION_MAX_AGE_DAYS);
+    if (hardLimit < renewedExpiresAt) renewedExpiresAt = hardLimit;
+  }
   await sessionDoc.ref.set({ lastUsedAt: usedAt, expiresAt: renewedExpiresAt }, { merge: true });
   return { type: 'session', session, user };
 }

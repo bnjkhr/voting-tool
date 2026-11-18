@@ -27,14 +27,16 @@ async function create({ id, userId, tokenHash, expiresAt }) {
   return mapRow(rows[0]);
 }
 
-// Gleitender Ablauf: jede Nutzung schiebt expires_at auf jetzt + ttlDays.
-async function touch(id, ttlDays) {
+// Gleitender Ablauf: jede Nutzung schiebt expires_at auf jetzt + ttlDays,
+// höchstens aber auf created_at + maxAgeDays.
+async function touch(id, ttlDays, maxAgeDays) {
   const { rows } = await query(
     `update sessions
      set last_used_at = now(), updated_at = now(),
-         expires_at = now() + make_interval(days => $2::int)
+         expires_at = least(now() + make_interval(days => $2::int),
+                            created_at + make_interval(days => $3::int))
      where id = $1 returning ${COLUMNS}`,
-    [id, ttlDays]
+    [id, ttlDays, maxAgeDays]
   );
   return mapRow(rows[0]);
 }

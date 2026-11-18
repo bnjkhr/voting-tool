@@ -95,6 +95,8 @@ function buildMembershipData({ tenantId, userId, role, now = new Date() }) {
 
 // Gültigkeit einer Session in Tagen; verlängert sich bei jeder Nutzung.
 const SESSION_TTL_DAYS = 30;
+// Absolute Obergrenze ab Erstellung, auch bei gleitender Verlängerung.
+const SESSION_MAX_AGE_DAYS = 180;
 
 function buildSessionData({
   userId,
@@ -130,6 +132,9 @@ function isSafeRedirectPath(value) {
   // browsers normalise into a host change.
   if (value[0] !== '/') return false;
   if (value[1] === '/' || value[1] === '\\') return false;
+  // Steuerzeichen, Leerzeichen und Backslash: der URL-Parser streicht Tab/
+  // Newline und macht aus `/\t/evil.com` sonst `//evil.com`.
+  if (/[\x00-\x20\\]/.test(value)) return false;
   return true;
 }
 
@@ -165,8 +170,11 @@ module.exports = {
   INVITE_STATUSES,
   MEMBERSHIP_ROLES,
   MEMBERSHIP_STATUSES,
+  SESSION_MAX_AGE_DAYS,
   SESSION_TTL_DAYS,
   buildLoginLinkData,
+  isSafeRedirectPath,
+  toDate,
   buildMembershipData,
   buildInviteToken,
   buildInviteTokenHash,

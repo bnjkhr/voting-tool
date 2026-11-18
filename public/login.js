@@ -58,12 +58,17 @@ class LoginApp {
         if (window.adminAuth) window.adminAuth.userSessionToken = null;
     }
 
-    // Gleiche Regel wie isSafeRedirectPath in api/team-utils.js.
-    isSafeRedirectPath(value) {
-        if (typeof value !== 'string' || value.length === 0) return false;
-        if (value[0] !== '/') return false;
-        if (value[1] === '/' || value[1] === '\\') return false;
-        return true;
+    // Nur Ziele auf derselben Origin. Der URL-Parser streicht Tab/Newline und
+    // würde `/\t/evil.com` sonst zu `//evil.com`; darum die Origin nachprüfen.
+    safeRedirectTarget(value) {
+        if (typeof value !== 'string' || value[0] !== '/') return null;
+        try {
+            const url = new URL(value, window.location.origin);
+            if (url.origin !== window.location.origin) return null;
+            return url.pathname + url.search + url.hash;
+        } catch (error) {
+            return null;
+        }
     }
 
     async resumeExistingSession(sessionToken) {
@@ -72,6 +77,7 @@ class LoginApp {
         try {
             const response = await fetch('/api/auth/session', {
                 headers: { 'X-User-Session': sessionToken },
+                signal: AbortSignal.timeout(5000),
             });
             if (response.status === 401) {
                 this.dropUserSession();
@@ -83,8 +89,9 @@ class LoginApp {
 
             const data = await response.json();
             const tenantSlug = data.memberships?.[0]?.tenantSlug;
-            if (this.isSafeRedirectPath(this.redirectUrl)) {
-                window.location.replace(this.redirectUrl);
+            const target = this.safeRedirectTarget(this.redirectUrl);
+            if (target) {
+                window.location.replace(target);
             } else if (tenantSlug) {
                 window.location.replace(`/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`);
             } else {
@@ -148,6 +155,12 @@ class LoginApp {
             if (data.sessionToken && window.adminAuth?.setUserSession) {
                 window.adminAuth.setUserSession(data.sessionToken);
             }
+
+            // Einmal-Token aus der Adresszeile entfernen, redirect-Param behalten.
+            const remaining = new URLSearchParams(window.location.search);
+            remaining.delete('token');
+            const query = remaining.toString();
+            history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : ''));
 
             this.consumeButton.style.display = 'none';
             this.setStatus('Angemeldet.', 'success');
