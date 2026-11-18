@@ -1570,7 +1570,6 @@ app.get('/api/auth/bot-protection', (req, res) => {
   res.json({ turnstileSiteKey: turnstileConfig()?.siteKey || null });
 });
 
-// Public auth: request a one-time login link for an existing invited user
 // Logout widerruft die Session serverseitig. Antwortet immer 204, damit
 // weder Token-Existenz noch Fehler nach außen sichtbar werden.
 app.post('/api/auth/logout', async (req, res) => {
@@ -1597,6 +1596,7 @@ app.post('/api/auth/logout', async (req, res) => {
   res.status(204).end();
 });
 
+// Public auth: request a one-time login link for an existing invited user
 app.post('/api/auth/login-links', rateLimit(60000, 5), requireHumanForm({ minFillMs: 1500, action: 'login' }), async (req, res) => {
   try {
     let email;
