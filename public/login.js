@@ -24,8 +24,84 @@ class LoginApp {
             this.consumeButton.style.display = '';
             this.consumeButton.addEventListener('click', () => this.consumeLoginLink());
             this.setStatus('Klicke auf „Jetzt anmelden“, um die Anmeldung abzuschließen.', '');
+            return;
+        }
+
+        const sessionToken = this.readUserSession();
+        if (sessionToken) {
+            this.resumeExistingSession(sessionToken);
         } else {
-            this.guard = new FormGuard(this.form, 'login');
+            this.showForm();
+        }
+    }
+
+    showForm() {
+        this.form.style.display = '';
+        if (!this.guard) this.guard = new FormGuard(this.form, 'login');
+    }
+
+    readUserSession() {
+        try {
+            return window.adminAuth?.getUserSession?.() || localStorage.getItem('userSessionToken') || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    // Nur den Nutzer-Session-Token entfernen, nie das adminToken.
+    dropUserSession() {
+        try {
+            localStorage.removeItem('userSessionToken');
+        } catch (error) {
+            // Speicher gesperrt: nichts zu entfernen.
+        }
+        if (window.adminAuth) window.adminAuth.userSessionToken = null;
+    }
+
+    // Nur Ziele auf derselben Origin. Der URL-Parser streicht Tab/Newline und
+    // würde `/\t/evil.com` sonst zu `//evil.com`; darum die Origin nachprüfen.
+    safeRedirectTarget(value) {
+        if (typeof value !== 'string' || value[0] !== '/') return null;
+        try {
+            const url = new URL(value, window.location.origin);
+            if (url.origin !== window.location.origin) return null;
+            return url.pathname + url.search + url.hash;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async resumeExistingSession(sessionToken) {
+        this.form.style.display = 'none';
+        this.setStatus('Du bist noch angemeldet …', '');
+        try {
+            const response = await fetch('/api/auth/session', {
+                headers: { 'X-User-Session': sessionToken },
+                signal: AbortSignal.timeout(5000),
+            });
+            if (response.status === 401) {
+                this.dropUserSession();
+                this.setStatus('', '');
+                this.showForm();
+                return;
+            }
+            if (!response.ok) throw new Error(`Session-Prüfung fehlgeschlagen (${response.status})`);
+
+            const data = await response.json();
+            const tenantSlug = data.memberships?.[0]?.tenantSlug;
+            const target = this.safeRedirectTarget(this.redirectUrl);
+            if (target) {
+                window.location.replace(target);
+            } else if (tenantSlug) {
+                window.location.replace(`/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`);
+            } else {
+                this.setStatus('', '');
+                this.showForm();
+            }
+        } catch (error) {
+            // Netzwerk- oder Serverfehler: Token behalten, Formular anbieten.
+            this.setStatus('', '');
+            this.showForm();
         }
     }
 
@@ -79,6 +155,12 @@ class LoginApp {
             if (data.sessionToken && window.adminAuth?.setUserSession) {
                 window.adminAuth.setUserSession(data.sessionToken);
             }
+
+            // Einmal-Token aus der Adresszeile entfernen, redirect-Param behalten.
+            const remaining = new URLSearchParams(window.location.search);
+            remaining.delete('token');
+            const query = remaining.toString();
+            history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : ''));
 
             this.consumeButton.style.display = 'none';
             this.setStatus('Angemeldet.', 'success');
