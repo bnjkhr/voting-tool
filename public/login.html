@@ -118,6 +118,10 @@
             border-color: var(--line);
         }
 
+        [hidden] {
+            display: none !important;
+        }
+
         .login-status {
             margin-top: 18px;
             color: var(--muted);
@@ -159,6 +163,9 @@
                 <p>Gib die E-Mail-Adresse ein, mit der du eingeladen wurdest.</p>
             </div>
             <div class="login-panel-body">
+                <div id="sessionNotice" hidden>
+                    <p id="sessionNoticeText" style="margin: 0 0 22px;"></p>
+                </div>
                 <form id="loginForm">
                     <label>
                         E-Mail

@@ -196,7 +196,7 @@ body {
 .settings-btn { right: 0; }
 .theme-toggle-btn { right: 52px; }
 
-/* "Zur Konsole" — nur für eingeloggte Owner/Admins dieses Workspaces (per JS). */
+/* "Zur Konsole" — auf Workspace-Boards (per JS), nie auf Legacy-Boards. */
 .console-link {
     position: absolute;
     top: var(--spacing-xl);

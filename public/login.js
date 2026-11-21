@@ -8,6 +8,8 @@ class LoginApp {
         this.result = document.getElementById('loginResult');
         this.submitButton = document.getElementById('loginBtn');
         this.consumeButton = document.getElementById('consumeBtn');
+        this.sessionNotice = document.getElementById('sessionNotice');
+        this.sessionNoticeText = document.getElementById('sessionNoticeText');
         this.init();
     }
 
@@ -38,6 +40,15 @@ class LoginApp {
     showForm() {
         this.form.style.display = '';
         if (!this.guard) this.guard = new FormGuard(this.form, 'login');
+    }
+
+    showNoWorkspaceNotice(email) {
+        if (!this.sessionNotice || !this.sessionNoticeText) return;
+        const who = email ? `als ${email}` : '';
+        this.sessionNoticeText.textContent =
+            `Du bist ${who ? who + ' ' : ''}angemeldet, gehörst aber noch zu keinem Workspace. ` +
+            'Lass dich von einer Workspace-Inhaberin einladen oder leg einen eigenen Workspace an.';
+        this.sessionNotice.hidden = false;
     }
 
     readUserSession() {
@@ -95,7 +106,9 @@ class LoginApp {
             } else if (tenantSlug) {
                 window.location.replace(`/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`);
             } else {
+                // Angemeldet, aber ohne Workspace: Hinweis, Formular bleibt für ein anderes Konto.
                 this.setStatus('', '');
+                this.showNoWorkspaceNotice(data.user?.email);
                 this.showForm();
             }
         } catch (error) {

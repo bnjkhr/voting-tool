@@ -106,7 +106,22 @@
         return '/';
     }
 
-    const api = { normalizeView, parseUrlState, buildUrlState };
+    // Ziel des „Zur Konsole“-Links auf dem Board. Die Konsole läuft auf
+    // app.roadlight.pro (dort liegt die Session im localStorage); auf
+    // roadlight.pro muss der Link daher absolut dorthin zeigen. Legacy-Host
+    // und fehlender Slug: null (kein Link).
+    const PRODUCT_HOSTS = ['roadlight.pro', 'www.roadlight.pro'];
+    const LEGACY_HOST = 'votingtool.benkohler.de';
+
+    function consoleLinkHref(hostname, tenantSlug) {
+        if (!tenantSlug) return null;
+        const host = String(hostname || '').toLowerCase();
+        if (host === LEGACY_HOST) return null;
+        const path = `/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`;
+        return PRODUCT_HOSTS.includes(host) ? `https://app.roadlight.pro${path}` : path;
+    }
+
+    const api = { normalizeView, parseUrlState, buildUrlState, consoleLinkHref };
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
