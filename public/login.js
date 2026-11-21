@@ -10,6 +10,7 @@ class LoginApp {
         this.consumeButton = document.getElementById('consumeBtn');
         this.sessionNotice = document.getElementById('sessionNotice');
         this.sessionNoticeText = document.getElementById('sessionNoticeText');
+        this.sessionLogoutButton = document.getElementById('sessionLogoutBtn');
         this.init();
     }
 
@@ -42,13 +43,30 @@ class LoginApp {
         if (!this.guard) this.guard = new FormGuard(this.form, 'login');
     }
 
-    showNoWorkspaceNotice(email) {
+    showNoWorkspaceNotice() {
         if (!this.sessionNotice || !this.sessionNoticeText) return;
-        const who = email ? `als ${email}` : '';
         this.sessionNoticeText.textContent =
-            `Du bist ${who ? who + ' ' : ''}angemeldet, gehörst aber noch zu keinem Workspace. ` +
-            'Lass dich von einer Workspace-Inhaberin einladen oder leg einen eigenen Workspace an.';
+            'Du bist angemeldet, gehörst aber noch zu keinem Workspace. ' +
+            'Bitte die Person, die dich eingeladen hat, um einen neuen Einladungslink.';
         this.sessionNotice.hidden = false;
+        if (this.sessionLogoutButton && !this.sessionLogoutButton.dataset.bound) {
+            this.sessionLogoutButton.dataset.bound = '1';
+            this.sessionLogoutButton.addEventListener('click', () => this.logout());
+        }
+    }
+
+    logout() {
+        const sessionToken = this.readUserSession();
+        if (sessionToken) {
+            fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'X-User-Session': sessionToken },
+                keepalive: true,
+            }).catch(() => {});
+        }
+        this.dropUserSession();
+        this.sessionNotice.hidden = true;
+        this.setStatus('Abgemeldet.', '');
     }
 
     readUserSession() {
@@ -108,7 +126,7 @@ class LoginApp {
             } else {
                 // Angemeldet, aber ohne Workspace: Hinweis, Formular bleibt für ein anderes Konto.
                 this.setStatus('', '');
-                this.showNoWorkspaceNotice(data.user?.email);
+                this.showNoWorkspaceNotice();
                 this.showForm();
             }
         } catch (error) {

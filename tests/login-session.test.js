@@ -92,16 +92,18 @@ test('Session hat eine absolute Obergrenze und Logout widerruft serverseitig', (
   assert.ok(login.includes('url.origin !== window.location.origin'));
 });
 
-test('Angemeldet ohne Workspace: Hinweis mit E-Mail (textContent), Link zur Registrierung, Formular bleibt', () => {
+test('Angemeldet ohne Workspace: Hinweis (textContent), Abmelden-Link, Formular bleibt', () => {
   const login = read('public/login.js');
   const html = read('public/login.html');
   const branch = login.slice(login.indexOf('Angemeldet, aber ohne Workspace'));
-  assert.ok(branch.indexOf('showNoWorkspaceNotice(data.user?.email)') < branch.indexOf('this.showForm()'));
-  const notice = login.slice(login.indexOf('showNoWorkspaceNotice(email) {'), login.indexOf('readUserSession() {'));
+  assert.ok(branch.indexOf('showNoWorkspaceNotice()') < branch.indexOf('this.showForm()'));
+  const notice = login.slice(login.indexOf('showNoWorkspaceNotice() {'), login.indexOf('readUserSession() {'));
   assert.ok(notice.includes('this.sessionNoticeText.textContent'));
   assert.ok(!notice.includes('innerHTML'));
-  assert.ok(notice.includes('gehörst aber noch zu keinem Workspace. '));
-  assert.ok(notice.includes('Lass dich von einer Workspace-Inhaberin einladen oder leg einen eigenen Workspace an.'));
+  assert.ok(notice.includes("'Du bist angemeldet, gehörst aber noch zu keinem Workspace. '"));
+  assert.ok(notice.includes("'Bitte die Person, die dich eingeladen hat, um einen neuen Einladungslink.'"));
+  assert.ok(notice.includes("fetch('/api/auth/logout'"), 'Abmelden widerruft die Session serverseitig');
+  assert.ok(/<button id="sessionLogoutBtn" class="text-link" type="button">Abmelden<\/button>/.test(html));
   assert.ok(/id="sessionNotice" hidden/.test(html));
   assert.ok(!html.includes("Eigenen Workspace anlegen"), "kein zweiter Signup-Link, die Seite hat unten schon einen");
   assert.ok(html.indexOf('id="sessionNotice"') < html.indexOf('id="loginForm"'), 'Hinweis über dem Formular');

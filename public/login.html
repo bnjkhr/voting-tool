@@ -141,6 +141,16 @@
             margin-top: 18px;
         }
 
+        .text-link {
+            background: none;
+            border: 0;
+            padding: 0;
+            font: inherit;
+            color: var(--ink);
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
         .login-result a {
             overflow-wrap: anywhere;
         }
@@ -164,7 +174,8 @@
             </div>
             <div class="login-panel-body">
                 <div id="sessionNotice" hidden>
-                    <p id="sessionNoticeText" style="margin: 0 0 22px;"></p>
+                    <p id="sessionNoticeText" style="margin: 0 0 8px;"></p>
+                    <p style="margin: 0 0 22px;"><button id="sessionLogoutBtn" class="text-link" type="button">Abmelden</button></p>
                 </div>
                 <form id="loginForm">
                     <label>
