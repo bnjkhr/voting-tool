@@ -103,6 +103,6 @@ test('Angemeldet ohne Workspace: Hinweis mit E-Mail (textContent), Link zur Regi
   assert.ok(notice.includes('gehörst aber noch zu keinem Workspace. '));
   assert.ok(notice.includes('Lass dich von einer Workspace-Inhaberin einladen oder leg einen eigenen Workspace an.'));
   assert.ok(/id="sessionNotice" hidden/.test(html));
-  assert.ok(/<a href="\/signup\.html">Eigenen Workspace anlegen<\/a>/.test(html));
+  assert.ok(!html.includes("Eigenen Workspace anlegen"), "kein zweiter Signup-Link, die Seite hat unten schon einen");
   assert.ok(html.indexOf('id="sessionNotice"') < html.indexOf('id="loginForm"'), 'Hinweis über dem Formular');
 });
