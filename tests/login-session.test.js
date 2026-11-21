@@ -91,3 +91,18 @@ test('Session hat eine absolute Obergrenze und Logout widerruft serverseitig', (
   assert.ok(login.includes('history.replaceState'));
   assert.ok(login.includes('url.origin !== window.location.origin'));
 });
+
+test('Angemeldet ohne Workspace: Hinweis mit E-Mail (textContent), Link zur Registrierung, Formular bleibt', () => {
+  const login = read('public/login.js');
+  const html = read('public/login.html');
+  const branch = login.slice(login.indexOf('Angemeldet, aber ohne Workspace'));
+  assert.ok(branch.indexOf('showNoWorkspaceNotice(data.user?.email)') < branch.indexOf('this.showForm()'));
+  const notice = login.slice(login.indexOf('showNoWorkspaceNotice(email) {'), login.indexOf('readUserSession() {'));
+  assert.ok(notice.includes('this.sessionNoticeText.textContent'));
+  assert.ok(!notice.includes('innerHTML'));
+  assert.ok(notice.includes('gehörst aber noch zu keinem Workspace. '));
+  assert.ok(notice.includes('Lass dich von einer Workspace-Inhaberin einladen oder leg einen eigenen Workspace an.'));
+  assert.ok(/id="sessionNotice" hidden/.test(html));
+  assert.ok(/<a href="\/signup\.html">Eigenen Workspace anlegen<\/a>/.test(html));
+  assert.ok(html.indexOf('id="sessionNotice"') < html.indexOf('id="loginForm"'), 'Hinweis über dem Formular');
+});

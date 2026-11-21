@@ -558,38 +558,23 @@ class VotingApp {
         history.pushState(null, '', nextUrl);
     }
 
-    // Blendet den "Zur Konsole"-Link nur ein, wenn eine gültige Session
-    // existiert UND der Nutzer Owner/Admin genau dieses Workspaces ist. Läuft
-    // same-origin (Session-Token aus localStorage, Konsole auf gleicher Domain).
-    async checkConsoleAccess(tenantSlug) {
+    // Der „Zur Konsole“-Link ist für alle Besucher eines Workspace-Boards
+    // sichtbar und zeigt fest auf die Konsole. Die Session liegt im
+    // localStorage von app.roadlight.pro und ist auf dem Board nicht lesbar;
+    // die Konsole selbst prüft die Berechtigung und leitet zum Login.
+    checkConsoleAccess(tenantSlug) {
         const link = document.getElementById('adminConsoleLink');
         if (!link) return;
-        link.hidden = true; // bei jedem Tenant-Wechsel zurücksetzen
-        if (!tenantSlug) return;
-        let token = null;
-        try { token = localStorage.getItem('userSessionToken'); } catch (e) { /* Storage blockiert */ }
-        if (!token) return; // nicht eingeloggt -> Link bleibt versteckt
-        try {
-            const res = await fetch('/api/auth/session', { headers: { 'x-user-session': token } });
-            if (!res.ok) return;
-            const data = await res.json();
-            // Zwischenzeitlicher Tenant-Wechsel? Dann dieses (veraltete) Ergebnis verwerfen.
-            if (this.consoleAccessTenant !== tenantSlug) return;
-            const canManage = (data.memberships || []).some(m =>
-                m.tenantSlug === tenantSlug && (m.role === 'owner' || m.role === 'admin'));
-            if (canManage) {
-                link.href = `/tenant-admin.html?tenant=${encodeURIComponent(tenantSlug)}`;
-                link.hidden = false;
-            }
-        } catch (e) { /* im Zweifel bleibt der Link versteckt */ }
+        const href = UrlState.consoleLinkHref(window.location.hostname, tenantSlug);
+        if (href) link.href = href;
+        link.hidden = !href; // bei jedem Tenant-Wechsel aktualisieren
     }
 
     applyUrlStateFromLocation({ replace = false } = {}) {
         const state = UrlState.parseUrlState(window.location.pathname, window.location.search);
         const nextTenantSlug = state.tenantSlug || null;
 
-        // Bei jedem Tenant-Wechsel (auch SPA-intern) neu prüfen, ob ein
-        // eingeloggter Owner/Admin dieses Workspaces den Konsolen-Link sieht.
+        // Bei jedem Tenant-Wechsel (auch SPA-intern) den Konsolen-Link neu setzen.
         if (nextTenantSlug !== this.consoleAccessTenant) {
             this.consoleAccessTenant = nextTenantSlug;
             this.checkConsoleAccess(nextTenantSlug);
