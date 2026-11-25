@@ -4802,13 +4802,22 @@ async function getSuggestionsByUserFingerprint(userFingerprint) {
   }
 }
 
+// Die Einstellungen hängen nur an IP und Browser-Kennung. Deshalb verlässt die
+// gespeicherte Adresse den Server nicht.
+function buildNotificationSettingsResponse(settings) {
+  return {
+    notificationsEnabled: Boolean(settings.notificationsEnabled),
+    hasEmail: Boolean(settings.email),
+  };
+}
+
 // Get user notification settings
 app.get('/api/user/notification-settings', async (req, res) => {
   try {
     const userFingerprint = generateUserFingerprint(req);
     const settings = await getUserNotificationSettings(userFingerprint);
-    
-    res.json(settings);
+
+    res.json(buildNotificationSettingsResponse(settings));
   } catch (error) {
     console.error('Error fetching notification settings:', error);
     res.status(500).json({ error: 'Failed to fetch notification settings' });
@@ -4822,20 +4831,25 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
     const { email, notificationsEnabled } = req.body;
 
     // Validate email if provided
-    if (email && email.trim() !== '') {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email.trim())) {
-        return res.status(400).json({ error: 'Invalid email format' });
-      }
+    if (email !== undefined && email !== null && typeof email !== 'string') {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    const newEmail = email ? email.trim() : '';
+    if (newEmail && !isValidEmail(newEmail)) {
+      return res.status(400).json({ error: 'Invalid email format' });
     }
 
     const settingsData = {
       tenantId: LEGACY_TENANT_ID,
       userFingerprint,
-      email: email ? email.trim() : null,
       notificationsEnabled: Boolean(notificationsEnabled),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
+    // Fehlt die Adresse oder ist sie leer, bleibt die gespeicherte erhalten: GET
+    // gibt sie nicht aus. Gelöscht wird sie nur mit email: null.
+    if (newEmail || email === null) {
+      settingsData.email = newEmail || null;
+    }
 
     // Check if settings already exist
     const existingSettings = await db.collection('userSettings')
@@ -4846,22 +4860,13 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
     if (existingSettings.empty) {
       // Create new settings
       settingsData.createdAt = admin.firestore.FieldValue.serverTimestamp();
-      const docRef = await db.collection('userSettings').add(settingsData);
-      res.json({
-        id: docRef.id,
-        ...settingsData,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
+      await db.collection('userSettings').add({ email: null, ...settingsData });
+      res.json(buildNotificationSettingsResponse(settingsData));
     } else {
       // Update existing settings
-      const docRef = existingSettings.docs[0].ref;
-      await docRef.update(settingsData);
-      res.json({
-        id: docRef.id,
-        ...settingsData,
-        updatedAt: new Date()
-      });
+      const existing = existingSettings.docs[0];
+      await existing.ref.update(settingsData);
+      res.json(buildNotificationSettingsResponse({ ...existing.data(), ...settingsData }));
     }
   } catch (error) {
     console.error('Error updating notification settings:', error);
