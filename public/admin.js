@@ -157,7 +157,7 @@ class AdminApp {
                 </div>
                 <div class="app-actions">
                     <button class="admin-link-btn" onclick="adminApp.editApp('${app.id}')">Bearbeiten</button>
-                    <button class="admin-icon-btn" title="App löschen" aria-label="App löschen" onclick="adminApp.deleteApp('${app.id}', '${this.escapeHtml(app.name)}')">${trashIcon}</button>
+                    <button class="admin-icon-btn" title="App löschen" aria-label="App löschen" onclick="adminApp.deleteApp('${app.id}')">${trashIcon}</button>
                 </div>
             </div>
         `).join('');
@@ -195,7 +195,7 @@ class AdminApp {
                 </div>
                 <h4>${this.escapeHtml(s.title)}</h4>
                 <div class="todo-card-actions">
-                    ${s.approved === true ? '' : `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${s.id}', '${this.escapeHtml(s.title)}')">Freigeben</button>`}
+                    ${s.approved === true ? '' : `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${s.id}')">Freigeben</button>`}
                     <button class="secondary-btn" onclick="adminApp.openSuggestion('${s.id}')">${s.pendingCommentCount > 0 ? 'Prüfen' : 'Öffnen'}</button>
                 </div>
             </article>
@@ -248,7 +248,7 @@ class AdminApp {
             const allStatuses = [...new Set(suggestions.map(s => s.status).filter(Boolean))];
             const currentStatus = this.filters.status;
             statusFilter.innerHTML = '<option value="">Alle Status</option>' +
-                allStatuses.map(s => `<option value="${s}" ${currentStatus === s ? 'selected' : ''}>${this.escapeHtml(s)}</option>`).join('');
+                allStatuses.map(s => `<option value="${this.escapeHtml(s)}" ${currentStatus === s ? 'selected' : ''}>${this.escapeHtml(s)}</option>`).join('');
         }
 
         // Apply all filters
@@ -296,7 +296,7 @@ class AdminApp {
 
             // Labels
             const labelPills = (suggestion.labels || []).map(l =>
-                `<span class="admin-label-pill">${this.escapeHtml(l)}<button onclick="adminApp.removeLabel('${suggestion.id}', '${this.escapeHtml(l)}')" aria-label="Label entfernen">×</button></span>`
+                `<span class="admin-label-pill">${this.escapeHtml(l)}<button data-label="${this.escapeHtml(l)}" onclick="adminApp.removeLabel('${suggestion.id}', this.dataset.label)" aria-label="Label entfernen">×</button></span>`
             ).join('');
 
             // Status options for this type
@@ -317,8 +317,8 @@ class AdminApp {
             return `
                 <div class="${itemClasses.join(' ')}" id="suggestion-${suggestion.id}">
                     <div class="admin-card-actions">
-                        ${!isApproved ? `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">Freigeben</button>` : ''}
-                        <button class="admin-icon-btn" title="Eintrag löschen" aria-label="Eintrag löschen" onclick="adminApp.deleteSuggestion('${suggestion.id}', '${this.escapeHtml(suggestion.title)}')">${trashIcon}</button>
+                        ${!isApproved ? `<button class="admin-approve-btn" onclick="adminApp.approveSuggestion('${suggestion.id}')">Freigeben</button>` : ''}
+                        <button class="admin-icon-btn" title="Eintrag löschen" aria-label="Eintrag löschen" onclick="adminApp.deleteSuggestion('${suggestion.id}')">${trashIcon}</button>
                     </div>
                     <div class="suggestion-content">
                         <div class="suggestion-title-line">
@@ -467,7 +467,8 @@ class AdminApp {
         }
     }
 
-    async deleteApp(appId, appName) {
+    async deleteApp(appId) {
+        const appName = this.apps.find(a => a.id === appId)?.name ?? '';
         if (!confirm(`Sind Sie sicher, dass Sie "${appName}" löschen möchten?\n\nDies löscht auch alle Vorschläge und Votes für diese App!`)) {
             return;
         }
@@ -495,7 +496,8 @@ class AdminApp {
         }
     }
 
-    async approveSuggestion(suggestionId, suggestionTitle) {
+    async approveSuggestion(suggestionId) {
+        const suggestionTitle = this.suggestions.find(s => s.id === suggestionId)?.title ?? '';
         if (!confirm(`Möchten Sie den Vorschlag "${suggestionTitle}" freigeben?\n\nDer Vorschlag wird dann öffentlich sichtbar.`)) {
             return;
         }
@@ -523,7 +525,8 @@ class AdminApp {
         }
     }
 
-    async deleteSuggestion(suggestionId, suggestionTitle) {
+    async deleteSuggestion(suggestionId) {
+        const suggestionTitle = this.suggestions.find(s => s.id === suggestionId)?.title ?? '';
         if (!confirm(`Sind Sie sicher, dass Sie den Vorschlag "${suggestionTitle}" löschen möchten?\n\nDies löscht auch alle Votes für diesen Vorschlag!`)) {
             return;
         }
@@ -686,9 +689,14 @@ class AdminApp {
     }
 
     escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        // Maskiert auch beide Anführungszeichen, damit das Ergebnis in Text und
+        // Attributwerten sicher ist. In on*-Handler gehört trotzdem kein Nutzertext.
+        return String(text == null ? '' : text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     showToast(message, type = 'success') {
@@ -875,7 +883,7 @@ class AdminApp {
                             <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
                                 ${comment.screenshots.map((screenshot, idx) => `
                                     <img
-                                        src="${screenshot}"
+                                        src="${this.escapeHtml(screenshot)}"
                                         alt="Screenshot ${idx + 1}"
                                         onclick="adminApp.showImageModal(this.src)"
                                         style="max-width: 150px; max-height: 150px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); object-fit: cover; transition: transform 0.2s;"
@@ -928,7 +936,7 @@ class AdminApp {
                 imgContainer.style.cssText = 'position: relative; display: inline-block;';
                 imgContainer.innerHTML = `
                     <img
-                        src="${compressedDataUrl}"
+                        src="${this.escapeHtml(compressedDataUrl)}"
                         style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);"
                     >
                     <button
@@ -990,7 +998,7 @@ class AdminApp {
             imgContainer.style.cssText = 'position: relative; display: inline-block;';
             imgContainer.innerHTML = `
                 <img
-                    src="${screenshot}"
+                    src="${this.escapeHtml(screenshot)}"
                     style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);"
                 >
                 <button
@@ -1168,7 +1176,7 @@ class AdminApp {
                     </div>
                     <div class="release-row-actions">
                         <button class="admin-link-btn" onclick="adminApp.editRelease('${release.id}')">Bearbeiten</button>
-                        <button class="admin-icon-btn" title="Release löschen" aria-label="Release löschen" onclick="adminApp.deleteRelease('${release.id}', '${this.escapeHtml(release.version)}')">${trashIcon}</button>
+                        <button class="admin-icon-btn" title="Release löschen" aria-label="Release löschen" onclick="adminApp.deleteRelease('${release.id}')">${trashIcon}</button>
                     </div>
                 </div>
             `;
@@ -1264,7 +1272,8 @@ class AdminApp {
         if (release) this.showReleaseModal(release);
     }
 
-    async deleteRelease(releaseId, version) {
+    async deleteRelease(releaseId) {
+        const version = this.releases.find(r => r.id === releaseId)?.version ?? '';
         if (!confirm(`Release v${version} wirklich löschen?\n\nZugeordnete Einträge werden nicht gelöscht, nur die Zuordnung wird entfernt.`)) {
             return;
         }
