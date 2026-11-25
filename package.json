@@ -19,7 +19,8 @@
     "build": "echo 'Build complete - Node.js API ready'",
     "vercel-build": "echo 'Vercel build complete'",
     "tenant:create": "node scripts/create-tenant.js",
-    "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run"
+    "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run",
+    "test": "node --test \"tests/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",

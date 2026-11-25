@@ -9,6 +9,7 @@ const {
   buildAdminCommentResponse,
   buildCommentStats,
   buildPublicCommentResponse,
+  isScreenshotDataUrl,
   normalizeCommentData,
   validateCommentScreenshots,
 } = require('./comment-utils');
@@ -269,10 +270,12 @@ function buildCommentStatsMap(commentDocs, tenantId) {
 
 function buildPublicSuggestionResponse(data, commentStatsMap, userVotesSet) {
   const type = normalizeSuggestionType(data.type);
+  // Daten der einreichenden Person bleiben intern.
+  const { notificationEmail, notificationEnabled, userFingerprint, ...publicData } = data;
 
   return {
     id: data.id,
-    ...data,
+    ...publicData,
     type,
     status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
     priority: data.priority || 'mittel',
@@ -1974,21 +1977,7 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
     const suggestions = suggestionsSnapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter(data => isLegacyTenantData(data))
-      .map(data => {
-        const type = normalizeSuggestionType(data.type);
-
-        return {
-          id: data.id,
-          ...data,
-          type,
-          status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
-          priority: data.priority || 'mittel',
-          labels: data.labels || [],
-          ticketNumber: data.ticketNumber || null,
-          commentCount: commentStatsMap[data.id]?.publicCount || 0,
-          hasVoted: type === 'feature' && userVotesSet.has(data.id)
-        };
-      });
+      .map(data => buildPublicSuggestionResponse(data, commentStatsMap, userVotesSet));
 
     // Sort: resolved/implemented items sink to the bottom, votable first, then newest
     suggestions.sort((a, b) => {
@@ -2337,7 +2326,7 @@ function buildSuggestionFromRequest(body, appId, userFingerprint, tenantId = LEG
     // Bug screenshots (optional)
     if (body.screenshots && Array.isArray(body.screenshots)) {
       const validScreenshots = body.screenshots
-        .filter(s => typeof s === 'string' && s.startsWith('data:image/') && s.length < 300000)
+        .filter(s => isScreenshotDataUrl(s) && s.length < 300000)
         .slice(0, 3);
       const totalSize = validScreenshots.reduce((sum, s) => sum + s.length, 0);
       if (totalSize <= 800000) {
@@ -3228,6 +3217,9 @@ app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner',
     if (!MEMBERSHIP_ROLES.includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
+    if (role === 'owner' && !canManageTenantOwners(req)) {
+      return res.status(403).json({ error: 'Only owners can manage owner memberships' });
+    }
 
     const existingInvite = await db.collection('invites')
       .where('tenantId', '==', tenant.id)
@@ -3304,6 +3296,10 @@ app.post('/api/admin/tenants/:tenantSlug/invites/:inviteId/resend', requireTenan
 
     if (resolved.invite.status !== 'pending') {
       return res.status(400).json({ error: 'Only pending invites can be resent' });
+    }
+    // Erneutes Ausstellen verlängert die Einladung, also gilt dieselbe Regel.
+    if (normalizeMembershipRole(resolved.invite.role) === 'owner' && !canManageTenantOwners(req)) {
+      return res.status(403).json({ error: 'Only owners can manage owner memberships' });
     }
 
     const token = buildInviteToken();
