@@ -306,9 +306,14 @@ class SuperAdminApp {
     }
 
     escapeHtml(value) {
-        const div = document.createElement('div');
-        div.textContent = value == null ? '' : String(value);
-        return div.innerHTML;
+        // Maskiert auch beide Anführungszeichen, damit das Ergebnis in Text und
+        // Attributwerten sicher ist. In on*-Handler gehört trotzdem kein Nutzertext.
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 }
 
