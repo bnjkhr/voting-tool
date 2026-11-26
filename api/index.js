@@ -8471,7 +8471,9 @@ async function fetchFeedbackSource(tenant, source, { dryRun, actor }) {
     const links = await repos.feedback.listLinksBySource(source.id);
     const plan = feedbackLinks.planFetch({ entries, links, resolvedStatuses: RESOLVED_STATUSES });
     report.unapprovedCount = plan.unapprovedCount;
-    report.missing = plan.missing.length;
+    // Gezählt werden nur Tickets, deren Eintrag fehlt; Grabsteine nicht.
+    const ticketLinks = new Set(links.filter(link => link.suggestionId).map(link => link.id));
+    report.missing = plan.missing.filter(linkId => ticketLinks.has(linkId)).length;
 
     if (dryRun) {
       const { entryUrl } = await describeFeedbackSource(source);

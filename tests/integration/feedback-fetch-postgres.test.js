@@ -443,6 +443,9 @@ suite('Holen und Verknüpfen gegen Postgres', async (t) => {
 
     assert.equal(resultFor(res, 'neu').missing, 1);
     assert.deepEqual(await snapshot(), before);
+    // Gelöst zählt die vertippte ID nicht mehr: Nur verknüpfte Tickets fehlen.
+    await repos.feedback.unlinkSuggestion({ tenantId: INTERN, suggestionId: 'test_fbget_frei' });
+    assert.equal(resultFor(await consoleFetch({ dryRun: true }), 'neu').missing, 0);
   });
 
   await t.test('dryRun muss ein Wahrheitswert sein', async () => {
