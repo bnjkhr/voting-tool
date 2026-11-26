@@ -8,7 +8,9 @@ class AdminAuth {
         this.form = null;
         this.passwordInput = null;
         this.errorElement = null;
-        this.pendingResolve = null;
+        this.pendingResolvers = [];
+        // Nach einer abgelehnten Anfrage zeigt die Seite einen halb geladenen Stand.
+        this.reloadAfterLogin = false;
     }
 
     getToken() {
@@ -56,8 +58,14 @@ class AdminAuth {
         this.passwordInput.value = '';
         setTimeout(() => this.passwordInput.focus(), 0);
 
+        // Der E-Mail-Weg führt nach der Anmeldung auf diese Seite zurück.
+        const { pathname, search, hash } = window.location;
+        this.overlay.querySelector('.admin-auth-email')
+            .setAttribute('href', `/login.html?redirect=${encodeURIComponent(`${pathname}${search}${hash}`)}`);
+
+        // Mehrere Anfragen können gleichzeitig warten: alle merken, nicht nur die letzte.
         return new Promise(resolve => {
-            this.pendingResolve = resolve;
+            this.pendingResolvers.push(resolve);
         });
     }
 
@@ -76,7 +84,7 @@ class AdminAuth {
                 </label>
                 <div class="admin-auth-error" role="alert"></div>
                 <button class="primary-btn" type="submit">Anmelden</button>
-                <a class="secondary-btn" href="/login.html">Per E-Mail anmelden</a>
+                <a class="secondary-btn admin-auth-email" href="/login.html">Per E-Mail anmelden</a>
             </form>
         `;
 
@@ -97,10 +105,11 @@ class AdminAuth {
 
             this.setToken(password);
             this.hideLogin();
-            if (this.pendingResolve) {
-                this.pendingResolve(password);
-                this.pendingResolve = null;
+            if (this.reloadAfterLogin) {
+                window.location.reload();
+                return;
             }
+            this.pendingResolvers.splice(0).forEach(resolve => resolve(password));
         });
     }
 
@@ -145,6 +154,7 @@ class AdminAuth {
 
         const response = await fetch(url, { ...options, headers });
         if (response.status === 401) {
+            this.reloadAfterLogin = true;
             this.clearToken();
             this.showLogin('Authentifizierung fehlgeschlagen.');
         }
@@ -161,6 +171,7 @@ class AdminAuth {
                 keepalive: true,
             }).catch(() => {});
         }
+        this.reloadAfterLogin = true;
         this.clearToken();
         this.showLogin('Abgemeldet.');
     }
