@@ -29,10 +29,10 @@ const APPS = [
 const SOURCE = {
   id: 'q1', tenantId: 't-intern', appId: 'a-ziel', boardSlug: 'ziel', sourceKind: 'legacy',
   sourceTenantId: null, sourceAppId: 'legacy_app', fetchEnabled: false, lastFetchedAt: null,
-  unapprovedCount: 0, lastError: null,
+  unapprovedCount: 0, lastError: null, pushEnabled: false,
 };
 
-function fakeRepos({ sources = [], upsertError = null } = {}) {
+function fakeRepos({ sources = [], links = [], upsertError = null } = {}) {
   const writes = [];
   return {
     writes,
@@ -54,6 +54,8 @@ function fakeRepos({ sources = [], upsertError = null } = {}) {
         return { fetchEnabled: false, ...input };
       },
       setFetchEnabled: async (id, enabled) => writes.push(['setFetchEnabled', id, enabled]),
+      setPushEnabled: async (id, enabled) => writes.push(['setPushEnabled', id, enabled]),
+      listLinks: async () => links,
     },
   };
 }
@@ -240,3 +242,97 @@ test('Aufruf von der Kommandozeile: Exit 1 und Meldung', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Genau eine Quelle/);
 });
+
+// ---------------------------------------------------------------------------
+// Zurückschreiben
+// ---------------------------------------------------------------------------
+
+// Zwei Änderungen warten, eine hängt im Mailversand, zwei gehören nicht dazu.
+const LINKS = [
+  { sourceId: 'q1', pendingStatus: 'gelöst', pushStage: null },
+  { sourceId: 'q1', pendingStatus: 'in Bearbeitung', pushStage: 'writing' },
+  { sourceId: 'q1', pendingStatus: 'gelöst', pushStage: 'mailing' },
+  { sourceId: 'q1', pendingStatus: null, pushStage: null },
+  { sourceId: 'q2', pendingStatus: 'gelöst', pushStage: null },
+];
+const ON = { ...SOURCE, pushEnabled: true };
+
+test('enable-push ohne --commit: Ziel anzeigen, nichts schreiben', async () => {
+  const { writes, output } = await runScript(switchArgs('enable-push'), { repos: fakeRepos({ sources: [SOURCE] }) });
+
+  assert.deepEqual(writes, []);
+  for (const part of ['db.example.test:6543/roadlight', 'Board: ziel', 'legacy_app', 'Zurückschreiben: aus -> an',
+    'Probelauf']) {
+    assert.ok(output.includes(part), `${part} fehlt in:\n${output}`);
+  }
+  assertClean(output);
+});
+
+test('disable-push ohne --commit nennt, was gelöscht würde', async () => {
+  const repos = fakeRepos({ sources: [ON], links: LINKS });
+
+  const { writes, output } = await runScript(switchArgs('disable-push'), { repos });
+
+  assert.deepEqual(writes, []);
+  assert.ok(output.includes('Zurückschreiben: an -> aus'), output);
+  assert.ok(output.includes('Wartende Änderungen, die gelöscht würden: 2'), output);
+  assert.ok(output.includes('Laufender oder hängender Mailversand, bleibt stehen: 1'), output);
+});
+
+for (const [command, enabled, said] of [
+  ['enable-push', true, 'Zurückschreiben für Board "ziel" ist an. Nachgeholt wird nichts.'],
+  ['disable-push', false, 'Zurückschreiben für Board "ziel" ist aus.'],
+]) {
+  test(`${command} --commit setzt nur den Schalter`, async () => {
+    const repos = fakeRepos({ sources: [SOURCE], links: LINKS });
+
+    const { writes, output } = await runScript([...switchArgs(command), '--commit'], { repos });
+
+    assert.deepEqual(writes, [['setPushEnabled', 'q1', enabled]]);
+    assert.ok(output.includes(said), output);
+  });
+}
+
+test('enable-push auf nicht privatem Workspace: Abbruch ohne Schreibzugriff', async () => {
+  const repos = fakeRepos({ sources: [{ ...SOURCE, tenantId: 't-offen', appId: 'a-aktivziel' }] });
+
+  await assert.rejects(
+    runScript(['enable-push', '--workspace', 'offen', '--board', 'ziel', '--commit'], { repos }),
+    /nur private Workspaces/
+  );
+
+  assert.deepEqual(repos.writes, []);
+});
+
+test('disable-push geht auch, wenn der Workspace nicht mehr privat ist', async () => {
+  const repos = fakeRepos({ sources: [{ ...ON, tenantId: 't-offen', appId: 'a-aktivziel' }] });
+
+  await runScript(['disable-push', '--workspace', 'offen', '--board', 'ziel', '--commit'], { repos });
+
+  assert.deepEqual(repos.writes, [['setPushEnabled', 'q1', false]]);
+});
+
+for (const [why, argv, message] of [
+  ['ohne angeschlossene Quelle', switchArgs('enable-push'), /keine Quelle angeschlossen/],
+  ['mit Quelle als Option', [...switchArgs('enable-push'), '--legacy-app', 'x'], /nur bei connect/],
+  ['ohne Board', ['disable-push', '--workspace', 'intern'], /--board/],
+]) {
+  test(`Zurückschreiben ${why}: Abbruch`, async () => {
+    const repos = fakeRepos();
+
+    await assert.rejects(runScript([...argv, '--commit'], { repos }), message);
+
+    assert.deepEqual(repos.writes, []);
+  });
+}
+
+for (const [pushEnabled, word] of [[true, 'an'], [false, 'aus']]) {
+  test(`list zeigt „Zurückschreiben: ${word}“`, async () => {
+    const repos = fakeRepos({ sources: [{ ...SOURCE, pushEnabled }] });
+
+    const { writes, output } = await runScript(['list', '--workspace', 'intern'], { repos });
+
+    assert.deepEqual(writes, []);
+    assert.ok(output.includes(`Zurückschreiben: ${word}`), output);
+  });
+}

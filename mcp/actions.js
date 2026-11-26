@@ -70,6 +70,13 @@ export function unlinkEntry(api, { suggestionId }) {
   return api('DELETE', `/suggestions/${segment(suggestionId)}/link`);
 }
 
+// Setzt den öffentlichen Eintrag eines Tickets auf „im Test“. Ginge eine Mail,
+// entsteht auf dem Server nur die wartende Änderung; bestätigt wird allein in der
+// Konsole.
+export function setPublicTest(api, { suggestionId }) {
+  return api('POST', `/suggestions/${segment(suggestionId)}/public-test`);
+}
+
 // Holen nicht zutreffend: 409 = kein privater Workspace (oder kein Postgres),
 // 403 = Schlüssel ohne Schreibrecht.
 const FETCH_NOT_APPLICABLE = [403, 409];

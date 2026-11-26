@@ -1,20 +1,24 @@
 'use strict';
 
 // Schließt öffentliche Boards an ein Board eines privaten Workspaces an und
-// schaltet das Holen je Board ein oder aus. Ohne --commit nur Probelauf. Liest
-// nur Postgres: Ob es die App im Altbestand gibt, zeigt erst der Probelauf des
-// Holens (`dryRun`).
+// schaltet das Holen und das Zurückschreiben je Board ein oder aus. Ohne
+// --commit nur Probelauf. Liest und schreibt nur Postgres: Ob es die App im
+// Altbestand gibt, zeigt erst der Probelauf des Holens (`dryRun`). Kein Befehl
+// verschickt Mails oder schreibt öffentlich.
 //
 //   npm run feedback:sources -- connect --workspace <slug> --board <slug>
 //     (--legacy-app <id> | --source-workspace <slug> --source-board <slug>) [--commit]
 //   npm run feedback:sources -- enable|disable --workspace <slug> --board <slug> [--commit]
+//   npm run feedback:sources -- enable-push|disable-push --workspace <slug> --board <slug> [--commit]
 //   npm run feedback:sources -- list --workspace <slug>
 
 const { parseArgs } = require('util');
 const { LEGACY_TENANT_SLUG, parseSlugParam } = require('../api/tenant-utils');
 const { loadEnv, describeTarget } = require('./create-private-workspace');
 
-const COMMANDS = ['connect', 'enable', 'disable', 'list'];
+const COMMANDS = ['connect', 'enable', 'disable', 'enable-push', 'disable-push', 'list'];
+// Anschließen und Einschalten gibt es nur für private Ziele.
+const NEEDS_PRIVATE = ['connect', 'enable', 'enable-push'];
 const SOURCE_OPTIONS = ['legacy-app', 'source-workspace', 'source-board'];
 const LEGACY_APP_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const DRY_RUN_NOTE = 'Probelauf: nichts geschrieben. Mit --commit ausführen.';
@@ -114,6 +118,7 @@ async function list(repos, tenant, log) {
     log(`Board ${source.boardSlug}`);
     log(`  Quelle: ${await describeSource(repos, source)}`);
     log(`  Holen: ${source.fetchEnabled ? 'an' : 'aus'}`);
+    log(`  Zurückschreiben: ${source.pushEnabled ? 'an' : 'aus'}`);
     const fetchedAt = source.lastFetchedAt?.toISOString() || 'offen (noch nie oder Einträge ausstehend)';
     log(`  Zuletzt geholt: ${fetchedAt}`);
     log(`  Warten auf Freigabe: ${source.unapprovedCount}`);
@@ -145,15 +150,41 @@ async function connect(repos, tenant, board, input, log) {
     : 'Quelle angeschlossen, Holen ist aus. Erst den Probelauf ansehen, dann "enable".');
 }
 
-async function switchFetch(repos, tenant, board, input, log) {
+async function findConnectedSource(repos, tenant, board) {
   const source = await repos.feedback.findSourceByApp(tenant.id, board.id);
   if (!source) throw new Error(`An Board "${board.slug}" ist keine Quelle angeschlossen. Nichts geändert.`);
+  return source;
+}
+
+async function switchFetch(repos, tenant, board, input, log) {
+  const source = await findConnectedSource(repos, tenant, board);
   const enabled = input.command === 'enable';
   log(`Quelle: ${await describeSource(repos, source)}`);
   log(`Holen: ${source.fetchEnabled ? 'an' : 'aus'} -> ${enabled ? 'an' : 'aus'}`);
   if (!input.commit) return log(DRY_RUN_NOTE);
   await repos.feedback.setFetchEnabled(source.id, enabled);
   return log(`Holen für Board "${board.slug}" ist ${enabled ? 'an' : 'aus'}.`);
+}
+
+// Was beim Ausschalten verschwindet. Ein laufender Mailversand behält seine
+// Änderung, bis er abgeschlossen oder in der Konsole verworfen ist.
+async function describePending(repos, tenant, source, log) {
+  const links = (await repos.feedback.listLinks(tenant.id)).filter((link) => link.sourceId === source.id);
+  const mailing = links.filter((link) => link.pushStage === 'mailing').length;
+  const pending = links.filter((link) => link.pendingStatus && link.pushStage !== 'mailing').length;
+  log(`Wartende Änderungen, die gelöscht würden: ${pending}`);
+  if (mailing > 0) log(`Laufender oder hängender Mailversand, bleibt stehen: ${mailing}`);
+}
+
+async function switchPush(repos, tenant, board, input, log) {
+  const source = await findConnectedSource(repos, tenant, board);
+  const enabled = input.command === 'enable-push';
+  log(`Quelle: ${await describeSource(repos, source)}`);
+  log(`Zurückschreiben: ${source.pushEnabled ? 'an' : 'aus'} -> ${enabled ? 'an' : 'aus'}`);
+  if (!enabled) await describePending(repos, tenant, source, log);
+  if (!input.commit) return log(DRY_RUN_NOTE);
+  await repos.feedback.setPushEnabled(source.id, enabled);
+  return log(`Zurückschreiben für Board "${board.slug}" ist ${enabled ? 'an. Nachgeholt wird nichts.' : 'aus.'}`);
 }
 
 async function run(argv, { env = process.env, log = console.log, repos = require('../db') } = {}) {
@@ -164,7 +195,7 @@ async function run(argv, { env = process.env, log = console.log, repos = require
   const tenant = await repos.tenants.findBySlug(input.workspace);
   if (!tenant) throw new Error(`Den Workspace "${input.workspace}" gibt es nicht. Nichts geändert.`);
   // Ausschalten und Ansehen gehen immer, Anschließen und Einschalten nur privat.
-  if (['connect', 'enable'].includes(input.command) && tenant.status !== 'private') {
+  if (NEEDS_PRIVATE.includes(input.command) && tenant.status !== 'private') {
     throw new Error(`Ziel sind nur private Workspaces: "${tenant.slug}" hat den Status ${tenant.status}. Nichts geändert.`);
   }
   log(`Workspace: ${tenant.slug} (Status ${tenant.status})`);
@@ -173,6 +204,7 @@ async function run(argv, { env = process.env, log = console.log, repos = require
   const board = await findWorkspaceBoard(repos, tenant, input.board);
   log(`Board: ${board.slug}`);
   if (input.command === 'connect') return connect(repos, tenant, board, input, log);
+  if (input.command.endsWith('-push')) return switchPush(repos, tenant, board, input, log);
   return switchFetch(repos, tenant, board, input, log);
 }
 

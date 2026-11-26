@@ -4,6 +4,10 @@
 // Postgres.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { hasDatabase } = require('./helpers');
 
 const suite = hasDatabase ? test : test.skip;
@@ -443,4 +447,41 @@ suite('Zurückschreiben: Repository', async (t) => {
     assert.equal((await row(target.suggestionId)).pending_status, 'gelöst');
   });
 
+  await t.test('Skript: Probelauf schreibt nichts, disable-push --commit räumt auf, Exit 1 ohne privat', async () => {
+    const target = await linked();
+    await pend(target, { reason: 'mail', mail: true });
+    const { slug } = (await query(
+      'select a.slug from apps a join feedback_sources s on s.app_id = a.id where s.id = $1', [target.source.id]
+    )).rows[0];
+    // Leerer Ordner, damit keine .env gelesen wird.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'feedback-push-'));
+    const script = (...args) => spawnSync(
+      process.execPath,
+      [path.join(__dirname, '..', '..', 'scripts', 'feedback-sources.js'), ...args, '--board', slug],
+      {
+        cwd, encoding: 'utf8',
+        env: { PATH: process.env.PATH, DATABASE_URL: process.env.DATABASE_URL, PGSSLMODE: process.env.PGSSLMODE },
+      }
+    );
+    try {
+      const dry = script('disable-push', '--workspace', 'test-fbpush-intern');
+      assert.equal(dry.status, 0, dry.stderr);
+      assert.match(dry.stdout, /gelöscht würden: 1/);
+      assert.equal((await row(target.suggestionId)).pending_status, 'gelöst');
+
+      const done = script('disable-push', '--workspace', 'test-fbpush-intern', '--commit');
+      assert.equal(done.status, 0, done.stderr);
+      assert.equal((await row(target.suggestionId)).pending_status, null);
+      assert.equal((await feedback.listSources(INTERN)).find((s) => s.id === target.source.id).pushEnabled, false);
+
+      await query("update tenants set status = 'active' where id = $1", [INTERN]);
+      const refused = script('enable-push', '--workspace', 'test-fbpush-intern', '--commit');
+      assert.equal(refused.status, 1, refused.stdout);
+      assert.match(refused.stderr, /nur private Workspaces/);
+      assert.equal((await feedback.listSources(INTERN)).find((s) => s.id === target.source.id).pushEnabled, false);
+    } finally {
+      await query("update tenants set status = 'private' where id = $1", [INTERN]);
+      fs.rmdirSync(cwd);
+    }
+  });
 });
