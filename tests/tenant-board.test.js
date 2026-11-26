@@ -189,7 +189,7 @@ const APPS = [{ id: 'a1', name: 'Web', slug: 'web' }, { id: 'a2', name: 'iOS', s
 
 async function openConsole(suggestions, {
   role = 'owner', wide = true, confirmAnswer = true, apps = APPS, load = true, missing = [],
-  feedback = { enabled: false, sources: [], links: [] }, signIn = false, hash = '',
+  feedback = { enabled: false, sources: [], links: [] }, signIn = false, hash = '', membership = { role },
 } = {}) {
   const server = {
     suggestions: structuredClone(suggestions), apps, failWith: null, hold: null,
@@ -198,6 +198,8 @@ async function openConsole(suggestions, {
     // Verknüpfungen: Stand, Antwort des Holens und Fehler.
     feedback: structuredClone(feedback), failFeedback: false, fetchAnswer: null, failFetch: null,
     holdFetch: null, failLink: null, dropState: false,
+    // Zurückschreiben: Antwort je Aktion, Anhalten, HTTP-Fehler, publicPush.
+    pushAnswer: null, holdPush: null, failPush: null, publicPush: null,
   };
   const calls = { requests: [], confirm: [], hash: [] };
 
@@ -282,6 +284,14 @@ async function openConsole(suggestions, {
         : others;
       return respond({ success: true });
     }
+    const pushRoute = /^\/feedback\/links\/([^/]+)\/(publish|discard|test)$/.exec(route);
+    if (method === 'POST' && pushRoute) {
+      if (server.holdPush) await server.holdPush;
+      if (server.failPush) return respond({ error: server.failPush }, false);
+      const suggestionId = decodeURIComponent(pushRoute[1]);
+      const answer = server.pushAnswer?.(server, suggestionId, pushRoute[2], body) || {};
+      return respond({ ...answer, state: structuredClone(server.feedback) });
+    }
     if (method === 'GET') return respond({});
     const status = /^\/suggestions\/([^/]+)\/status$/.exec(route);
     if (method === 'PUT' && status) {
@@ -290,7 +300,7 @@ async function openConsole(suggestions, {
       const id = decodeURIComponent(status[1]);
       server.suggestions.find((item) => item.id === id).status = body.status;
       if (server.removeOnWrite) server.suggestions = server.suggestions.filter((item) => item.id !== id);
-      return respond({ success: true });
+      return respond({ success: true, ...(server.publicPush ? { publicPush: server.publicPush(server, id) } : {}) });
     }
     throw new Error(`Unerwartete Anfrage: ${method} ${url}`);
   }
@@ -344,6 +354,7 @@ async function openConsole(suggestions, {
     await settle();
   } else {
     app.currentRole = role;
+    app.currentMembership = membership;
     app.sessionReady = true;
     if (load) {
       await app.loadApps();
@@ -1556,4 +1567,311 @@ test('„Verknüpfung lösen“ bestätigt: DELETE, die Karte verliert die Zeile
 
   assert.deepEqual(requested(board), ['DELETE /suggestions/a/link', 'GET /feedback']);
   assert.equal(board.cardMarkup('a').includes('Öffentlich'), false);
+});
+
+// ---------------------------------------------------------------------------
+// Wartende Veröffentlichung
+// ---------------------------------------------------------------------------
+
+const waitingLink = (suggestionId, fields = {}) => publicLink(suggestionId, {
+  publicStatus: 'offen', pushEnabled: true, pendingStatus: 'gelöst', pendingReason: 'mail', pendingMail: true,
+  pendingError: null, pushStage: null, ...fields,
+});
+const elementsOf = (board, id) => parseTags(board.cardMarkup(id));
+const pushButtons = (board, id) => elementsOf(board, id)
+  .map(({ attributes }) => attributes['data-action'])
+  .filter((action) => ['publish-card', 'discard-card', 'test-card'].includes(action));
+const attributesOf = (board, id, action) => elementsOf(board, id)
+  .find(({ attributes }) => attributes['data-action'] === action)?.attributes;
+const filled = (board, id) => elementsOf(board, id)
+  .filter(({ attributes }) => (attributes.class || '').includes('primary-btn')).length;
+const toast = (board) => board.element('toast').textContent;
+// Der Server hat die Änderung erledigt.
+const settled = (result, message) => (server, id) => {
+  server.feedback.links = server.feedback.links.map((item) => (item.suggestionId === id
+    ? { ...item, publicStatus: item.pendingStatus, pendingStatus: null, pendingReason: null, pendingMail: false }
+    : item));
+  return { result, message };
+};
+async function openPending(fields = {}, options = {}) {
+  const board = await openBoard([entry('a', { status: 'gelöst' })], {
+    feedback: connected([waitingLink('a', fields)]), ...options,
+  });
+  board.calls.requests.length = 0;
+  return board;
+}
+
+test('Karte zeigt die wartende Änderung mit einem gefüllten Knopf und Textlink', async () => {
+  const board = await openPending();
+
+  assert.ok(board.cardMarkup('a').includes('Wartet auf Veröffentlichung: gelöst'));
+  assert.ok(board.cardMarkup('a').includes('>Übernehmen und Mail senden<'));
+  assert.deepEqual(pushButtons(board, 'a'), ['publish-card', 'discard-card']);
+  assert.equal(attributesOf(board, 'a', 'publish-card').class, 'primary-btn');
+  assert.equal(attributesOf(board, 'a', 'discard-card').class, 'board-text-link');
+  assert.equal(filled(board, 'a'), 1);
+});
+
+test('Ohne Mail heißt der Knopf „Übernehmen“', async () => {
+  const board = await openPending({ pendingMail: false, pendingReason: 'backward' });
+
+  assert.ok(board.cardMarkup('a').includes('>Übernehmen<'));
+  assert.equal(board.cardMarkup('a').includes('Mail senden'), false);
+});
+
+for (const [who, options] of [
+  ['Admin', { role: 'admin' }],
+  ['Viewer', { role: 'viewer' }],
+  ['Plattform-Admin ohne Mitgliedschaft', { role: 'super_admin', membership: null }],
+  ['Plattform-Admin mit Admin-Mitgliedschaft', { role: 'super_admin', membership: { role: 'admin' } }],
+]) {
+  test(`${who} sieht die Zeile ohne Knopf`, async () => {
+    const board = await openPending({}, options);
+
+    assert.ok(board.cardMarkup('a').includes('Wartet auf Veröffentlichung: gelöst'));
+    assert.deepEqual(pushButtons(board, 'a'), []);
+    await board.app.publishCard('a');
+    await board.app.discardCard('a');
+    assert.deepEqual(board.calls.requests, []);
+  });
+}
+
+test('Plattform-Admin, der Owner ist, bekommt den Knopf', async () => {
+  const board = await openPending({}, { role: 'super_admin', membership: { role: 'owner' } });
+
+  assert.deepEqual(pushButtons(board, 'a'), ['publish-card', 'discard-card']);
+});
+
+test('Die Rolle aus der echten Sitzung entscheidet', async () => {
+  const board = await openConsole([entry('a')], {
+    signIn: true, hash: '#board', role: 'owner', feedback: connected([waitingLink('a')]),
+  });
+  await settle();
+
+  assert.equal(board.app.canPublishPublic(), true);
+});
+
+test('Ausgeschalteter Schalter zeigt keine Bedienung', async () => {
+  const board = await openBoard([entry('a', { status: 'im Test' })], {
+    feedback: connected([waitingLink('a', { pushEnabled: false })]),
+  });
+  board.calls.requests.length = 0;
+
+  assert.equal(board.cardMarkup('a').includes('Wartet auf'), false);
+  assert.deepEqual(pushButtons(board, 'a'), []);
+  await board.app.publishCard('a');
+  await board.app.setPublicTest('a');
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('Klick sendet Status und Mail, zeigt den neuen Stand und meldet das Ergebnis', async () => {
+  const board = await openPending();
+  board.server.pushAnswer = settled('published');
+
+  await clickCard(board, 'publish-card', 'a');
+
+  assert.deepEqual(requested(board), ['POST /feedback/links/a/publish']);
+  assert.deepEqual(board.calls.requests[0].body, { status: 'gelöst', mail: true });
+  assert.equal(toast(board), 'Veröffentlicht, die Mail ist raus.');
+  assert.equal(board.cardMarkup('a').includes('Wartet auf'), false);
+  assert.ok(board.cardMarkup('a').includes('Öffentlich: gelöst'));
+});
+
+test('Klick ohne Mail sagt ausdrücklich mail: false', async () => {
+  const board = await openPending({ pendingMail: false });
+  board.server.pushAnswer = settled('published_no_mail');
+
+  await clickCard(board, 'publish-card', 'a');
+
+  assert.deepEqual(board.calls.requests[0].body, { status: 'gelöst', mail: false });
+  assert.equal(toast(board), 'Veröffentlicht, ohne Mail.');
+});
+
+for (const [result, message] of [
+  ['published_no_mail', 'Status veröffentlicht, die Mail ging nicht raus.'],
+  ['busy', 'Die Änderung wird gerade veröffentlicht.'],
+  ['error', 'Der öffentliche Eintrag ist nicht freigegeben.'],
+]) {
+  test(`Antwort ${result}: Die Meldung des Servers erscheint`, async () => {
+    const board = await openPending();
+    board.server.pushAnswer = () => ({ result, message });
+
+    await clickCard(board, 'publish-card', 'a');
+
+    assert.equal(toast(board), message);
+    assert.equal(board.element('toast').className, 'toast error');
+  });
+}
+
+test('Verlangt der Server die Mail, zeigt die Karte danach den Mail-Knopf', async () => {
+  const board = await openPending({ pendingMail: false });
+  board.server.pushAnswer = (server) => {
+    server.feedback.links = [waitingLink('a', { pendingMail: true })];
+    return { result: 'error', message: 'Zu diesem Eintrag ginge eine Mail raus. Nichts veröffentlicht.' };
+  };
+
+  await clickCard(board, 'publish-card', 'a');
+
+  assert.ok(board.cardMarkup('a').includes('Übernehmen und Mail senden'));
+  assert.equal(board.calls.requests.length, 1);
+});
+
+test('Doppelklick sendet nur einmal, der Knopf ist solange gesperrt', async () => {
+  const board = await openPending();
+  let release;
+  board.server.holdPush = new Promise((resolve) => { release = resolve; });
+  board.server.pushAnswer = settled('published');
+  const button = () => board.find('boardColumns', (attributes) => attributes['data-action'] === 'publish-card');
+
+  board.element('boardColumns').fire('click', fakeEvent(button()));
+  board.element('boardColumns').fire('click', fakeEvent(button()));
+  await settle();
+
+  assert.ok('disabled' in attributesOf(board, 'a', 'publish-card'));
+  assert.ok('disabled' in attributesOf(board, 'a', 'discard-card'));
+  await board.app.discardCard('a');
+  release();
+  await settle();
+  assert.deepEqual(requested(board), ['POST /feedback/links/a/publish']);
+});
+
+test('Der zweite Klick eines Doppelklicks trifft keinen neuen Knopf', async () => {
+  const board = await openPending();
+  const button = board.find('boardColumns', (attributes) => attributes['data-action'] === 'publish-card');
+
+  board.element('boardColumns').fire('click', { ...fakeEvent(button), detail: 2 });
+  await settle();
+
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('HTTP-Fehler: Meldung, Stand neu lesen, Knopf wieder frei', async () => {
+  const board = await openPending();
+  board.server.failPush = 'Veröffentlichen kann nur ein angemeldeter Owner.';
+
+  await clickCard(board, 'publish-card', 'a');
+
+  assert.equal(toast(board), 'Veröffentlichen kann nur ein angemeldeter Owner.');
+  assert.deepEqual(requested(board), ['POST /feedback/links/a/publish', 'GET /feedback']);
+  assert.equal('disabled' in attributesOf(board, 'a', 'publish-card'), false);
+});
+
+test('„Verwerfen“ räumt die Zeile ab', async () => {
+  const board = await openPending();
+  board.server.pushAnswer = (server) => {
+    server.feedback.links = [publicLink('a', { pushEnabled: true })];
+    return { success: true };
+  };
+
+  await clickCard(board, 'discard-card', 'a');
+
+  assert.deepEqual(requested(board), ['POST /feedback/links/a/discard']);
+  assert.equal(toast(board), 'Wartende Änderung verworfen');
+  assert.equal(board.cardMarkup('a').includes('Wartet auf'), false);
+});
+
+test('Hängender Mailversand: nur der Hinweis und „Verwerfen“', async () => {
+  const board = await openPending({ pushStage: 'mailing' });
+
+  assert.ok(board.cardMarkup('a').includes('Ob die Mail rausging, ist unklar.'));
+  assert.equal(board.cardMarkup('a').includes('Wartet auf'), false);
+  assert.deepEqual(pushButtons(board, 'a'), ['discard-card']);
+  await board.app.publishCard('a');
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('Fehlertext wird als Text gezeigt', async () => {
+  const board = await openPending({
+    pendingReason: 'failed', pendingError: '<img src=x onerror=alert(1)>', pendingStatus: '<img src=y>',
+  });
+
+  assert.equal(board.tags().some(({ tag }) => tag === 'img'), false);
+  assert.ok(board.cardMarkup('a').includes('&lt;img src=x onerror=alert(1)&gt;'));
+});
+
+const testing = (fields = {}) => connected([publicLink('a', {
+  publicStatus: 'in Bearbeitung', pushEnabled: true, pendingStatus: null, ...fields,
+})]);
+
+for (const [why, status, fields, options, shown] of [
+  ['Owner, intern im Test', 'im Test', {}, {}, true],
+  ['Admin, intern im Test', 'im Test', {}, { role: 'admin' }, true],
+  ['Viewer', 'im Test', {}, { role: 'viewer' }, false],
+  ['intern in Bearbeitung', 'in Bearbeitung', {}, {}, false],
+  ['öffentlich schon im Test', 'im Test', { publicStatus: 'im Test' }, {}, false],
+  ['Schalter aus', 'im Test', { pushEnabled: false }, {}, false],
+  ['Owner mit wartendem „im Test“: der Knopf reicht', 'im Test', { pendingStatus: 'im Test' }, {}, false],
+  ['Admin mit wartendem „im Test“ behält den Link', 'im Test', { pendingStatus: 'im Test' }, { role: 'admin' }, true],
+]) {
+  test(`„Öffentlich auf Im Test setzen“: ${why}`, async () => {
+    const board = await openBoard([entry('a', { status })], { feedback: testing(fields), ...options });
+
+    assert.equal(pushButtons(board, 'a').includes('test-card'), shown);
+    if (shown) {
+      assert.equal(attributesOf(board, 'a', 'test-card').class, 'board-text-link');
+      assert.ok(board.cardMarkup('a').includes('>Öffentlich auf Im Test setzen<'));
+      assert.equal(filled(board, 'a'), 0);
+    }
+  });
+}
+
+test('„Öffentlich auf Im Test setzen“ sendet und meldet das Ergebnis', async () => {
+  const board = await openBoard([entry('a', { status: 'im Test' })], { feedback: testing() });
+  board.calls.requests.length = 0;
+  board.server.pushAnswer = (server) => {
+    server.feedback.links = testing({ publicStatus: 'im Test' }).links;
+    return { publicPush: { result: 'written', message: 'Öffentlich veröffentlicht: im Test.' } };
+  };
+
+  await clickCard(board, 'test-card', 'a');
+
+  assert.deepEqual(requested(board), ['POST /feedback/links/a/test']);
+  assert.equal(toast(board), 'Öffentlich veröffentlicht: im Test.');
+  assert.deepEqual(pushButtons(board, 'a'), []);
+});
+
+test('Statuswechsel meldet publicPush und lädt den öffentlichen Stand neu', async () => {
+  const board = await openBoard([entry('a', { status: 'in Bearbeitung' })], { feedback: testing() });
+  board.calls.requests.length = 0;
+  const message = 'Öffentlich noch nicht geändert: Es ginge eine Mail raus. Die Änderung wartet auf der Karte.';
+  board.server.publicPush = (server) => {
+    server.feedback.links = [waitingLink('a')];
+    return { result: 'waiting', message };
+  };
+
+  await board.app.moveCard('a', 'fertig');
+  await settle();
+
+  assert.ok(requested(board).includes('GET /feedback'));
+  assert.equal(toast(board), `Status aktualisiert. ${message}`);
+  assert.ok(board.cardMarkup('a').includes('Wartet auf Veröffentlichung: gelöst'));
+});
+
+test('Statuswechsel ohne publicPush räumt die alte wartende Änderung von der Karte', async () => {
+  const board = await openBoard([entry('a', { status: 'in Bearbeitung' })], {
+    feedback: connected([waitingLink('a')]),
+  });
+  board.calls.requests.length = 0;
+  // Wie der Server: „wartend“ ändert öffentlich nichts und verwirft das Wartende.
+  board.server.feedback.links = [waitingLink('a', { pendingStatus: null, pendingMail: false })];
+
+  await board.app.moveCard('a', 'wartet');
+  await settle();
+
+  assert.deepEqual(requested(board), ['GET /feedback']);
+  assert.equal(toast(board), 'Status aktualisiert');
+  assert.deepEqual(pushButtons(board, 'a'), []);
+});
+
+test('Statuswechsel ohne eingeschaltetes Zurückschreiben liest den Stand nicht neu', async () => {
+  const board = await openBoard([entry('a', { status: 'in Bearbeitung' })], {
+    feedback: connected([publicLink('a')]),
+  });
+  board.calls.requests.length = 0;
+
+  await board.app.moveCard('a', 'fertig');
+  await settle();
+
+  assert.deepEqual(requested(board), []);
+  assert.equal(toast(board), 'Status aktualisiert');
 });

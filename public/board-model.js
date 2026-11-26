@@ -126,6 +126,30 @@
         return line(link.publicStatus || 'unbekannt', safeUrl(link.url));
     }
 
+    // Wartende öffentliche Änderung einer Karte. Bestätigen und verwerfen kann
+    // nur ein Owner; ohne eingeschaltetes Zurückschreiben gibt es keine
+    // Bedienung.
+    function pendingLine(link, { isOwner = false } = {}) {
+        if (!link?.pushEnabled) return null;
+        const notice = text => ({ text, action: null, canDiscard: isOwner, error: null });
+        // Läuft oder hängt ein Mailversand, wird nichts erneut angeboten.
+        if (link.pushStage === 'mailing') return notice('Ob die Mail rausging, ist unklar.');
+        // Ohne wartende Änderung bleibt höchstens, was zuletzt schiefging.
+        if (!link.pendingStatus) return link.pendingError ? notice(link.pendingError) : null;
+        const publish = link.pendingMail ? 'publish_mail' : 'publish';
+        return {
+            text: `Wartet auf Veröffentlichung: ${link.pendingStatus}`,
+            action: isOwner ? publish : null,
+            canDiscard: isOwner,
+            error: link.pendingError || null,
+        };
+    }
+
+    // „Im Test“ wird öffentlich nur auf Wunsch gesetzt.
+    function testAction(item, link) {
+        return item.status === 'im Test' && Boolean(link?.pushEnabled) && link.publicStatus !== 'im Test';
+    }
+
     // Wie viele öffentliche Einträge je Quelle auf Freigabe warten.
     function unapprovedSummary(sources) {
         const waiting = sources.filter(source => source.unapprovedCount > 0);
@@ -139,6 +163,7 @@
 
     const api = {
         COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary,
+        pendingLine, testAction,
     };
 
     if (typeof module !== 'undefined' && module.exports) {
