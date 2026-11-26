@@ -27,6 +27,20 @@ function records(name) {
   return collections.get(name);
 }
 
+class Increment {
+  constructor(amount) {
+    this.amount = amount;
+  }
+}
+
+function applyUpdate(stored = {}, data) {
+  const next = { ...stored };
+  for (const [field, value] of Object.entries(data)) {
+    next[field] = value instanceof Increment ? (stored[field] || 0) + value.amount : value;
+  }
+  return next;
+}
+
 function docRef(name, id) {
   const ref = {
     id,
@@ -38,7 +52,7 @@ function docRef(name, id) {
       records(name).set(id, options.merge ? { ...records(name).get(id), ...data } : { ...data });
     },
     async update(data) {
-      records(name).set(id, { ...records(name).get(id), ...data });
+      records(name).set(id, applyUpdate(records(name).get(id), data));
     },
     async delete() {
       records(name).delete(id);
@@ -78,6 +92,21 @@ const db = {
     get: (target) => target.get(),
     set: (ref, data, options) => ref.set(data, options),
   }),
+  batch() {
+    const writes = [];
+    return {
+      set: (ref, data, options) => writes.push(() => ref.set(data, options)),
+      create: (ref, data) => writes.push(async () => {
+        if ((await ref.get()).exists) throw new Error(`Dokument existiert bereits: ${ref.id}`);
+        await ref.set(data);
+      }),
+      update: (ref, data) => writes.push(() => ref.update(data)),
+      delete: (ref) => writes.push(() => ref.delete()),
+      async commit() {
+        for (const write of writes) await write();
+      },
+    };
+  },
 };
 
 function stubModule(name, exports) {
@@ -88,7 +117,10 @@ function stubModule(name, exports) {
 stubModule('firebase-admin', {
   apps: [{}],
   firestore: Object.assign(() => db, {
-    FieldValue: { serverTimestamp: () => new Date() },
+    FieldValue: {
+      serverTimestamp: () => new Date(),
+      increment: (amount) => new Increment(amount),
+    },
   }),
 });
 
@@ -107,6 +139,13 @@ stubModule('resend', {
 
 function seed(name, id, data) {
   records(name).set(id, { ...data });
+}
+
+// Gesamter Datenbestand, um unerwünschte Schreibzugriffe zu erkennen.
+function dump() {
+  return Object.fromEntries([...collections]
+    .filter(([, stored]) => stored.size > 0)
+    .map(([name, stored]) => [name, Object.fromEntries(stored)]));
 }
 
 function reset() {
@@ -135,11 +174,17 @@ async function startApp() {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await response.text();
-    return { status: response.status, text, body: text ? JSON.parse(text) : null };
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      // HTML-Antworten bleiben nur als Text verfügbar.
+    }
+    return { status: response.status, text, body: json };
   }
 
   const close = () => new Promise((resolve) => server.close(resolve));
   return { request, close };
 }
 
-module.exports = { records, reset, seed, sentMails, startApp };
+module.exports = { dump, records, reset, seed, sentMails, startApp };

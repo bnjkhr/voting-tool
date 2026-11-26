@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { functionBody } = require('./source-slice');
+const { functionBody, handlerAfter } = require('./source-slice');
 
 const rootDir = path.join(__dirname, '..');
 const apiSource = fs.readFileSync(path.join(rootDir, 'api/index.js'), 'utf8');
@@ -110,7 +110,9 @@ test('assigning a suggestion to a release stays within tenant scope', () => {
   // Reuses the trusted tenant-scoped suggestion resolver and checks the
   // release belongs to the same tenant before linking.
   assert.ok(
-    apiSource.includes('resolveTenantSuggestionById(tenantSlug, suggestionId)'),
+    handlerAfter(apiSource, "app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release'")
+      .includes('loadAdminSuggestion(req, suggestionId)')
+      && functionBody(apiSource, 'loadAdminSuggestion').includes('loadSuggestionForTenant(tenant.id, suggestionId)'),
     'expected suggestion-release link to resolve the suggestion through tenant scope',
   );
 });

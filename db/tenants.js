@@ -4,6 +4,7 @@
 // zurück, damit die spätere Umverdrahtung in index.js minimal bleibt.
 const { query } = require('./pool');
 const { mapRow, buildUpdate } = require('./rows');
+const { MEMBER_TENANT_STATUSES } = require('../api/tenant-utils');
 
 const COLUMNS = `
   id, name, display_name, slug, status,
@@ -39,6 +40,15 @@ async function findActiveBySlug(slug) {
   const { rows } = await query(
     `select ${COLUMNS} from tenants where slug = $1 and status = 'active'`,
     [slug]
+  );
+  return mapTenant(rows[0]);
+}
+
+// Nur für angemeldete Wege: sieht zusätzlich private Workspaces.
+async function findMemberBySlug(slug) {
+  const { rows } = await query(
+    `select ${COLUMNS} from tenants where slug = $1 and status = any($2)`,
+    [slug, MEMBER_TENANT_STATUSES]
   );
   return mapTenant(rows[0]);
 }
@@ -85,6 +95,7 @@ module.exports = {
   findById,
   findBySlug,
   findActiveBySlug,
+  findMemberBySlug,
   list,
   create,
   update,
