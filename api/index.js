@@ -3180,24 +3180,27 @@ function buildSuggestionFromRequest(body, appId, userFingerprint, tenantId = LEG
 const rateLimitStore = new Map();
 
 // Rate limiting middleware
-function rateLimit(windowMs = 60000, maxRequests = 10) {
+// Ohne eigenen `store` teilen sich alle Routen einen Zähler je IP.
+function rateLimit(windowMs = 60000, maxRequests = 10, ownStore = null) {
   return (req, res, next) => {
+    // Erst hier gelesen: Frühere Routen rufen rateLimit() vor der Deklaration auf.
+    const store = ownStore || rateLimitStore;
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     const now = Date.now();
     const windowStart = now - windowMs;
 
-    if (!rateLimitStore.has(ip)) {
-      rateLimitStore.set(ip, []);
+    if (!store.has(ip)) {
+      store.set(ip, []);
     }
 
-    const requests = rateLimitStore.get(ip).filter(time => time > windowStart);
+    const requests = store.get(ip).filter(time => time > windowStart);
 
     if (requests.length >= maxRequests) {
       return res.status(429).json({ error: 'Too many requests. Please try again later.' });
     }
 
     requests.push(now);
-    rateLimitStore.set(ip, requests);
+    store.set(ip, requests);
     next();
   };
 }
@@ -4949,6 +4952,82 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions', requireTenantAccess(), asy
   } catch (error) {
     console.error('Error fetching tenant admin suggestions:', error);
     res.status(500).json({ error: 'Failed to fetch tenant suggestions' });
+  }
+});
+
+// Anlegen im Board der Konsole: Diese Status haben dort eine Spalte mit „+ Ticket“.
+const CONSOLE_CREATE_STATUSES = ['offen', 'in Bearbeitung', 'im Test', 'wartend'];
+
+// Prüft die Eingaben der Anlege-Karte. Anders als validateInput entfernt oder
+// ersetzt hier nichts den Text: Was nicht passt, wird abgelehnt.
+function parseConsoleTicket({ title, description = '', priority = 'mittel', status = 'offen' }) {
+  // Postgres lehnt Nullzeichen ab.
+  const trimmed = (value, maxLength) => (
+    typeof value === 'string' && !value.includes('\u0000') && value.trim().length <= maxLength
+      ? value.trim()
+      : null
+  );
+  const fields = {
+    title: trimmed(title, 100), description: trimmed(description, 1000), priority, status,
+  };
+
+  if (!fields.title || /[\r\n]/.test(fields.title)) {
+    return { error: 'Gib einen Titel mit höchstens 100 Zeichen in einer Zeile ein.' };
+  }
+  if (fields.description === null) {
+    return { error: 'Die Beschreibung darf höchstens 1000 Zeichen haben.' };
+  }
+  if (!VALID_PRIORITIES.includes(priority)) {
+    return { error: `Ungültige Priorität. Erlaubt: ${VALID_PRIORITIES.join(', ')}` };
+  }
+  if (!CONSOLE_CREATE_STATUSES.includes(status)) {
+    return { error: `Ungültiger Status. Erlaubt: ${CONSOLE_CREATE_STATUSES.join(', ')}` };
+  }
+  return { fields };
+}
+
+// Tenant Admin: create a ticket in a private workspace. Eigener Zähler, damit
+// schnelles Anlegen die anderen begrenzten Routen nicht sperrt.
+app.post('/api/admin/tenants/:tenantSlug/suggestions', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 30, new Map()), async (req, res) => {
+  try {
+    const tenant = req.adminTenant;
+    // In einem öffentlichen Workspace wäre der Eintrag sofort öffentlich.
+    if (tenant.status !== 'private') {
+      return res.status(403).json({ error: 'Anlegen gibt es nur in privaten Workspaces.' });
+    }
+    const { fields, error } = parseConsoleTicket(req.body);
+    if (error) return res.status(400).json({ error });
+    const board = (await loadTenantApps(tenant.id)).find(entry => entry.id === req.body.appId);
+    if (!board) return res.status(404).json({ error: 'Board nicht gefunden.' });
+
+    const ticketNumber = await generateTicketNumber(board.id, tenant.id);
+    const createdAt = writeTimestamp();
+    const suggestionId = await createSuggestionRecord(tenant.id, {
+      tenantId: tenant.id,
+      appId: board.id,
+      type: 'ticket',
+      ...fields,
+      tag: mapStatusToLegacyTag('ticket', fields.status),
+      labels: [],
+      votes: 0,
+      approved: true,
+      approvedAt: createdAt,
+      notificationEnabled: false,
+      notificationEmail: null,
+      // `api:` heißt: intern angelegt, ohne Mailadresse (needsConfirm im Board).
+      userFingerprint: 'api:console',
+      ticketNumber,
+      createdAt,
+    });
+    await logActivity(suggestionId, 'created', {
+      detail: `Ticket "${fields.title}" in der Konsole erstellt`,
+      tenantId: tenant.id,
+    });
+
+    res.status(201).json({ id: suggestionId, ticketNumber });
+  } catch (error) {
+    console.error('Error creating tenant ticket:', error);
+    res.status(500).json({ error: 'Das Ticket ließ sich nicht anlegen.' });
   }
 });
 

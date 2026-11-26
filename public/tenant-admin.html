@@ -988,7 +988,8 @@
         }
 
         /* Fehlerrot, mit der Textfarbe gemischt: so bleibt es auch dunkel lesbar. */
-        .board-card-pending-error {
+        .board-card-pending-error,
+        .board-new-error {
             color: color-mix(in srgb, var(--danger-color) 70%, var(--text-primary));
         }
 
@@ -1002,6 +1003,164 @@
 
         .board-card-pending .primary-btn:disabled {
             cursor: progress;
+        }
+
+        /* Anlegen in der Spalte. Gestrichelt, damit „+ Ticket“ nicht wie eine
+           Karte aussieht. */
+        .board-new-link {
+            min-height: 44px;
+            padding: 0 var(--spacing-xs);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            background: transparent;
+            color: var(--text-secondary);
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .board-new {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            justify-items: start;
+            gap: var(--spacing-xs);
+            min-width: 0;
+            padding: var(--spacing-sm) var(--spacing);
+            border: 2px solid var(--primary-color);
+            border-radius: var(--radius);
+            background: var(--surface);
+            overflow-wrap: anywhere;
+        }
+
+        /* Fängt nur Klicks neben die Felder; der Rahmen zeigt die Karte schon. */
+        .board-new:focus {
+            outline: none;
+        }
+
+        /* Das Feld wächst mit dem Text: Ein unsichtbares Abbild gibt die Höhe
+           vor. 1rem, damit iOS beim Antippen nicht zoomt. */
+        .board-new-text {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            justify-self: stretch;
+            /* Der Text steht bündig mit den Knöpfen, der Fokusrahmen hat Luft. */
+            margin: 0 calc(-1 * var(--spacing-xs));
+            font-size: 1rem;
+            line-height: 1.35;
+        }
+
+        .board-new-text::after,
+        .board-new-text textarea {
+            grid-area: 1 / 1;
+            min-width: 0;
+            padding: 11px var(--spacing-xs);
+            border: 0;
+            font: inherit;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .board-new-text::after {
+            content: attr(data-text) ' ';
+            visibility: hidden;
+        }
+
+        .board-new-text textarea {
+            align-self: stretch;
+            width: 100%;
+            min-height: 44px;
+            overflow: hidden;
+            border-radius: var(--radius-sm);
+            background: transparent;
+            color: var(--text-primary);
+            resize: none;
+        }
+
+        .board-new-text textarea::placeholder {
+            color: var(--text-secondary);
+            opacity: 1;
+        }
+
+        .board-new-description {
+            border-top: 1px solid var(--border-light);
+        }
+
+        .board-new-description textarea {
+            min-height: 88px;
+        }
+
+        .board-new-menus {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-self: stretch;
+            gap: var(--spacing-xs);
+        }
+
+        .board-new-menu {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        /* Offen nimmt das Menü die ganze Zeile. */
+        .board-new-menu[open] {
+            flex-basis: 100%;
+        }
+
+        .board-new-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            max-width: 100%;
+            min-height: 44px;
+            padding: var(--spacing-xs) 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--background-alt);
+            color: var(--text-primary);
+            font-size: 0.82rem;
+            line-height: 1.3;
+            list-style: none;
+            cursor: pointer;
+        }
+
+        .board-new-chip::-webkit-details-marker {
+            display: none;
+        }
+
+        .board-new-chip::after {
+            content: '▾';
+        }
+
+        /* Farbe je Board: Der Platz kommt aus boardColorSlots. */
+        .board-tag-0 { --tag-bg: #E0F1E6; --tag-text: #1F6B3B; }
+        .board-tag-1 { --tag-bg: #EEE5FA; --tag-text: #5E35A8; }
+        .board-tag-2 { --tag-bg: #FAE3F0; --tag-text: #99246A; }
+        .board-tag-3 { --tag-bg: #EDF0D8; --tag-text: #55631A; }
+        .board-tag-4 { --tag-bg: #E2ECFA; --tag-text: #1D55A0; }
+        .board-tag-5 { --tag-bg: #DCF1F2; --tag-text: #0E6068; }
+        .board-tag-6 { --tag-bg: #F2E8DD; --tag-text: #7A4A1E; }
+        .board-tag-7 { --tag-bg: #E6E9EE; --tag-text: #3E4C63; }
+
+        .board-card .board-tag,
+        .board-new-chip.board-tag {
+            border-color: transparent;
+            background: var(--tag-bg);
+            color: var(--tag-text);
+            font-weight: 700;
+        }
+
+        .board-new .primary-btn {
+            justify-self: stretch;
+            min-height: 44px;
+            padding: var(--spacing-sm);
+        }
+
+        .board-new-error {
+            margin: 0;
+            font-size: 0.82rem;
         }
 
         .board-switcher {
@@ -1084,6 +1243,10 @@
         .board-card-pending .primary-btn:focus-visible,
         .board-column:focus-visible,
         .board-move-options button:focus-visible,
+        .board-new-link:focus-visible,
+        .board-new-chip:focus-visible,
+        .board-new textarea:focus-visible,
+        .board-new .primary-btn:focus-visible,
         .board-switch:focus-visible {
             outline: 2px solid var(--primary-color);
             outline-offset: 1px;
@@ -1106,9 +1269,9 @@
         }
 
         .board-card .board-priority-kritisch {
-            border-color: var(--text-primary);
-            background: var(--text-primary);
-            color: var(--text-inverse);
+            border-color: #BF2F2F;
+            background: #BF2F2F;
+            color: #FFFFFF;
         }
 
         .board-card .board-priority-hoch {
@@ -1156,6 +1319,11 @@
 
         .board-move-options button:hover {
             background: var(--surface-hover);
+        }
+
+        .board-move-options button[aria-pressed="true"] {
+            background: var(--surface-hover);
+            font-weight: 700;
         }
 
         @media (max-width: 900px) {

@@ -4,6 +4,9 @@ class TenantAdminApp {
     static PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
     // Ab dieser Breite stehen alle Spalten nebeneinander und Karten lassen sich ziehen.
     static WIDE_BOARD = '(min-width: 901px)';
+    // Eigener Typ für gezogene Karten: „text/plain“ schriebe der Browser in jedes
+    // Textfeld, auf dem die Karte landet.
+    static CARD_DRAG_TYPE = 'application/x-roadlight-card';
 
     constructor() {
         this.tenantSlug = '';
@@ -25,6 +28,8 @@ class TenantAdminApp {
         this.linkTarget = null;
         // Karten, deren öffentliche Aktion gerade läuft.
         this.publishingCards = new Set();
+        // Offene Anlege-Karte (höchstens eine) samt ihrer Eingaben.
+        this.composer = null;
         this.activeView = '';
         this.sessionReady = false;
         this.releases = [];
@@ -416,6 +421,8 @@ class TenantAdminApp {
 
         this.settings = settings;
         this.renderSettings();
+        // Erst der Workspace-Stand entscheidet über „+ Ticket“.
+        this.renderBoard();
     }
 
     renderSettings() {
@@ -715,9 +722,14 @@ class TenantAdminApp {
             this.boardColumn = trigger.dataset.column;
             this.renderBoard();
         });
-        window.matchMedia(TenantAdminApp.WIDE_BOARD).addEventListener('change', () => this.renderBoard());
+        window.matchMedia(TenantAdminApp.WIDE_BOARD).addEventListener('change', () => {
+            // Wer gerade in der Anlege-Karte schreibt, behält ihre Spalte vor sich.
+            if (this.composer && this.focusInComposer()) this.boardColumn = this.composer.column;
+            this.renderBoard();
+        });
 
         const columns = document.getElementById('boardColumns');
+        this.bindComposerEvents(columns);
         columns.addEventListener('click', event => {
             const trigger = event.target.closest('[data-action="move-card"]');
             if (!trigger) return;
@@ -744,7 +756,7 @@ class TenantAdminApp {
             if (!card) return;
             this.draggedCardId = card.dataset.boardCard;
             // Firefox startet das Ziehen nur mit Daten.
-            event.dataTransfer.setData('text/plain', this.draggedCardId);
+            event.dataTransfer.setData(TenantAdminApp.CARD_DRAG_TYPE, this.draggedCardId);
         });
         columns.addEventListener('dragover', event => {
             const column = this.dropColumnFor(event);
@@ -761,7 +773,7 @@ class TenantAdminApp {
             event.preventDefault();
             // Wird die gezogene Karte neu gezeichnet, bleibt ihr dragend aus und
             // die id stehen. Darum zählt nur Ziehgut, das genau sie nennt.
-            if (event.dataTransfer.getData('text/plain') !== id) return;
+            if (event.dataTransfer.getData(TenantAdminApp.CARD_DRAG_TYPE) !== id) return;
             // Erst das Ziehen abschließen, dann ggf. die Rückfrage öffnen.
             setTimeout(() => this.moveCard(id, column.dataset.column), 0);
         });
@@ -777,6 +789,251 @@ class TenantAdminApp {
             this.linkTarget = null;
             document.getElementById('linkDialog').close();
         });
+    }
+
+    bindComposerEvents(columns) {
+        columns.addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const { action, column, field, value } = trigger.dataset;
+            if (action === 'new-open') this.openComposer(column);
+            else if (action === 'new-select') this.selectInComposer(field, value);
+            else if (action === 'new-describe') this.describeInComposer();
+            else if (action === 'new-cancel') this.closeComposer();
+        });
+        columns.addEventListener('submit', event => {
+            event.preventDefault();
+            this.createTicket();
+        });
+        columns.addEventListener('input', event => this.readComposerInput(event.target));
+        columns.addEventListener('keydown', event => this.handleComposerKey(event));
+    }
+
+    // Anlegen gibt es nur in privaten Workspaces, sonst wäre der Eintrag sofort
+    // öffentlich. Der Server prüft das selbst.
+    canCreateTickets() {
+        return this.canManageWorkspace() && this.settings?.tenant?.status === 'private' && this.apps.length > 0;
+    }
+
+    openComposer(column) {
+        if (!this.canCreateTickets() || this.composer?.saving) return;
+        // Eine offene Karte zieht samt Inhalt um.
+        this.composer ||= {
+            appId: this.defaultTicketBoard(), priority: 'mittel', title: '', description: '',
+            describing: false, saving: false, error: '',
+        };
+        this.composer.column = column;
+        this.boardColumn = column;
+        this.closeComposerMenus();
+        this.renderBoard();
+        this.focusComposerTitle();
+    }
+
+    closeComposer() {
+        if (!this.composer || this.composer.saving) return;
+        const { column } = this.composer;
+        this.composer = null;
+        this.renderBoard();
+        this.focusBoard(`add:${column}`);
+    }
+
+    // Der Board-Filter, sonst das zuletzt benutzte Board, sonst das erste.
+    defaultTicketBoard() {
+        let last = null;
+        try {
+            last = localStorage.getItem(this.lastBoardKey());
+        } catch {
+            // Gesperrter Speicher: ohne Vorauswahl weiter.
+        }
+        return [this.boardFilters.appId, last].find(id => this.apps.some(app => app.id === id))
+            || this.apps[0]?.id;
+    }
+
+    rememberTicketBoard(appId) {
+        try {
+            localStorage.setItem(this.lastBoardKey(), appId);
+        } catch {
+            // Nur Bequemlichkeit.
+        }
+    }
+
+    lastBoardKey() {
+        return `tenantAdmin:newTicketBoard:${this.tenantSlug}`;
+    }
+
+    selectInComposer(field, value) {
+        if (!this.composer || this.composer.saving) return;
+        this.composer[field] = value;
+        this.closeComposerMenus();
+        this.renderBoard();
+        this.focusBoard(`new:${field}`);
+    }
+
+    describeInComposer() {
+        if (!this.composer || this.composer.saving) return;
+        this.composer.describing = true;
+        this.renderBoard();
+        this.focusBoard('new:description');
+    }
+
+    // Übernimmt jeden Tastendruck, ohne neu zu zeichnen.
+    readComposerInput(target) {
+        const { field } = target.dataset;
+        if (!this.composer || !field) return;
+        // Der Titel bricht nur optisch um: Eingefügte Umbrüche werden Leerzeichen.
+        if (field === 'title' && /[\r\n]/.test(target.value)) {
+            const flatten = text => text.replace(/[\r\n]+/g, ' ');
+            const caret = flatten(target.value.slice(0, target.selectionStart)).length;
+            target.value = flatten(target.value);
+            target.setSelectionRange(caret, caret);
+        }
+        this.composer[field] = target.value;
+        // Davon liest das Stylesheet die Höhe des Feldes ab.
+        target.parentElement.dataset.text = target.value;
+        const [submit] = document.getElementById('boardColumns').querySelectorAll('.board-new-submit');
+        submit.disabled = this.composer.saving || !this.composer.title.trim();
+    }
+
+    handleComposerKey(event) {
+        // Während einer IME-Eingabe gehören Enter und Esc der Eingabehilfe.
+        // Safari meldet das abschließende Enter nur über keyCode 229.
+        if (!this.composer || !event.target.closest('.board-new') || event.isComposing || event.keyCode === 229) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            const menu = event.target.closest('.board-new-menu');
+            // Ein offenes Menü schließt zuerst, die Eingaben bleiben.
+            if (!this.closeComposerMenus()) this.closeComposer();
+            else if (menu) this.focusBoard(`new:${menu.dataset.menu}`);
+            return;
+        }
+        const { field } = event.target.dataset;
+        const submits = field === 'title' || (field === 'description' && (event.metaKey || event.ctrlKey));
+        if (event.key !== 'Enter' || !submits) return;
+        event.preventDefault();
+        this.createTicket();
+    }
+
+    // true, wenn eines offen war.
+    closeComposerMenus() {
+        const open = [...document.getElementById('boardColumns').querySelectorAll('.board-new-menu[open]')];
+        open.forEach(menu => menu.removeAttribute('open'));
+        return open.length > 0;
+    }
+
+    focusInComposer() {
+        return Boolean(this.boardFocusKey()?.startsWith('new:'));
+    }
+
+    // Fokus in den Titel, Schreibmarke ans Ende.
+    focusComposerTitle() {
+        const title = this.focusBoard('new:title');
+        title?.setSelectionRange(title.value.length, title.value.length);
+    }
+
+    async createTicket() {
+        const draft = this.composer;
+        if (!draft || draft.saving || !draft.title.trim() || !this.canCreateTickets()) return;
+        draft.saving = true;
+        draft.error = '';
+        this.closeComposerMenus();
+        this.renderBoard();
+
+        let ticketNumber = '';
+        let failure = 'Das Ticket ließ sich nicht anlegen.';
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/suggestions'), {
+                method: 'POST',
+                body: JSON.stringify({
+                    appId: draft.appId,
+                    title: draft.title.trim(),
+                    description: draft.description.trim(),
+                    priority: draft.priority,
+                    status: window.BoardModel.statusFor(draft.column, 'ticket'),
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                // Die Meldung der Anfrage-Grenze ist englisch.
+                failure = response.status === 429
+                    ? 'Zu viele Tickets auf einmal. Warte eine Minute.'
+                    : result.error || failure;
+                throw new Error(failure);
+            }
+            ticketNumber = result.ticketNumber;
+        } catch (error) {
+            console.error('Error creating ticket:', error);
+            draft.error = failure;
+        }
+
+        draft.saving = false;
+        if (ticketNumber) {
+            this.rememberTicketBoard(draft.appId);
+            Object.assign(draft, { title: '', description: '', describing: false, priority: 'mittel' });
+        }
+        this.renderBoard();
+        // Wer inzwischen woanders ist, bleibt dort. Nach einem Fehler behält
+        // auch, wer noch in einem Feld der Karte ist, seine Stelle.
+        const active = document.activeElement;
+        const lost = !active || active === document.body || this.boardFocusKey() === 'new:form';
+        if (lost || (ticketNumber && this.focusInComposer())) this.focusComposerTitle();
+        if (!ticketNumber) return;
+
+        // Neue Tickets haben noch keine Labels.
+        const { appId, label } = this.boardFilters;
+        let hidden = '';
+        if (label) hidden = ' Der Label-Filter blendet es aus.';
+        else if (appId && appId !== draft.appId) hidden = ' Der Board-Filter blendet es aus.';
+        const message = `${ticketNumber} angelegt.${hidden}`;
+        this.showToast(message, 'success');
+        try {
+            await Promise.all([this.loadStats(), this.loadSuggestions()]);
+        } catch (error) {
+            console.error('Error reloading after creating a ticket:', error);
+            this.showToast(`${message} Die Liste ließ sich nicht neu laden.`, 'error');
+        }
+    }
+
+    renderComposer(columnName, colors, openMenu) {
+        const draft = this.composer;
+        // Das gewählte Board kann inzwischen gelöscht sein.
+        if (!this.apps.some(app => app.id === draft.appId)) draft.appId = this.defaultTicketBoard();
+        const locked = draft.saving ? ' disabled' : '';
+
+        const text = (field, label, maxLength) => `
+            <div class="board-new-text board-new-${field}" data-text="${this.escapeHtml(draft[field])}">
+                <textarea data-field="${field}" data-focus="new:${field}" rows="1" maxlength="${maxLength}"
+                          placeholder="${label}" aria-label="${label}"${draft.saving ? ' readonly' : ''}>
+${this.escapeHtml(draft[field])}</textarea>
+            </div>`;
+        const menu = (field, label, options, className = '') => {
+            const current = options.find(([value]) => value === draft[field])?.[1] || '';
+            return `
+                <details class="board-new-menu" name="board-new-menu" data-menu="${field}"${openMenu === field ? ' open' : ''}>
+                    <summary class="board-new-chip${className}" data-focus="new:${field}"
+                             aria-label="${label}: ${this.escapeHtml(current)}">${this.escapeHtml(current)}</summary>
+                    <div class="board-move-options">
+                        ${options.map(([value, name]) => `<button type="button" data-action="new-select" data-field="${field}"
+                                data-value="${this.escapeHtml(value)}" data-focus="new:${field}:${this.escapeHtml(value)}"
+                                aria-pressed="${value === draft[field]}"${locked}>${this.escapeHtml(name)}</button>`).join('')}
+                    </div>
+                </details>`;
+        };
+
+        return `
+            <form class="board-new" aria-label="Neues Ticket in „${columnName}“" data-focus="new:form" tabindex="-1" novalidate>
+                ${text('title', 'Titel', 100)}
+                <div class="board-new-menus">
+                    ${menu('appId', 'Board', this.apps.map(app => [app.id, app.name || app.slug || app.id]), this.boardTagClass(draft.appId, colors))}
+                    ${menu('priority', 'Priorität', TenantAdminApp.PRIORITIES.map(priority => [priority, priority]))}
+                </div>
+                ${draft.describing
+                    ? text('description', 'Beschreibung', 1000)
+                    : `<button type="button" class="board-text-link" data-action="new-describe" data-focus="new:describe"${locked}>Beschreibung hinzufügen</button>`}
+                ${draft.error ? `<p class="board-new-error" role="alert">${this.escapeHtml(draft.error)}</p>` : ''}
+                <button type="submit" class="primary-btn board-new-submit" data-focus="new:submit"${draft.saving || !draft.title.trim() ? ' disabled' : ''}>Ticket anlegen</button>
+                <button type="button" class="board-text-link" data-action="new-cancel" data-focus="new:cancel"${locked}>Abbrechen</button>
+            </form>
+        `;
     }
 
     // Einmal je Öffnen des Reiters: öffentlichen Stand lesen, dann holen. Ein
@@ -1170,9 +1427,12 @@ class TenantAdminApp {
             ? '1 Eintrag wartet auf Freigabe. Du findest ihn unter Einträge.'
             : `${board.pendingCount} Einträge warten auf Freigabe. Du findest sie unter Einträge.`;
 
-        // Neuzeichnen ersetzt die Elemente: Fokus und Aufgeklapptes merken.
+        // Neuzeichnen ersetzt die Elemente: Fokus, Schreibmarke und
+        // Aufgeklapptes merken. Die Eingaben selbst stehen in this.composer.
         const focusKey = this.boardFocusKey();
+        const { selectionStart, selectionEnd, selectionDirection } = (this.focusInComposer() && document.activeElement) || {};
         const columns = document.getElementById('boardColumns');
+        const openMenu = columns.querySelectorAll('.board-new-menu[open]')[0]?.dataset.menu;
         const openCards = new Set([...columns.querySelectorAll('.board-card-details[open]')]
             .map(details => details.closest('[data-board-card]').dataset.boardCard));
 
@@ -1186,20 +1446,33 @@ class TenantAdminApp {
         `).join('');
 
         const draggable = this.canManageWorkspace() && window.matchMedia(TenantAdminApp.WIDE_BOARD).matches;
+        const colors = window.BoardModel.boardColorSlots(this.apps);
+        const canCreate = this.canCreateTickets();
         columns.innerHTML = window.BoardModel.COLUMNS.map(({ key, label: name }) => {
             const { items, total } = board.columns[key];
+            // „Fertig“ bekommt kein „+ Ticket“: Neues ist nie erledigt.
+            let create = '';
+            if (canCreate && key !== 'fertig') {
+                create = this.composer?.column === key
+                    ? this.renderComposer(name, colors, openMenu)
+                    : `<button type="button" class="board-new-link" data-action="new-open" data-column="${key}" data-focus="add:${key}">+ Ticket</button>`;
+            }
             return `
                 <section class="board-column ${key === this.boardColumn ? 'is-current' : ''}" data-column="${key}"
                          data-focus="column:${key}" tabindex="-1" aria-label="${name}">
                     <h3 class="board-column-head"><span>${name}</span> <span class="board-column-count">${total}</span></h3>
-                    ${items.map(item => this.renderBoardCard(item, draggable, openCards.has(String(item.id)))).join('')
+                    ${create}
+                    ${items.map(item => this.renderBoardCard(item, draggable, openCards.has(String(item.id)), colors)).join('')
                         || '<p class="board-column-note">Keine Einträge.</p>'}
                     ${total > items.length ? `<p class="board-column-note">Zu sehen sind die letzten ${items.length}.</p>` : ''}
                 </section>
             `;
         }).join('');
 
-        if (focusKey) this.focusBoard(focusKey);
+        const focused = focusKey && this.focusBoard(focusKey);
+        if (selectionStart !== undefined) {
+            focused?.setSelectionRange?.(selectionStart, selectionEnd, selectionDirection);
+        }
     }
 
     renderBoardFilters(labels) {
@@ -1218,15 +1491,24 @@ class TenantAdminApp {
         );
     }
 
-    renderBoardCard(item, draggable, open) {
+    // Farbklasse eines Boards; leer, wenn es nicht (mehr) geladen ist.
+    boardTagClass(appId, colors) {
+        return colors.has(appId) ? ` board-tag board-tag-${colors.get(appId)}` : '';
+    }
+
+    renderBoardCard(item, draggable, open, colors) {
         const id = this.escapeHtml(item.id);
+        const badge = (text, className = '') => (text
+            ? `<span class="tenant-badge${className}">${this.escapeHtml(text)}</span>`
+            : '');
         const priority = item.priority === 'kritisch' || item.priority === 'hoch'
-            ? `<span class="tenant-badge board-priority-${item.priority}">${item.priority}</span>`
+            ? badge(item.priority, ` board-priority-${item.priority}`)
             : '';
-        const badges = [item.ticketNumber, this.boardFilters.appId ? '' : item.app?.name, ...(item.labels || [])]
-            .filter(Boolean)
-            .map(text => `<span class="tenant-badge">${this.escapeHtml(text)}</span>`)
-            .join('');
+        const badges = [
+            badge(item.ticketNumber),
+            this.boardFilters.appId ? '' : badge(item.app?.name, this.boardTagClass(item.appId, colors)),
+            ...(item.labels || []).map(label => badge(label)),
+        ].join('');
         const targets = window.BoardModel.COLUMNS.filter(({ key }) => this.canMoveTo(item, key));
 
         return `

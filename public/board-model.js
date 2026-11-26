@@ -106,6 +106,17 @@
         };
     }
 
+    // So viele Farben hat das Stylesheet für Board-Tags.
+    const BOARD_COLORS = 8;
+
+    // Farbplatz je Board-ID, nach Alter der Boards (bei Gleichstand nach Slug):
+    // Neue Boards ändern die Farben der alten nicht.
+    function boardColorSlots(apps) {
+        const sorted = [...apps].sort((a, b) => timeOf(a.createdAt) - timeOf(b.createdAt)
+            || String(a.slug || '').localeCompare(String(b.slug || '')));
+        return new Map(sorted.map((app, index) => [app.id, index % BOARD_COLORS]));
+    }
+
     // Nur https und Pfade auf dem eigenen Server. Steuerzeichen und
     // Backslashes fallen weg, weil der Browser daraus eine fremde Adresse macht.
     function safeUrl(url) {
@@ -163,7 +174,7 @@
 
     const api = {
         COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary,
-        pendingLine, testAction,
+        pendingLine, testAction, boardColorSlots,
     };
 
     if (typeof module !== 'undefined' && module.exports) {

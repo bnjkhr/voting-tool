@@ -30,9 +30,10 @@ test('Schreibpfade legen Screenshots als attachments an', () => {
     'createCommentRecord muss die Screenshots ablegen');
 
   // Und alle Create-Pfade laufen wirklich über die Helfer (öffentlicher Submit,
-  // öffentlicher Kommentar, Admin-Kommentar, v1-Submit, v1-Kommentar).
-  assert.equal(apiSource.split('createSuggestionRecord(').length - 1, 3,
-    'Definition + 2 Aufrufer (öffentlicher Submit, v1)');
+  // öffentlicher Kommentar, Admin-Kommentar, v1-Submit, v1-Kommentar, Anlegen
+  // im Board der Konsole).
+  assert.equal(apiSource.split('createSuggestionRecord(').length - 1, 4,
+    'Definition + 3 Aufrufer (öffentlicher Submit, v1, Konsole)');
   assert.equal(apiSource.split('createCommentRecord(').length - 1, 4,
     'Definition + 3 Aufrufer (öffentlich, Tenant-Admin, v1)');
 
