@@ -77,6 +77,7 @@ function fakeEvent(target) {
     dataTransfer: {
       setData(type, value) { data[type] = value; },
       getData: (type) => data[type] || '',
+      get types() { return Object.keys(data); },
     },
   };
   return event;
@@ -2629,3 +2630,36 @@ test('HTML in Boardnamen und Eingaben bleibt in der Karte Text', async () => {
   assert.equal(board.node('new:description').value, attack(4));
   assert.equal(board.pressed('appId'), attack(1));
 });
+
+// Was beim Ablegen niemand abfängt, schreibt der Browser als „text/plain“ in ein
+// Textfeld. Eine gezogene Karte darf dort nie landen.
+for (const [where, cardType, column] of [
+  ['in derselben Spalte', 'ticket', 'offen'],
+  ['in einer erlaubten anderen Spalte', 'ticket', 'arbeit'],
+  ['in einer gesperrten Spalte', 'feature', 'wartet'],
+]) {
+  for (const field of ['title', 'description']) {
+    test(`Karte auf das Feld „${field}“ ${where}: Das Feld bekommt keinen Text`, async () => {
+      const board = await privateConsole([entry('a', { type: cardType, status: 'neu' })]);
+      board.open(column);
+      board.click('new:describe');
+      const start = fakeEvent(board.card('a'));
+      board.element('boardColumns').fire('dragstart', start);
+
+      const target = board.node(`new:${field}`);
+      const over = board.send('dragover', target, { dataTransfer: start.dataTransfer });
+      const drop = board.send('drop', target, { dataTransfer: start.dataTransfer });
+      await settle();
+
+      // Firefox startet das Ziehen nur mit Daten, Text darf keiner dabei sein.
+      assert.equal(start.dataTransfer.types.length, 1);
+      assert.equal(start.dataTransfer.getData('text/plain'), '');
+      assert.equal(board.app.composer.title, '');
+      assert.equal(board.app.composer.description, '');
+      // Nur die erlaubte Spalte nimmt die Karte an und verschiebt sie.
+      const accepted = column === 'arbeit';
+      assert.deepEqual([over.prevented, drop.prevented], [accepted, accepted]);
+      assert.equal(board.writes().length, accepted ? 1 : 0);
+    });
+  }
+}

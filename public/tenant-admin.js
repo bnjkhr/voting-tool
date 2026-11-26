@@ -4,6 +4,9 @@ class TenantAdminApp {
     static PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
     // Ab dieser Breite stehen alle Spalten nebeneinander und Karten lassen sich ziehen.
     static WIDE_BOARD = '(min-width: 901px)';
+    // Eigener Typ für gezogene Karten: „text/plain“ schriebe der Browser in jedes
+    // Textfeld, auf dem die Karte landet.
+    static CARD_DRAG_TYPE = 'application/x-roadlight-card';
 
     constructor() {
         this.tenantSlug = '';
@@ -753,7 +756,7 @@ class TenantAdminApp {
             if (!card) return;
             this.draggedCardId = card.dataset.boardCard;
             // Firefox startet das Ziehen nur mit Daten.
-            event.dataTransfer.setData('text/plain', this.draggedCardId);
+            event.dataTransfer.setData(TenantAdminApp.CARD_DRAG_TYPE, this.draggedCardId);
         });
         columns.addEventListener('dragover', event => {
             const column = this.dropColumnFor(event);
@@ -770,7 +773,7 @@ class TenantAdminApp {
             event.preventDefault();
             // Wird die gezogene Karte neu gezeichnet, bleibt ihr dragend aus und
             // die id stehen. Darum zählt nur Ziehgut, das genau sie nennt.
-            if (event.dataTransfer.getData('text/plain') !== id) return;
+            if (event.dataTransfer.getData(TenantAdminApp.CARD_DRAG_TYPE) !== id) return;
             // Erst das Ziehen abschließen, dann ggf. die Rückfrage öffnen.
             setTimeout(() => this.moveCard(id, column.dataset.column), 0);
         });
