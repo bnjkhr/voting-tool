@@ -1422,7 +1422,14 @@ app.get('/api/tenants/:tenantSlug', async (req, res) => {
       return res.status(404).json({ error: 'Tenant not found' });
     }
 
-    res.json(tenant);
+    // Nur die öffentlichen Felder; das Dokument enthält auch Einstellungen.
+    res.json({
+      id: tenant.id,
+      name: tenant.name,
+      displayName: tenant.displayName,
+      slug: tenant.slug,
+      status: tenant.status,
+    });
   } catch (error) {
     console.error('Error fetching tenant:', error);
     res.status(500).json({ error: 'Failed to fetch tenant' });
