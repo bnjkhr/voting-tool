@@ -562,6 +562,26 @@ suite('Zurückschreiben gegen Postgres', async (t) => {
     assert.deepEqual(await pending(waiting), ['ist umgesetzt', 'mail', true]);
   });
 
+  await t.test('ein Klick gilt nur für den Status, den er nennt', async () => {
+    await seed();
+    // Von Hand verknüpft, die Quelle beim ersten Versuch nicht lesbar: Es wartet
+    // die Ticket-Fassung, obwohl der Eintrag ein Feature ist.
+    const item = await pair({ entry: { type: 'feature', status: 'wird geprüft' } });
+    const restore = fake.failReads('suggestions');
+    ok(await captureLog(() => setStatus(item, 'gelöst')));
+    restore();
+    assert.deepEqual(await pending(item), ['gelöst', 'failed', false]);
+
+    const first = ok(await publish(item, 'gelöst'));
+
+    assert.deepEqual([first.result, first.message], ['error', PUSH_MESSAGES.changed]);
+    assert.deepEqual(await pending(item), ['ist umgesetzt', 'busy', false]);
+    assert.equal((await linkRow(item)).push_claim, null);
+    assert.deepEqual(writes('suggestions'), []);
+    assert.equal(ok(await publish(item, 'ist umgesetzt')).result, 'published_no_mail');
+    assert.equal(legacyDoc(item.entryId).status, 'ist umgesetzt');
+  });
+
   await t.test('ohne Absender keine Mail', async () => {
     await seed();
     const item = await pair({ entry: NOTIFY });

@@ -8832,7 +8832,7 @@ async function writeClaimedPush({ token: claimId, link }, attempt, { mode, mailR
     attempt.status = decision.target;
     // Ein Klick gilt nur für den Status, den er genannt hat.
     if (confirmed) {
-      await release({ reason: mail ? 'mail' : 'backward', mail });
+      await release({ reason: decision.reason || 'busy', mail });
       return { result: 'error', message: PUSH_MESSAGES.changed };
     }
   }
