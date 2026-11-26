@@ -82,11 +82,6 @@ async function provisionPrivateWorkspace({
   tenantId, slug, name, ownerEmail, boards, membershipId,
 }) {
   return withTransaction(async (client) => {
-    const existing = await client.query(
-      'select 1 from tenants where id = $1 or slug = $2', [tenantId, slug]
-    );
-    if (existing.rowCount > 0) throw new WorkspaceExistsError();
-
     // email ist citext -> Vergleich ist case-insensitive.
     const owner = await client.query(
       `select id from users where email = $1 and status = 'active' for share`, [ownerEmail]
@@ -101,7 +96,7 @@ async function provisionPrivateWorkspace({
         [tenantId, name, slug]
       );
     } catch (error) {
-      // Zwei Läufe gleichzeitig: der zweite scheitert an der Eindeutigkeit.
+      // Slug oder ID vergeben, auch wenn zwei Läufe gleichzeitig laufen.
       if (error.code === '23505' && TENANT_UNIQUE_CONSTRAINTS.includes(error.constraint)) {
         throw new WorkspaceExistsError();
       }

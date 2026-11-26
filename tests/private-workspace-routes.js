@@ -54,7 +54,7 @@ const OTHER_PUBLIC_ROUTES = [
   {
     route: 'POST /api/auth/login-links',
     reason: LOGIN,
-    body: () => ({ ...HUMAN, email: 'unbekannt@example.test' }),
+    body: { ...HUMAN, email: 'unbekannt@example.test' },
   },
   {
     route: 'POST /api/signup/workspaces',
@@ -74,14 +74,14 @@ const OTHER_PUBLIC_ROUTES = [
     route: 'POST /api/invites/:token/accept',
     reason: INVITE,
     url: (ids) => `/api/invites/${ids.inviteToken}/accept`,
-    body: () => ({ displayName: 'Fremd' }),
+    body: { displayName: 'Fremd' },
   },
   { route: 'GET /api/apps', reason: LEGACY },
   { route: 'GET /api/apps/:appId/suggestions', reason: LEGACY },
   {
     route: 'POST /api/apps/:appId/suggestions',
     reason: LEGACY,
-    body: () => ({ type: 'feature', title: 'Titel', description: 'Beschreibung' }),
+    body: { type: 'feature', title: 'Titel', description: 'Beschreibung' },
   },
   { route: 'POST /api/suggestions/:suggestionId/vote', reason: LEGACY },
   { route: 'DELETE /api/suggestions/:suggestionId/vote', reason: LEGACY },
@@ -89,19 +89,19 @@ const OTHER_PUBLIC_ROUTES = [
   {
     route: 'POST /api/stripe/webhook',
     reason: 'Nur mit gültiger Stripe-Signatur.',
-    body: () => ({ id: 'evt_unsigniert' }),
+    body: { id: 'evt_unsigniert' },
   },
   {
     route: 'POST /api/suggestions/:suggestionId/comments',
     reason: LEGACY,
-    body: () => ({ text: 'Kommentar' }),
+    body: { text: 'Kommentar' },
   },
   { route: 'GET /api/suggestions/:suggestionId/comments', reason: LEGACY },
   { route: 'GET /api/user/notification-settings', reason: NOTIFICATIONS },
   {
     route: 'PUT /api/user/notification-settings',
     reason: NOTIFICATIONS,
-    body: () => ({ email: 'keine-adresse' }),
+    body: { email: 'keine-adresse' },
   },
   { route: 'GET /api/apps/:appId/releases', reason: LEGACY },
 ];
