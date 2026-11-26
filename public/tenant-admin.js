@@ -2,11 +2,19 @@ class TenantAdminApp {
     static FEATURE_STATUSES = ['neu', 'wird geprüft', 'wird umgesetzt', 'im Test', 'ist umgesetzt', 'wird nicht umgesetzt'];
     static TICKET_STATUSES = ['neu', 'offen', 'in Bearbeitung', 'im Test', 'wartend', 'gelöst', 'geschlossen'];
     static PRIORITIES = ['niedrig', 'mittel', 'hoch', 'kritisch'];
+    // Ab dieser Breite stehen alle Spalten nebeneinander und Karten lassen sich ziehen.
+    static WIDE_BOARD = '(min-width: 901px)';
 
     constructor() {
         this.tenantSlug = '';
         this.apps = [];
         this.suggestions = [];
+        this.suggestionsLoaded = false;
+        this.boardFilters = { appId: '', label: '' };
+        this.boardColumn = 'arbeit';
+        this.draggedCardId = null;
+        this.dropTarget = null;
+        this.movingCards = new Set();
         this.releases = [];
         this.team = { members: [], invites: [] };
         this.apiKeys = [];
@@ -142,6 +150,7 @@ class TenantAdminApp {
                 this.renderTodoStack();
             }
         });
+        this.bindBoardEvents();
         const filterPanel = document.getElementById('filterPanel');
         if (filterPanel && !window.matchMedia('(max-width: 768px)').matches) filterPanel.open = true;
         document.getElementById('suggestionsList').addEventListener('change', event => {
@@ -183,7 +192,7 @@ class TenantAdminApp {
     }
 
     switchView(view) {
-        const views = ['entries', 'releases', 'boards', 'team', 'settings'];
+        const views = ['entries', 'board', 'releases', 'boards', 'team', 'settings'];
         const target = views.includes(view) ? view : 'entries';
 
         document.querySelectorAll('.tenant-view').forEach(section => {
@@ -299,6 +308,7 @@ class TenantAdminApp {
         this.apps = apps;
         this.renderAppFilter();
         this.renderBoards();
+        this.renderBoard();
         this.renderReleaseAppOptions();
 
         const firstApp = apps[0];
@@ -483,8 +493,10 @@ class TenantAdminApp {
         if (!response.ok) throw new Error(suggestions.error || 'Einträge konnten nicht geladen werden');
 
         this.suggestions = suggestions;
+        this.suggestionsLoaded = true;
         this.renderStatusFilter();
         this.renderSuggestions();
+        this.renderBoard();
     }
 
     async loadTeam() {
@@ -658,6 +670,186 @@ class TenantAdminApp {
         }
 
         host.innerHTML = suggestions.map(item => this.renderSuggestionCard(item)).join('');
+    }
+
+    bindBoardEvents() {
+        const filter = (id, key) => document.getElementById(id).addEventListener('change', event => {
+            this.boardFilters[key] = event.target.value;
+            this.renderBoard();
+        });
+        filter('boardAppFilter', 'appId');
+        filter('boardLabelFilter', 'label');
+        document.getElementById('boardSwitcher').addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="board-column"]');
+            if (!trigger) return;
+            this.boardColumn = trigger.dataset.column;
+            this.renderBoard();
+        });
+        window.matchMedia(TenantAdminApp.WIDE_BOARD).addEventListener('change', () => this.renderBoard());
+
+        const columns = document.getElementById('boardColumns');
+        columns.addEventListener('click', event => {
+            const trigger = event.target.closest('[data-action="move-card"]');
+            if (!trigger) return;
+            this.moveCard(trigger.dataset.id, trigger.dataset.column);
+        });
+        columns.addEventListener('dragstart', event => {
+            const card = event.target.closest('[data-board-card]');
+            if (!card) return;
+            this.draggedCardId = card.dataset.boardCard;
+            // Firefox startet das Ziehen nur mit Daten.
+            event.dataTransfer.setData('text/plain', this.draggedCardId);
+        });
+        columns.addEventListener('dragover', event => {
+            const column = this.dropColumnFor(event);
+            this.markDropTarget(column);
+            // preventDefault erlaubt das Ablegen.
+            if (column) event.preventDefault();
+        });
+        columns.addEventListener('drop', event => {
+            const column = this.dropColumnFor(event);
+            const id = this.draggedCardId;
+            this.endDrag();
+            if (!column) return;
+            event.preventDefault();
+            // Erst das Ziehen abschließen, dann ggf. die Rückfrage öffnen.
+            setTimeout(() => this.moveCard(id, column.dataset.column), 0);
+        });
+        columns.addEventListener('dragend', () => this.endDrag());
+    }
+
+    // Die Spalte unter dem Zeiger, sofern die gezogene Karte dorthin darf.
+    // Fremdes Ziehgut (Text, Dateien) hat keine Karte und wird nie angenommen.
+    dropColumnFor(event) {
+        const item = this.suggestions.find(entry => entry.id === this.draggedCardId);
+        const column = item && event.target.closest('.board-column');
+        return column && this.canMoveTo(item, column.dataset.column) ? column : null;
+    }
+
+    markDropTarget(column) {
+        this.dropTarget?.classList.remove('is-drop-target');
+        column?.classList.add('is-drop-target');
+        this.dropTarget = column;
+    }
+
+    endDrag() {
+        this.markDropTarget(null);
+        this.draggedCardId = null;
+    }
+
+    // Nur Einträge, die auf dem Board stehen: Nicht freigegebene würde der
+    // Statuswechsel nebenbei freigeben.
+    canMoveTo(item, columnKey) {
+        const current = window.BoardModel.columnFor(item);
+        return this.canManageWorkspace()
+            && current !== null
+            && current !== columnKey
+            && window.BoardModel.statusFor(columnKey, item.type) !== null;
+    }
+
+    async moveCard(suggestionId, columnKey) {
+        const item = this.suggestions.find(entry => entry.id === suggestionId);
+        if (!item || this.movingCards.has(suggestionId) || !this.canMoveTo(item, columnKey)) return;
+
+        this.movingCards.add(suggestionId);
+        try {
+            if (window.BoardModel.needsConfirm(item)
+                && !confirm('Dieser Wechsel kann eine E-Mail an die einreichende Person schicken. Trotzdem verschieben?')) {
+                return;
+            }
+            await this.updateStatus(suggestionId, window.BoardModel.statusFor(columnKey, item.type));
+        } finally {
+            this.movingCards.delete(suggestionId);
+            // Zeichnet aus den geladenen Einträgen: Schlug das Speichern fehl,
+            // steht die Karte wieder in der alten Spalte.
+            this.renderBoard();
+        }
+    }
+
+    renderBoard() {
+        if (!this.suggestionsLoaded) return;
+
+        // Ein Filter auf etwas, das es nicht mehr gibt, ließe das Board leer.
+        const { appId, label } = this.boardFilters;
+        if (appId && !this.apps.some(app => app.id === appId)) this.boardFilters.appId = '';
+        if (label && !this.suggestions.some(item => (item.labels || []).includes(label))) this.boardFilters.label = '';
+
+        const board = window.BoardModel.buildBoard(this.suggestions, this.boardFilters);
+        this.renderBoardFilters(board.labels);
+
+        const pending = document.getElementById('boardPending');
+        pending.classList.toggle('is-hidden', board.pendingCount === 0);
+        pending.textContent = board.pendingCount === 1
+            ? '1 Eintrag wartet auf Freigabe. Du findest ihn unter Einträge.'
+            : `${board.pendingCount} Einträge warten auf Freigabe. Du findest sie unter Einträge.`;
+
+        document.getElementById('boardSwitcher').innerHTML = window.BoardModel.COLUMNS.map(({ key, label: name }) => `
+            <button type="button" class="board-switch ${key === this.boardColumn ? 'is-active' : ''}"
+                    data-action="board-column" data-column="${key}" aria-pressed="${key === this.boardColumn}">
+                <span>${name}</span>
+                <strong>${board.columns[key].total}</strong>
+            </button>
+        `).join('');
+
+        const draggable = this.canManageWorkspace() && window.matchMedia(TenantAdminApp.WIDE_BOARD).matches;
+        document.getElementById('boardColumns').innerHTML = window.BoardModel.COLUMNS.map(({ key, label: name }) => {
+            const { items, total } = board.columns[key];
+            return `
+                <section class="board-column ${key === this.boardColumn ? 'is-current' : ''}" data-column="${key}" aria-label="${name}">
+                    <h3 class="board-column-head"><span>${name}</span> <span class="board-column-count">${total}</span></h3>
+                    ${items.map(item => this.renderBoardCard(item, draggable)).join('')
+                        || '<p class="board-column-note">Keine Einträge.</p>'}
+                    ${total > items.length ? `<p class="board-column-note">Zu sehen sind die letzten ${items.length}.</p>` : ''}
+                </section>
+            `;
+        }).join('');
+    }
+
+    renderBoardFilters(labels) {
+        const options = (allLabel, entries, selected) => `<option value="">${allLabel}</option>`
+            + entries.map(([value, text]) => `<option value="${this.escapeHtml(value)}"${value === selected ? ' selected' : ''}>${this.escapeHtml(text)}</option>`).join('');
+
+        document.getElementById('boardAppFilter').innerHTML = options(
+            'Alle',
+            this.apps.map(app => [app.id, app.name || app.slug || app.id]),
+            this.boardFilters.appId
+        );
+        document.getElementById('boardLabelFilter').innerHTML = options(
+            'alle',
+            labels.map(label => [label, label]),
+            this.boardFilters.label
+        );
+    }
+
+    renderBoardCard(item, draggable) {
+        const id = this.escapeHtml(item.id);
+        const priority = item.priority === 'kritisch' || item.priority === 'hoch'
+            ? `<span class="tenant-badge board-priority-${item.priority}">${item.priority}</span>`
+            : '';
+        const badges = [item.ticketNumber, this.boardFilters.appId ? '' : item.app?.name, ...(item.labels || [])]
+            .filter(Boolean)
+            .map(text => `<span class="tenant-badge">${this.escapeHtml(text)}</span>`)
+            .join('');
+        const targets = window.BoardModel.COLUMNS.filter(({ key }) => this.canMoveTo(item, key));
+
+        return `
+            <article class="board-card" data-board-card="${id}"${draggable ? ' draggable="true"' : ''}>
+                <details class="board-card-details">
+                    <summary>
+                        <span class="board-card-title">${this.escapeHtml(item.title)}</span>
+                        <span class="tenant-badges">${priority}${badges}</span>
+                    </summary>
+                    <p class="board-card-description">${this.escapeHtml(item.description || 'Keine Beschreibung.')}</p>
+                </details>
+                ${targets.length ? `
+                <details class="board-card-move" name="board-card-move">
+                    <summary>Verschieben nach</summary>
+                    <div class="board-move-options">
+                        ${targets.map(({ key, label }) => `<button type="button" data-action="move-card" data-id="${id}" data-column="${key}">${label}</button>`).join('')}
+                    </div>
+                </details>` : ''}
+            </article>
+        `;
     }
 
     async loadReleases() {

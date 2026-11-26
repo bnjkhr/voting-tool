@@ -868,9 +868,224 @@
         details.tenant-collapsible[open] > summary::after { content: '▾'; }
         details.tenant-collapsible[open] > summary { border-bottom: 1px solid var(--border); }
 
+        /* ─── Kanban-Board ─────────────────────────────────────────── */
+
+        .tenant-view[data-view="board"].is-active {
+            grid-template-columns: minmax(0, 1fr);
+            gap: var(--spacing-md);
+        }
+
+        .tenant-view[data-view="board"] select {
+            min-height: 44px;
+        }
+
+        .board-pending {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .board-switcher {
+            display: none;
+        }
+
+        .board-columns {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: var(--spacing-sm);
+        }
+
+        .board-columns > .tenant-empty {
+            grid-column: 1 / -1;
+        }
+
+        .board-column {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            align-content: start;
+            gap: var(--spacing-sm);
+            min-width: 0;
+            padding: var(--spacing-sm);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            background: var(--background-alt);
+        }
+
+        .board-column.is-drop-target {
+            border-color: var(--primary-color);
+            background: color-mix(in srgb, var(--primary-color) 9%, var(--background-alt));
+        }
+
+        .board-column-head {
+            display: flex;
+            justify-content: space-between;
+            gap: var(--spacing-sm);
+            padding: 0 var(--spacing-xs);
+            font-size: 0.9rem;
+        }
+
+        .board-column-count,
+        .board-column-note {
+            color: var(--text-secondary);
+        }
+
+        .board-column-note {
+            padding: var(--spacing-xs);
+            font-size: 0.82rem;
+        }
+
+        .board-card {
+            min-width: 0;
+            padding: var(--spacing-sm) var(--spacing);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface);
+            overflow-wrap: anywhere;
+        }
+
+        .board-card[draggable="true"] {
+            cursor: grab;
+        }
+
+        .board-card summary {
+            min-height: 44px;
+            border-radius: var(--radius-sm);
+            list-style: none;
+            cursor: pointer;
+        }
+
+        .board-card summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .board-card summary:focus-visible,
+        .board-move-options button:focus-visible,
+        .board-switch:focus-visible {
+            outline: 2px solid var(--primary-color);
+            outline-offset: 1px;
+        }
+
+        .board-card-details summary {
+            display: grid;
+            align-content: center;
+            gap: 6px;
+        }
+
+        .board-card-title {
+            font-size: 0.92rem;
+            font-weight: 700;
+            line-height: 1.35;
+        }
+
+        .board-card .tenant-badge {
+            line-height: 1.25;
+        }
+
+        .board-card .board-priority-kritisch {
+            border-color: var(--text-primary);
+            background: var(--text-primary);
+            color: var(--text-inverse);
+        }
+
+        .board-card .board-priority-hoch {
+            border-color: var(--warning-color);
+            background: var(--warning-light);
+            color: var(--text-primary);
+        }
+
+        .board-card-description {
+            margin-top: var(--spacing-sm);
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        /* Nebenaktion: schlichter Textlink ohne Rahmen. */
+        .board-card-move summary {
+            display: flex;
+            align-items: center;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .board-move-options {
+            display: grid;
+            border-top: 1px solid var(--border-light);
+        }
+
+        .board-move-options button {
+            min-height: 44px;
+            padding: 0 var(--spacing-sm);
+            border: none;
+            border-radius: var(--radius-sm);
+            background: transparent;
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 0.88rem;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .board-move-options button:hover {
+            background: var(--surface-hover);
+        }
+
         @media (max-width: 900px) {
             .tenant-admin-header {
                 flex-direction: column;
+            }
+
+            .board-switcher {
+                display: grid;
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+                gap: var(--spacing-xs);
+                padding: var(--spacing-xs);
+                border-radius: var(--radius-md);
+                background: var(--background-alt);
+            }
+
+            .board-switch {
+                display: grid;
+                justify-items: center;
+                align-content: center;
+                min-width: 0;
+                min-height: 48px;
+                padding: var(--spacing-xs) 0;
+                border: none;
+                border-radius: var(--radius-sm);
+                background: transparent;
+                color: var(--text-secondary);
+                font: inherit;
+                font-size: 0.75rem;
+                line-height: 1.3;
+                cursor: pointer;
+            }
+
+            .board-switch.is-active {
+                background: var(--surface);
+                color: var(--text-primary);
+                box-shadow: var(--shadow-sm);
+            }
+
+            .board-columns {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .board-column {
+                display: none;
+            }
+
+            .board-column.is-current {
+                display: grid;
+            }
+
+            /* Name und Anzahl stehen schon im Umschalter. */
+            .board-column-head {
+                display: none;
             }
         }
     </style>
@@ -911,6 +1126,7 @@
 
         <nav class="tenant-admin-tabs" id="tenantTabs" aria-label="Workspace-Bereiche">
             <button type="button" class="tenant-tab is-active" data-action="switch-view" data-view="entries">Einträge</button>
+            <button type="button" class="tenant-tab" data-action="switch-view" data-view="board">Board</button>
             <button type="button" class="tenant-tab" data-action="switch-view" data-view="releases">Releases</button>
             <button type="button" class="tenant-tab" data-action="switch-view" data-view="boards">Boards</button>
             <button type="button" class="tenant-tab" data-action="switch-view" data-view="team">Team</button>
@@ -965,6 +1181,30 @@
                     <div id="suggestionsList" class="tenant-admin-panel-body tenant-admin-list">
                         <div class="tenant-empty">Lade Einträge...</div>
                     </div>
+                </div>
+            </section>
+
+            <section class="tenant-view" data-view="board">
+                <div class="tenant-admin-panel">
+                    <div class="tenant-admin-panel-body tenant-filter-bar">
+                        <label>
+                            Board
+                            <select id="boardAppFilter">
+                                <option value="">Alle</option>
+                            </select>
+                        </label>
+                        <label>
+                            Label
+                            <select id="boardLabelFilter">
+                                <option value="">alle</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+                <p id="boardPending" class="board-pending is-hidden" role="status"></p>
+                <div id="boardSwitcher" class="board-switcher" role="group" aria-label="Spalte wählen"></div>
+                <div id="boardColumns" class="board-columns">
+                    <div class="tenant-empty">Lade Einträge...</div>
                 </div>
             </section>
 
@@ -1200,6 +1440,7 @@
 
     <div id="toast" class="toast"></div>
     <script src="admin-auth.js"></script>
+    <script src="board-model.js"></script>
     <script src="tenant-admin.js"></script>
 </body>
 </html>
