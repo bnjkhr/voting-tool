@@ -108,7 +108,8 @@ function parseNodes(markup, container, dom) {
   const nodes = [];
   const stack = [];
   const tag = /<(\/?)([a-zA-Z][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
-  for (const [, closing, name, rest] of String(markup).matchAll(tag)) {
+  for (const match of String(markup).matchAll(tag)) {
+    const [whole, closing, name, rest] = match;
     if (closing) {
       stack.pop();
       continue;
@@ -129,10 +130,22 @@ function parseNodes(markup, container, dom) {
         }
         return null;
       },
-      focus() { if (!dom.isHidden(node)) dom.active = node; },
+      focus() { if (!dom.isHidden(node) && !node.disabled) dom.active = node; },
       matches: () => false,
       scrollIntoView() {},
+      disabled: 'disabled' in attributes,
+      parentElement: stack.at(-1) || null,
+      removeAttribute: (attribute) => { delete attributes[attribute]; },
     };
+    if (node.tag === 'textarea') {
+      const start = match.index + whole.length;
+      // Wie im Browser fällt ein Zeilenumbruch direkt nach dem Start-Tag weg.
+      node.value = decodeEntities(String(markup).slice(start, String(markup).indexOf('</textarea>', start))
+        .replace(/^\n/, ''));
+      node.selectionStart = 0;
+      node.selectionEnd = 0;
+      node.setSelectionRange = (from, to) => Object.assign(node, { selectionStart: from, selectionEnd: to });
+    }
     nodes.push(node);
     stack.push(node);
   }
@@ -190,6 +203,7 @@ const APPS = [{ id: 'a1', name: 'Web', slug: 'web' }, { id: 'a2', name: 'iOS', s
 async function openConsole(suggestions, {
   role = 'owner', wide = true, confirmAnswer = true, apps = APPS, load = true, missing = [],
   feedback = { enabled: false, sources: [], links: [] }, signIn = false, hash = '', membership = { role },
+  workspace = null, storage = {},
 } = {}) {
   const server = {
     suggestions: structuredClone(suggestions), apps, failWith: null, hold: null,
@@ -200,6 +214,8 @@ async function openConsole(suggestions, {
     holdFetch: null, failLink: null, dropState: false,
     // Zurückschreiben: Antwort je Aktion, Anhalten, HTTP-Fehler, publicPush.
     pushAnswer: null, holdPush: null, failPush: null, publicPush: null,
+    // Anlegen: Anhalten, Fehlerantwort und Netzfehler.
+    holdCreate: null, failCreate: null, loseCreate: false,
   };
   const calls = { requests: [], confirm: [], hash: [] };
 
@@ -246,7 +262,11 @@ async function openConsole(suggestions, {
     return !matchMedia(WIDE).matches && column !== null && !column.matchesSelf('.is-current');
   };
 
-  const respond = (payload, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => payload });
+  const respond = (payload, ok = true, status = ok ? 200 : 500) => ({ ok, status, json: async () => payload });
+  // Die Einstellungen schreiben in die Felder des Formulars.
+  element('workspaceSettingsForm').elements = new Proxy({}, {
+    get: (fields, name) => (fields[name] ||= { value: '' }),
+  });
   async function authFetch(url, options = {}) {
     const method = options.method || 'GET';
     const body = options.body ? JSON.parse(options.body) : undefined;
@@ -260,6 +280,19 @@ async function openConsole(suggestions, {
       return answer;
     }
     if (method === 'GET' && route === '/apps') return respond(server.apps);
+    if (method === 'GET' && route === '/settings') return respond({ tenant: { slug: 'acme', status: workspace } });
+    if (method === 'POST' && route === '/suggestions') {
+      if (server.holdCreate) await server.holdCreate;
+      if (server.loseCreate) throw new TypeError('Failed to fetch');
+      if (server.failCreate) return respond({ error: server.failCreate.error }, false, server.failCreate.status);
+      const id = `neu${server.suggestions.length + 1}`;
+      const ticketNumber = `WEB-9${String(server.suggestions.length + 1).padStart(2, '0')}`;
+      server.suggestions.push({
+        ...body, id, ticketNumber, type: 'ticket', approved: true, labels: [], userFingerprint: 'api:console',
+        app: server.apps.find((app) => app.id === body.appId),
+      });
+      return respond({ id, ticketNumber }, true, 201);
+    }
     if (url === '/api/auth/session') {
       return respond({ user: { email: 'a@example.test' }, memberships: [{ tenantSlug: 'acme', role }] });
     }
@@ -309,7 +342,10 @@ async function openConsole(suggestions, {
     console: { log() {}, warn() {}, error() {} },
     URLSearchParams,
     setTimeout: (handler, delay) => { if (!delay) setImmediate(handler); },
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: {
+      getItem: (key) => storage[key] ?? null,
+      setItem: (key, value) => { storage[key] = String(value); },
+    },
     history: { replaceState: (state, title, url) => calls.hash.push(url) },
     confirm: (message) => { calls.confirm.push(message); return confirmAnswer; },
     document: {
@@ -359,6 +395,7 @@ async function openConsole(suggestions, {
     if (load) {
       await app.loadApps();
       await app.loadSuggestions();
+      if (workspace) await app.loadSettings();
     }
     calls.requests.length = 0;
   }
@@ -511,6 +548,81 @@ test('„Fertig“ sagt, wenn nur die letzten 20 zu sehen sind', async () => {
   assert.match(many.columnMarkup('fertig'), /board-column-count">23</);
   assert.ok(many.columnMarkup('fertig').includes('Zu sehen sind die letzten 20.'));
   assert.equal(few.columnMarkup('fertig').includes('Zu sehen sind'), false);
+});
+
+// ---------------------------------------------------------------------------
+// Farben
+// ---------------------------------------------------------------------------
+
+// Plan 26.11.2026: Grund und Schrift je Farbplatz.
+const PALETTE = [
+  ['#E0F1E6', '#1F6B3B'], ['#EEE5FA', '#5E35A8'], ['#FAE3F0', '#99246A'], ['#EDF0D8', '#55631A'],
+  ['#E2ECFA', '#1D55A0'], ['#DCF1F2', '#0E6068'], ['#F2E8DD', '#7A4A1E'], ['#E6E9EE', '#3E4C63'],
+];
+const DATED_APPS = [
+  { id: 'a2', name: 'iOS', slug: 'ios', createdAt: '2026-02-01T00:00:00.000Z' },
+  { id: 'a1', name: 'Web', slug: 'web', createdAt: '2026-01-01T00:00:00.000Z' },
+];
+const badge = (board, id, text) => parseTags(`${board.cardMarkup(id).split(`>${text}</span>`)[0]}>`).at(-1).attributes.class;
+
+test('Board-Tag trägt die Farbe seines Boards, Nummer und Labels bleiben neutral', async () => {
+  const board = await openConsole([
+    entry('a', { ticketNumber: 'WEB-042', labels: ['Export'] }),
+    entry('b', { appId: 'a2', app: DATED_APPS[0] }),
+  ], { apps: DATED_APPS });
+
+  assert.equal(badge(board, 'a', 'Web'), 'tenant-badge board-tag board-tag-0');
+  assert.equal(badge(board, 'b', 'iOS'), 'tenant-badge board-tag board-tag-1');
+  assert.equal(badge(board, 'a', 'WEB-042'), 'tenant-badge');
+  assert.equal(badge(board, 'a', 'Export'), 'tenant-badge');
+});
+
+test('Filter ändern die Farbe eines Boards nicht', async () => {
+  const board = await openConsole([
+    entry('a', { appId: 'a2', app: DATED_APPS[0], labels: ['Export'] }),
+  ], { apps: DATED_APPS });
+
+  board.element('boardLabelFilter').fire('change', fakeEvent({ value: 'Export' }));
+
+  assert.equal(badge(board, 'a', 'iOS'), 'tenant-badge board-tag board-tag-1');
+});
+
+test('Ein Label mit dem Namen eines Boards bekommt keine Farbe', async () => {
+  const board = await openConsole([entry('a', { labels: ['iOS'] })], { apps: DATED_APPS });
+
+  assert.equal(badge(board, 'a', 'iOS'), 'tenant-badge');
+});
+
+test('Eintrag ohne bekanntes Board zeigt ein neutrales Tag', async () => {
+  const board = await openConsole([entry('a', { appId: 'weg', app: { name: 'Unknown App' } })], { apps: DATED_APPS });
+
+  assert.equal(badge(board, 'a', 'Unknown App'), 'tenant-badge');
+});
+
+function contrast(first, second) {
+  const luminance = (hex) => [0, 2, 4]
+    .map((at) => parseInt(hex.replace('#', '').slice(at, at + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const [light, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+test('Das Stylesheet kennt alle acht Farbplätze aus dem Plan, lesbar', () => {
+  PALETTE.forEach(([background, text], slot) => {
+    assert.match(html, new RegExp(`\\.board-tag-${slot} \\{ --tag-bg: ${background}; --tag-text: ${text}; \\}`));
+    assert.ok(contrast(background, text) >= 4.5, `Platz ${slot}`);
+  });
+  assert.equal(html.includes('.board-tag-8'), false);
+});
+
+test('„kritisch“ ist rot mit weißer Schrift', () => {
+  const [, rule] = /\.board-card \.board-priority-kritisch \{([^}]*)\}/.exec(html);
+
+  assert.match(rule, /border-color: #BF2F2F;/);
+  assert.match(rule, /background: #BF2F2F;/);
+  assert.match(rule, /color: #FFFFFF;/);
+  assert.ok(contrast('#BF2F2F', '#FFFFFF') >= 4.5);
 });
 
 // ---------------------------------------------------------------------------
@@ -1886,4 +1998,634 @@ test('Statuswechsel ohne eingeschaltetes Zurückschreiben liest den Stand nicht 
 
   assert.deepEqual(requested(board), []);
   assert.equal(toast(board), 'Status aktualisiert');
+});
+
+// ---------------------------------------------------------------------------
+// Anlegen in der Spalte
+// ---------------------------------------------------------------------------
+
+const createPath = '/api/admin/tenants/acme/suggestions';
+const LAST_BOARD = 'tenantAdmin:newTicketBoard:acme';
+const ADD_COLUMNS = [['offen', 'offen'], ['arbeit', 'in Bearbeitung'], ['test', 'im Test'], ['wartet', 'wartend']];
+
+async function privateConsole(suggestions = [], options = {}) {
+  const board = await openConsole(suggestions, { workspace: 'private', ...options });
+  const columns = () => board.element('boardColumns');
+  const send = (type, target, fields = {}) => {
+    const event = Object.assign(fakeEvent(target), fields);
+    columns().fire(type, event);
+    return event;
+  };
+  const click = (key) => {
+    const target = board.node(key);
+    if (target.disabled) return;
+    target.focus();
+    send('click', target);
+    // Ein Knopf zum Absenden löst im Browser „submit“ am Formular aus.
+    if (target.attributes.type === 'submit') send('submit', target.closest('.board-new'));
+  };
+  const key = (name, fields) => send('keydown', board.node(name), fields);
+  const type = (field, value) => {
+    const target = board.node(`new:${field}`);
+    target.focus();
+    Object.assign(target, { value, selectionStart: value.length, selectionEnd: value.length });
+    send('input', target);
+  };
+  const has = (focusKey) => columns().nodes().some((node) => node.attributes['data-focus'] === focusKey);
+  const composers = () => columns().nodes().filter((node) => node.classList.contains('board-new'));
+  const composerColumn = () => composers()[0]?.closest('.board-column').dataset.column ?? null;
+  const posts = () => board.writes().filter(({ method, url }) => method === 'POST' && url === createPath);
+  const pressed = (field) => columns().nodes()
+    .find(({ attributes }) => attributes['data-field'] === field && attributes['aria-pressed'] === 'true')
+    ?.attributes['data-value'];
+  const open = (column = 'offen', title) => {
+    click(`add:${column}`);
+    if (title !== undefined) type('title', title);
+  };
+  const toast = () => board.element('toast').textContent;
+  return { ...board, send, click, key, type, has, composers, composerColumn, posts, pressed, open, toast };
+}
+
+// Ein angehaltener Aufruf, den der Test selbst fortsetzt.
+function gate() {
+  let release;
+  const promise = new Promise((resolve) => { release = resolve; });
+  return { promise, release };
+}
+
+test('„+ Ticket“ steht in jeder Spalte außer „Fertig“', async () => {
+  const board = await privateConsole([entry('a')]);
+
+  assert.deepEqual(['offen', 'arbeit', 'test', 'wartet', 'fertig'].map((column) => board.has(`add:${column}`)),
+    [true, true, true, true, false]);
+  const column = board.columnMarkup('offen');
+  assert.ok(column.indexOf('board-column-head') < column.indexOf('+ Ticket'));
+  assert.ok(column.indexOf('+ Ticket') < column.indexOf('data-board-card'));
+});
+
+for (const [what, options] of [
+  ['viewer', { role: 'viewer' }],
+  ['öffentlicher Workspace', { workspace: 'active' }],
+  ['unbekannter Workspace-Stand', { workspace: null }],
+  ['ohne Boards', { apps: [] }],
+]) {
+  test(`Kein „+ Ticket“: ${what}`, async () => {
+    const board = await privateConsole([entry('a')], options);
+
+    assert.equal(board.markup('boardColumns').includes('+ Ticket'), false);
+    board.app.openComposer('offen');
+    assert.equal(board.composers().length, 0);
+  });
+}
+
+test('Einstellungen, die nach den Einträgen laden, bringen „+ Ticket“ aufs Board', async () => {
+  const board = await openConsole([entry('a')], { workspace: 'private', load: false });
+
+  await board.app.loadApps();
+  await board.app.loadSuggestions();
+  assert.equal(board.markup('boardColumns').includes('+ Ticket'), false);
+  await board.app.loadSettings();
+
+  assert.ok(board.markup('boardColumns').includes('+ Ticket'));
+});
+
+test('Ein Klick öffnet die Karte an dieser Stelle mit Fokus im Titel', async () => {
+  const board = await privateConsole([entry('a')]);
+
+  board.open('test');
+
+  assert.equal(board.composers().length, 1);
+  assert.equal(board.composerColumn(), 'test');
+  assert.equal(board.focused(), 'new:title');
+  assert.equal(board.has('add:test'), false);
+  assert.equal(board.has('add:offen'), true);
+  assert.equal(board.has('new:description'), false);
+  assert.ok(board.markup('boardColumns').includes('Beschreibung hinzufügen'));
+  assert.equal(board.pressed('priority'), 'mittel');
+  assert.deepEqual(board.writes(), []);
+});
+
+test('„+ Ticket“ in einer anderen Spalte verschiebt die Karte samt Inhalt', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Halb getippt');
+  board.click('new:priority:hoch');
+
+  board.open('wartet');
+
+  assert.equal(board.composers().length, 1);
+  assert.equal(board.composerColumn(), 'wartet');
+  assert.equal(board.node('new:title').value, 'Halb getippt');
+  assert.equal(board.node('new:title').selectionStart, 'Halb getippt'.length);
+  assert.equal(board.pressed('priority'), 'hoch');
+  assert.equal(board.focused(), 'new:title');
+  assert.equal(board.has('add:offen'), true);
+});
+
+for (const [what, storage, filter, expected] of [
+  ['das erste Board', {}, '', 'a1'],
+  ['das zuletzt benutzte', { [LAST_BOARD]: 'a2' }, '', 'a2'],
+  ['das erste, wenn es das zuletzt benutzte nicht mehr gibt', { [LAST_BOARD]: 'weg' }, '', 'a1'],
+  ['der Board-Filter vor dem zuletzt benutzten', { [LAST_BOARD]: 'a1' }, 'a2', 'a2'],
+]) {
+  test(`Vorausgewählt ist ${what}`, async () => {
+    const board = await privateConsole([], { storage });
+    board.element('boardAppFilter').fire('change', fakeEvent({ value: filter }));
+
+    board.open();
+
+    assert.equal(board.pressed('appId'), expected);
+  });
+}
+
+test('Auch ein gesperrter Speicher verhindert das Anlegen nicht', async () => {
+  const storage = new Proxy({}, { get() { throw new Error('gesperrt'); }, set() { throw new Error('gesperrt'); } });
+  const board = await privateConsole([], { storage });
+
+  board.open('offen', 'Ohne Speicher');
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+
+  assert.equal(board.posts().length, 1);
+  assert.equal(board.node('new:title').value, '');
+});
+
+test('Auswahl von Board und Priorität: Menü zu, Fokus zurück, Farbe am Board', async () => {
+  const board = await privateConsole([], { apps: DATED_APPS });
+  board.open();
+  const chip = () => board.node('new:appId').attributes.class;
+  assert.equal(chip(), 'board-new-chip board-tag board-tag-1');
+
+  board.node('new:appId').parentElement.attributes.open = '';
+  board.click('new:appId:a1');
+
+  assert.equal(board.pressed('appId'), 'a1');
+  assert.equal(chip(), 'board-new-chip board-tag board-tag-0');
+  assert.equal(board.focused(), 'new:appId');
+  assert.equal('open' in board.node('new:appId').parentElement.attributes, false);
+
+  board.node('new:priority').parentElement.attributes.open = '';
+  board.click('new:priority:kritisch');
+  assert.equal(board.pressed('priority'), 'kritisch');
+  assert.equal(board.focused(), 'new:priority');
+});
+
+test('Die Karte nutzt Menüs, kein natives select', async () => {
+  const board = await privateConsole();
+  board.open();
+
+  const tags = parseTags(board.columnMarkup('offen')).map(({ tag }) => tag);
+  assert.equal(tags.includes('select'), false);
+  assert.equal(tags.filter((tag) => tag === 'details').length, 2);
+});
+
+test('„Beschreibung hinzufügen“ zeigt das Feld und fokussiert es', async () => {
+  const board = await privateConsole();
+  board.open();
+
+  board.click('new:describe');
+
+  assert.equal(board.focused(), 'new:description');
+  assert.equal(board.has('new:describe'), false);
+});
+
+test('Knopf ist bei leerem Titel gesperrt, Enter schickt dann nichts', async () => {
+  const board = await privateConsole();
+  board.open();
+  assert.equal(board.node('new:submit').disabled, true);
+
+  board.type('title', '   ');
+  assert.equal(board.node('new:submit').disabled, true);
+  const enter = board.key('new:title', { key: 'Enter' });
+  board.send('submit', board.composers()[0]);
+  await settle();
+
+  assert.equal(enter.prevented, true);
+  assert.deepEqual(board.writes(), []);
+  board.type('title', 'x');
+  assert.equal(board.node('new:submit').disabled, false);
+  board.type('title', '');
+  assert.equal(board.node('new:submit').disabled, true);
+});
+
+for (const [column, status] of ADD_COLUMNS) {
+  test(`Anlegen in „${column}“ schickt Status „${status}“`, async () => {
+    const board = await privateConsole();
+    board.open(column, '  Neue Aufgabe  ');
+
+    board.key('new:title', { key: 'Enter' });
+    await settle();
+
+    assert.deepEqual(board.posts().map(({ body }) => body), [{
+      appId: 'a1', title: 'Neue Aufgabe', description: '', priority: 'mittel', status,
+    }]);
+    assert.equal(board.cardsIn(column).length, 1);
+  });
+}
+
+test('Der Knopf legt mit Board, Priorität und Beschreibung an', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Mit allem');
+  board.click('new:appId:a2');
+  board.click('new:priority:niedrig');
+  board.click('new:describe');
+  board.type('description', 'Zeile 1\nZeile 2\n');
+
+  board.click('new:submit');
+  await settle();
+
+  assert.deepEqual(board.posts().map(({ body }) => body), [{
+    appId: 'a2', title: 'Mit allem', description: 'Zeile 1\nZeile 2', priority: 'niedrig', status: 'offen',
+  }]);
+});
+
+for (const [what, fields] of [['isComposing', { isComposing: true }], ['keyCode 229', { keyCode: 229 }]]) {
+  test(`Während einer IME-Eingabe (${what}) legt Enter nichts an, Esc schließt nicht`, async () => {
+    const board = await privateConsole();
+    board.open('offen', 'にほん');
+
+    const enter = board.key('new:title', { key: 'Enter', ...fields });
+    board.key('new:title', { key: 'Escape', ...fields });
+    await settle();
+
+    assert.equal(enter.prevented, false);
+    assert.deepEqual(board.writes(), []);
+    assert.equal(board.composers().length, 1);
+  });
+}
+
+test('In der Beschreibung ist Enter ein Umbruch', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Titel');
+  board.click('new:describe');
+
+  const enter = board.key('new:description', { key: 'Enter' });
+  await settle();
+
+  assert.equal(enter.prevented, false);
+  assert.deepEqual(board.writes(), []);
+});
+
+for (const modifier of ['metaKey', 'ctrlKey']) {
+  test(`In der Beschreibung legt Enter mit ${modifier} an`, async () => {
+    const board = await privateConsole();
+    board.open('offen', 'Titel');
+    board.click('new:describe');
+    board.type('description', 'Text');
+
+    const enter = board.key('new:description', { key: 'Enter', [modifier]: true });
+    await settle();
+
+    assert.equal(enter.prevented, true);
+    assert.equal(board.posts().length, 1);
+    assert.equal(board.focused(), 'new:title');
+  });
+}
+
+test('Enter auf einem Knopf der Karte bleibt beim Knopf', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Titel');
+
+  const enter = board.key('new:cancel', { key: 'Enter' });
+  await settle();
+
+  assert.equal(enter.prevented, false);
+  assert.deepEqual(board.writes(), []);
+});
+
+test('Während des Speicherns ist alles gesperrt, nichts wird doppelt angelegt', async () => {
+  const board = await privateConsole();
+  const hold = gate();
+  board.server.holdCreate = hold.promise;
+  board.open('offen', 'Nur einmal');
+
+  board.key('new:title', { key: 'Enter' });
+  // Das gesperrte Feld behält Fokus und Schreibmarke.
+  assert.equal(board.focused(), 'new:title');
+  board.key('new:title', { key: 'Enter' });
+  board.send('submit', board.composers()[0]);
+  board.key('new:title', { key: 'Escape' });
+  board.click('new:cancel');
+  board.click('add:test');
+  await settle();
+
+  assert.equal(board.posts().length, 1);
+  assert.equal(board.composerColumn(), 'offen');
+  assert.equal(board.node('new:submit').disabled, true);
+  assert.equal(board.node('new:cancel').disabled, true);
+  assert.ok('readonly' in board.node('new:title').attributes);
+  assert.equal(board.node('new:title').value, 'Nur einmal');
+
+  hold.release();
+  await settle();
+  assert.equal(board.posts().length, 1);
+  assert.equal('readonly' in board.node('new:title').attributes, false);
+});
+
+test('Nach dem Anlegen bleibt die Karte offen und leer, das Board bleibt', async () => {
+  const storage = {};
+  const board = await privateConsole([], { storage });
+  board.open('arbeit', 'Erstes');
+  board.click('new:appId:a2');
+  board.click('new:priority:kritisch');
+  board.click('new:describe');
+  board.type('description', 'Text');
+
+  board.click('new:submit');
+  await settle();
+
+  assert.equal(board.composerColumn(), 'arbeit');
+  assert.equal(board.node('new:title').value, '');
+  assert.equal(board.has('new:description'), false);
+  assert.equal(board.pressed('priority'), 'mittel');
+  assert.equal(board.pressed('appId'), 'a2');
+  assert.equal(board.focused(), 'new:title');
+  assert.equal(board.node('new:submit').disabled, true);
+  assert.equal(board.toast(), 'WEB-901 angelegt.');
+  assert.equal(storage[LAST_BOARD], 'a2');
+  assert.deepEqual(board.cardsIn('arbeit'), ['neu1']);
+  assert.ok(board.calls.requests.some(({ url }) => url.endsWith('/stats')));
+});
+
+test('Zwei Tickets nacheinander', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Eins');
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+  board.type('title', 'Zwei');
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+
+  assert.deepEqual(board.posts().map(({ body }) => body.title), ['Eins', 'Zwei']);
+  assert.equal(board.cardsIn('offen').length, 2);
+});
+
+test('Blendet der Label-Filter das Ticket aus, sagt die Meldung das', async () => {
+  const board = await privateConsole([entry('a', { labels: ['Export'] })]);
+  board.element('boardLabelFilter').fire('change', fakeEvent({ value: 'Export' }));
+  board.open('offen', 'Versteckt');
+
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+
+  assert.equal(board.toast(), 'WEB-902 angelegt. Der Label-Filter blendet es aus.');
+});
+
+test('Blendet der Board-Filter das Ticket aus, sagt die Meldung das', async () => {
+  const board = await privateConsole();
+  board.element('boardAppFilter').fire('change', fakeEvent({ value: 'a1' }));
+  board.open('offen', 'Anderswo');
+  board.click('new:appId:a2');
+
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+
+  assert.equal(board.toast(), 'WEB-901 angelegt. Der Board-Filter blendet es aus.');
+});
+
+for (const [what, prepare, message] of [
+  ['Fehlerantwort', (server) => { server.failCreate = { status: 404, error: 'Board nicht gefunden.' }; }, 'Board nicht gefunden.'],
+  ['Anfrage-Grenze', (server) => { server.failCreate = { status: 429, error: 'Too many requests.' }; }, 'Zu viele Tickets auf einmal. Warte eine Minute.'],
+  ['Netzfehler', (server) => { server.loseCreate = true; }, 'Das Ticket ließ sich nicht anlegen.'],
+  ['Antwort ohne Meldung', (server) => { server.failCreate = { status: 500 }; }, 'Das Ticket ließ sich nicht anlegen.'],
+]) {
+  test(`${what}: Text bleibt stehen, die Meldung steht in der Karte`, async () => {
+    const board = await privateConsole();
+    prepare(board.server);
+    board.open('offen', 'Bleibt stehen');
+    board.click('new:priority:hoch');
+    board.click('new:describe');
+    board.type('description', 'Auch das');
+
+    board.click('new:submit');
+    await settle();
+
+    assert.ok(board.columnMarkup('offen').includes(`role="alert">${message}<`), board.columnMarkup('offen'));
+    assert.equal(board.node('new:title').value, 'Bleibt stehen');
+    assert.equal(board.node('new:description').value, 'Auch das');
+    assert.equal(board.pressed('priority'), 'hoch');
+    assert.equal(board.node('new:submit').disabled, false);
+    assert.equal(board.focused(), 'new:title');
+
+    Object.assign(board.server, { failCreate: null, loseCreate: false });
+    board.click('new:submit');
+    await settle();
+    assert.equal(board.markup('boardColumns').includes('role="alert"'), false);
+    assert.equal(board.posts().length, 2);
+  });
+}
+
+test('Lädt die Liste danach nicht, sagt die Meldung, dass das Ticket angelegt ist', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Angelegt');
+  board.server.failList = 'kaputt';
+
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+
+  assert.equal(board.toast(), 'WEB-901 angelegt. Die Liste ließ sich nicht neu laden.');
+  assert.equal(board.node('new:title').value, '');
+});
+
+test('Wer während des Speicherns weitergeht, behält seinen Fokus', async () => {
+  const board = await privateConsole([entry('a')]);
+  const hold = gate();
+  board.server.holdCreate = hold.promise;
+  board.open('offen', 'Titel');
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+
+  board.node('card:a').focus();
+  hold.release();
+  await settle();
+
+  assert.equal(board.focused(), 'card:a');
+});
+
+// Ein Klick neben die Felder oder auf den gesperrten Knopf trifft die Karte.
+for (const outcome of ['Erfolg', 'Fehler']) {
+  test(`Klick in die Karte während des Speicherns: nach ${outcome} liegt der Fokus im Titel`, async () => {
+    const board = await privateConsole();
+    const hold = gate();
+    board.server.holdCreate = hold.promise;
+    if (outcome === 'Fehler') board.server.failCreate = { status: 500 };
+    board.open('offen', 'Titel');
+    board.key('new:title', { key: 'Enter' });
+    await settle();
+    assert.equal(board.composers()[0].attributes.tabindex, '-1');
+
+    board.node('new:form').focus();
+    hold.release();
+    await settle();
+
+    assert.equal(board.focused(), 'new:title');
+  });
+}
+
+test('Esc schließt auch, wenn der Fokus auf der Karte selbst liegt', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Titel');
+
+  board.key('new:form', { key: 'Escape' });
+
+  assert.equal(board.composers().length, 0);
+});
+
+for (const [what, close] of [
+  ['Esc', (board) => board.key('new:title', { key: 'Escape' })],
+  ['„Abbrechen“', (board) => board.click('new:cancel')],
+]) {
+  test(`${what} schließt, verwirft und fokussiert „+ Ticket“ der Spalte`, async () => {
+    const board = await privateConsole();
+    board.open('test', 'Weg damit');
+
+    close(board);
+
+    assert.equal(board.composers().length, 0);
+    assert.equal(board.focused(), 'add:test');
+    assert.deepEqual(board.writes(), []);
+    board.open('test');
+    assert.equal(board.node('new:title').value, '');
+  });
+}
+
+test('Esc bei offenem Menü schließt nur das Menü', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Bleibt');
+  board.node('new:priority').parentElement.attributes.open = '';
+  board.node('new:priority:hoch').focus();
+
+  board.key('new:priority:hoch', { key: 'Escape' });
+
+  assert.equal(board.composers().length, 1);
+  assert.equal(board.node('new:title').value, 'Bleibt');
+  assert.equal('open' in board.node('new:priority').parentElement.attributes, false);
+  assert.equal(board.focused(), 'new:priority');
+});
+
+test('Esc im Titel bei offenem Menü schließt nur das Menü', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Bleibt');
+  board.node('new:priority').parentElement.attributes.open = '';
+
+  board.key('new:title', { key: 'Escape' });
+
+  assert.equal(board.composers().length, 1);
+  assert.equal('open' in board.node('new:priority').parentElement.attributes, false);
+  assert.equal(board.focused(), 'new:title');
+});
+
+for (const [what, redraw] of [
+  ['Neuladen', (board) => board.app.loadSuggestions()],
+  ['Verschieben einer Karte', (board) => board.app.moveCard('a', 'arbeit')],
+  ['Feedback-Holen', (board) => board.app.fetchFeedbackNow()],
+  ['neue Boards', (board) => board.app.loadApps()],
+  ['Breitenwechsel', async (board) => board.matchMedia(WIDE).fire('change')],
+]) {
+  test(`${what}: Eingaben, Fokus und Schreibmarke bleiben`, async () => {
+    const board = await privateConsole([entry('a')], {
+      feedback: { enabled: true, sources: [], links: [] },
+    });
+    board.open('offen', 'Mitten im Satz');
+    board.click('new:describe');
+    board.type('description', '\nerste Zeile ist leer');
+    board.node('new:description').setSelectionRange(3, 7);
+    const before = board.node('new:description');
+
+    await redraw(board);
+    await settle();
+
+    const after = board.node('new:description');
+    assert.notEqual(after, before);
+    assert.equal(after.value, '\nerste Zeile ist leer');
+    assert.equal(board.node('new:title').value, 'Mitten im Satz');
+    assert.equal(board.focused(), 'new:description');
+    assert.deepEqual([after.selectionStart, after.selectionEnd], [3, 7]);
+  });
+}
+
+test('Ein offenes Menü der Karte bleibt beim Neuzeichnen offen', async () => {
+  const board = await privateConsole();
+  board.open();
+  board.node('new:priority').parentElement.attributes.open = '';
+  board.node('new:priority:hoch').focus();
+
+  await board.app.loadSuggestions();
+
+  assert.equal('open' in board.node('new:priority').parentElement.attributes, true);
+  assert.equal('open' in board.node('new:appId').parentElement.attributes, false);
+  assert.equal(board.focused(), 'new:priority:hoch');
+});
+
+test('Neuzeichnen holt den Fokus nicht in die Karte', async () => {
+  const board = await privateConsole([entry('a')]);
+  board.open('offen', 'Titel');
+  board.node('card:a').focus();
+
+  await board.app.loadSuggestions();
+
+  assert.equal(board.focused(), 'card:a');
+  assert.equal(board.node('new:title').value, 'Titel');
+});
+
+test('Schmal: Beim Spaltenwechsel bleibt die Karte an ihrer Spalte', async () => {
+  const board = await privateConsole([], { wide: false });
+  board.open('arbeit', 'Bleibt hier');
+
+  board.element('boardSwitcher').fire('click', fakeEvent(board.node('switch:test')));
+
+  assert.equal(board.composerColumn(), 'arbeit');
+  assert.ok(board.columnMarkup('test').includes('is-current'));
+});
+
+test('Wird das Fenster beim Schreiben schmal, bleibt die Spalte der Karte vorn', async () => {
+  const board = await privateConsole();
+  board.open('wartet', 'Schreibe gerade');
+
+  board.matchMedia(WIDE).matches = false;
+  board.matchMedia(WIDE).fire('change');
+
+  assert.ok(board.columnMarkup('wartet').includes('is-current'));
+  assert.equal(board.focused(), 'new:title');
+});
+
+test('Eingefügte Zeilenumbrüche im Titel werden zu Leerzeichen', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'eins\r\n\nzwei\nrest');
+
+  assert.equal(board.node('new:title').value, 'eins zwei rest');
+  board.key('new:title', { key: 'Enter' });
+  await settle();
+  assert.equal(board.posts()[0].body.title, 'eins zwei rest');
+});
+
+test('Wird das gewählte Board gelöscht, wählt die Karte ein vorhandenes', async () => {
+  const board = await privateConsole();
+  board.open('offen', 'Titel');
+  board.click('new:appId:a2');
+
+  board.server.apps = [APPS[0]];
+  await board.app.loadApps();
+
+  assert.equal(board.pressed('appId'), 'a1');
+});
+
+test('HTML in Boardnamen und Eingaben bleibt in der Karte Text', async () => {
+  const attack = (n) => `"><img src=x onerror=alert(${n})></textarea>' onfocus="x`;
+  const hostileApp = { id: attack(1), name: attack(2), slug: 'x' };
+  const board = await privateConsole([], { apps: [hostileApp] });
+  board.open('offen', attack(3));
+  board.click('new:describe');
+  board.type('description', attack(4));
+
+  await board.app.loadSuggestions();
+
+  const rendered = board.markup('boardColumns');
+  assert.equal(rendered.includes('<img'), false);
+  for (const { tag, attributes } of parseTags(rendered)) {
+    assert.notEqual(tag, 'img');
+    assert.deepEqual(Object.keys(attributes).filter((name) => name.startsWith('on')), [], tag);
+  }
+  assert.equal(board.node('new:title').value, attack(3));
+  assert.equal(board.node('new:description').value, attack(4));
+  assert.equal(board.pressed('appId'), attack(1));
 });

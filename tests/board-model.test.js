@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary, pendingLine, testAction,
+  boardColorSlots,
 } = require('../public/board-model');
 
 const TICKET_TYPES = ['ticket', 'bug'];
@@ -390,4 +391,48 @@ test('testAction: intern im Test, Schalter an, öffentlich noch nicht im Test', 
   assert.equal(testAction(item, { ...open, publicStatus: 'im Test' }), false);
   assert.equal(testAction(item, undefined), false);
   assert.equal(testAction(item, null), false);
+});
+
+// ---------------------------------------------------------------------------
+// Farbe je Board
+// ---------------------------------------------------------------------------
+
+const boardApp = (id, createdAt, slug = id) => ({ id, slug, createdAt });
+const slotsOf = (apps) => Object.fromEntries(boardColorSlots(apps));
+
+test('boardColorSlots: Platz nach Alter des Boards, nicht nach Reihenfolge der Liste', () => {
+  const apps = [
+    boardApp('neu', '2026-03-01T00:00:00.000Z'),
+    boardApp('alt', '2026-01-01T00:00:00.000Z'),
+    boardApp('mitte', '2026-02-01T00:00:00.000Z'),
+  ];
+
+  assert.deepEqual(slotsOf(apps), { alt: 0, mitte: 1, neu: 2 });
+  assert.deepEqual(apps.map((app) => app.id), ['neu', 'alt', 'mitte']);
+});
+
+test('boardColorSlots: bei gleichem Alter entscheidet der Slug', () => {
+  const same = '2026-01-01T00:00:00.000Z';
+
+  assert.deepEqual(
+    slotsOf([boardApp('x', same, 'zeta'), boardApp('y', same, 'alpha'), boardApp('z', same, 'mitte')]),
+    { y: 0, z: 1, x: 2 },
+  );
+});
+
+test('boardColorSlots: nach acht Boards beginnen die Farben von vorn', () => {
+  const apps = Array.from({ length: 10 }, (_, i) => boardApp(`b${i}`, new Date(Date.UTC(2026, 0, i + 1)).toISOString()));
+
+  assert.deepEqual(Object.values(slotsOf(apps)), [0, 1, 2, 3, 4, 5, 6, 7, 0, 1]);
+});
+
+test('boardColorSlots: versteht Firestore-Zeitstempel und fehlende Angaben', () => {
+  const apps = [
+    boardApp('spaet', { _seconds: 200 }),
+    boardApp('frueh', { seconds: 100 }),
+    { id: 'ohne' },
+  ];
+
+  assert.deepEqual(slotsOf(apps), { ohne: 0, frueh: 1, spaet: 2 });
+  assert.deepEqual(slotsOf([]), {});
 });
