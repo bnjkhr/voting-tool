@@ -969,6 +969,41 @@
             text-underline-offset: 3px;
         }
 
+        /* Wartende Veröffentlichung: ein gefüllter Knopf je Karte, darunter
+           Textlinks. */
+        .board-card-pending {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            justify-items: start;
+            gap: var(--spacing-xs);
+            margin-top: var(--spacing-xs);
+            padding-top: var(--spacing-sm);
+            border-top: 1px solid var(--border-light);
+            color: var(--text-primary);
+            font-size: 0.82rem;
+        }
+
+        .board-card-pending p {
+            margin: 0;
+        }
+
+        /* Fehlerrot, mit der Textfarbe gemischt: so bleibt es auch dunkel lesbar. */
+        .board-card-pending-error {
+            color: color-mix(in srgb, var(--danger-color) 70%, var(--text-primary));
+        }
+
+        .board-card-pending .primary-btn {
+            justify-self: stretch;
+            min-height: 44px;
+            padding: var(--spacing-sm);
+            line-height: 1.3;
+            text-align: center;
+        }
+
+        .board-card-pending .primary-btn:disabled {
+            cursor: progress;
+        }
+
         .board-switcher {
             display: none;
         }
@@ -1046,6 +1081,7 @@
         .board-card-public a:focus-visible,
         .board-link-field input:focus-visible,
         .board-text-link:focus-visible,
+        .board-card-pending .primary-btn:focus-visible,
         .board-column:focus-visible,
         .board-move-options button:focus-visible,
         .board-switch:focus-visible {

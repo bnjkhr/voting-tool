@@ -6,6 +6,7 @@
 // Isomorphe Single-Source-of-Truth für Board-Pfade (dieselbe Datei, die der
 // Browser lädt) — hält Mail-Deep-Links und SPA-Routing garantiert im Gleichlauf.
 const { buildUrlState } = require('../public/url-state');
+const { LEGACY_BOARD_BASE } = require('../lib/feedback-links');
 
 const BRAND = {
   primary: '#E06A3A',
@@ -78,6 +79,66 @@ function wrapEmail({ heading, bodyHtml, footnote }) {
     </div>`;
 }
 
+const ENTRY_LABELS = { bug: 'Bug', ticket: 'Ticket', feature: 'Vorschlag' };
+
+// Absender für Mails zum alten Board. Bewusst ohne Rückfall auf EMAIL_FROM:
+// Diese Mails kommen nie vom Roadlight-Absender.
+function legacySenderAddress() {
+  return (process.env.LEGACY_EMAIL_FROM || '').trim() || null;
+}
+
+// Statusmail zum alten Board: Markup, Betreff, Anrede und Farben wörtlich wie
+// sendUserNotificationEmail im alten Stand (legacy-stable), nur maskiert und mit
+// festem Link aufs alte Board.
+function buildLegacyStatusMail({ entryId, title, appName, entryType, status }) {
+  const entryLabel = ENTRY_LABELS[entryType] || 'Eintrag';
+  const statusText = 'Status aktualisiert';
+  const statusColor = '#6366f1';
+  const comment = `Neuer Status: ${status}`;
+  const suggestionUrl = `${LEGACY_BOARD_BASE}/#suggestion-${htmlEscape(entryId)}`;
+  return {
+    subject: `Ihr ${entryLabel} "${title}" - ${statusText}`,
+    html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Update zu Ihrem ${entryLabel}</h2>
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: ${statusColor};">${statusText}</h3>
+            <p><strong>${entryLabel}:</strong> ${htmlEscape(title)}</p>
+            <p><strong>App:</strong> ${htmlEscape(appName)}</p>
+            <p><strong>Typ:</strong> ${entryLabel}</p>
+            ${comment ? `<p><strong>Kommentar:</strong> ${htmlEscape(comment)}</p>` : ''}
+          </div>
+          <p><a href="${suggestionUrl}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Eintrag ansehen</a></p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+          <p style="color: #6c757d; font-size: 12px;">
+            Sie erhalten diese E-Mail, weil Sie Benachrichtigungen für diesen Eintrag aktiviert haben.
+          </p>
+        </div>
+      `,
+  };
+}
+
+// Statusmail zu einem Eintrag auf einem Roadlight-Board, gleich der Mail, die
+// die Statusroute des Workspaces über sendUserNotificationEmail verschickt.
+function buildTenantStatusMail({ title, appName, entryType, status, entryUrl }) {
+  const entryLabel = ENTRY_LABELS[entryType] || 'Eintrag';
+  const statusText = 'Status aktualisiert';
+  const comment = `Neuer Status: ${status}`;
+  return {
+    subject: `Dein ${entryLabel} "${title}" – ${statusText}`,
+    html: wrapEmail({
+      heading: `Update zu deinem ${entryLabel}`,
+      bodyHtml: `
+          <p style="margin:0 0 12px;font-weight:bold;color:#E06A3A;">${statusText}</p>
+          <p style="margin:4px 0;"><strong>${entryLabel}:</strong> ${htmlEscape(title)}</p>
+          <p style="margin:4px 0;"><strong>App:</strong> ${htmlEscape(appName)}</p>
+          ${comment ? `<p style="margin:4px 0;"><strong>Kommentar:</strong> ${htmlEscape(comment)}</p>` : ''}
+          <p style="margin:20px 0 0;">${brandButton(entryUrl, 'Eintrag ansehen')}</p>`,
+      footnote: 'Du erhältst diese E-Mail, weil du Benachrichtigungen für diesen Eintrag aktiviert hast.',
+    }),
+  };
+}
+
 module.exports = {
   BRAND,
   senderAddress,
@@ -86,4 +147,7 @@ module.exports = {
   htmlEscape,
   adminNotificationUrl,
   tenantBoardEntryUrl,
+  legacySenderAddress,
+  buildLegacyStatusMail,
+  buildTenantStatusMail,
 };

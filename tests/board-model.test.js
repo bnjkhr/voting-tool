@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary,
+  COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary, pendingLine, testAction,
 } = require('../public/board-model');
 
 const TICKET_TYPES = ['ticket', 'bug'];
@@ -322,4 +322,72 @@ test('unapprovedSummary: Mehrzahl je Quelle', () => {
 
 test('needsConfirm: geholtes Feedback fragt nicht', () => {
   assert.equal(needsConfirm({ userFingerprint: 'api:feedback', notificationEnabled: false }), false);
+});
+
+const waiting = (fields = {}) => link({
+  pushEnabled: true, pendingStatus: 'gelöst', pendingReason: 'backward', pendingMail: false,
+  pendingError: null, pushStage: null, ...fields,
+});
+const asOwner = { isOwner: true };
+
+test('pendingLine: nichts ohne Verknüpfung, ohne Wartendes oder bei ausgeschaltetem Schalter', () => {
+  assert.equal(pendingLine(undefined, asOwner), null);
+  assert.equal(pendingLine(null, asOwner), null);
+  assert.equal(pendingLine(waiting({ pendingStatus: null }), asOwner), null);
+  for (const fields of [{}, { pendingMail: true }, { pushStage: 'mailing' }, { pendingStatus: null, pendingError: 'x' }]) {
+    assert.equal(pendingLine(waiting({ ...fields, pushEnabled: false }), asOwner), null);
+  }
+});
+
+test('pendingLine: Owner übernimmt, mit oder ohne Mail', () => {
+  assert.deepEqual(pendingLine(waiting(), asOwner), {
+    text: 'Wartet auf Veröffentlichung: gelöst', action: 'publish', canDiscard: true, error: null,
+  });
+  assert.equal(pendingLine(waiting({ pendingMail: true }), asOwner).action, 'publish_mail');
+  assert.equal(pendingLine(waiting({ pendingReason: 'busy', pushStage: 'writing' }), asOwner).action, 'publish');
+});
+
+test('pendingLine: Fehlerzeile', () => {
+  const line = pendingLine(waiting({ pendingReason: 'failed', pendingError: 'Die Quelle antwortet nicht.' }), asOwner);
+
+  assert.deepEqual([line.action, line.error], ['publish', 'Die Quelle antwortet nicht.']);
+});
+
+test('pendingLine: ohne Owner nur die Zeile', () => {
+  for (const options of [{ isOwner: false }, {}, undefined]) {
+    assert.deepEqual(pendingLine(waiting({ pendingMail: true }), options), {
+      text: 'Wartet auf Veröffentlichung: gelöst', action: null, canDiscard: false, error: null,
+    });
+  }
+});
+
+test('pendingLine: hängender Mailversand bietet nur Verwerfen', () => {
+  for (const pendingStatus of ['gelöst', null]) {
+    const stuck = waiting({ pushStage: 'mailing', pendingStatus, pendingMail: true, pendingError: 'alt' });
+    assert.deepEqual(pendingLine(stuck, asOwner), {
+      text: 'Ob die Mail rausging, ist unklar.', action: null, canDiscard: true, error: null,
+    });
+    assert.equal(pendingLine(stuck, { isOwner: false }).canDiscard, false);
+  }
+});
+
+test('pendingLine: gescheiterte Mail bleibt sichtbar, bis jemand sie verwirft', () => {
+  const failed = waiting({ pendingStatus: null, pendingError: 'Status veröffentlicht, die Mail ging nicht raus.' });
+
+  assert.deepEqual(pendingLine(failed, asOwner), {
+    text: 'Status veröffentlicht, die Mail ging nicht raus.', action: null, canDiscard: true, error: null,
+  });
+});
+
+test('testAction: intern im Test, Schalter an, öffentlich noch nicht im Test', () => {
+  const item = { status: 'im Test' };
+  const open = waiting({ pendingStatus: null, publicStatus: 'in Bearbeitung' });
+
+  assert.equal(testAction(item, open), true);
+  assert.equal(testAction(item, { ...open, publicStatus: null }), true);
+  assert.equal(testAction({ status: 'in Bearbeitung' }, open), false);
+  assert.equal(testAction(item, { ...open, pushEnabled: false }), false);
+  assert.equal(testAction(item, { ...open, publicStatus: 'im Test' }), false);
+  assert.equal(testAction(item, undefined), false);
+  assert.equal(testAction(item, null), false);
 });

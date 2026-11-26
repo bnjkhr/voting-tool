@@ -13,6 +13,8 @@ Object.assign(process.env, {
   VERCEL_ENV: '',
   STRIPE_SECRET_KEY: '',
   RESEND_API_KEY: 're_test',
+  EMAIL_FROM: '',
+  LEGACY_EMAIL_FROM: '',
   BASE_URL: 'http://localhost',
   ADMIN_PASSWORD: 'test-admin-password',
   OPERATOR_EMAIL: 'operator@example.test',
@@ -22,22 +24,90 @@ const collections = new Map();
 const sentMails = [];
 let nextId = 0;
 
-// Gelesene Sammlungen in Reihenfolge, und gestörte Sammlungen.
+// Gelesene Sammlungen in Reihenfolge, Schreibzugriffe je Sammlung und
+// Dokument, und gestörte Sammlungen.
 const readLog = [];
+const writeLog = [];
+// Jeder begonnene Schreibzugriff, auch ein hängender oder abgelehnter.
+const writeAttempts = [];
 const brokenReads = new Map();
+const brokenWrites = new Map();
+let mailFailure = null;
 
-// Lässt jedes Lesen der Sammlung scheitern, mit `hang` hängen. Gibt die
-// Funktion zurück, die die Störung wieder aufhebt.
-function failReads(name, { hang = false } = {}) {
-  brokenReads.set(name, hang);
-  return () => brokenReads.delete(name);
+// Lässt jedes Lesen (Schreiben) der Sammlung scheitern. Mit `hang: true` hängt
+// es für immer; mit einem Versprechen hängt es, bis dieses erfüllt ist, und
+// läuft dann normal weiter. Gibt die Funktion zurück, die die Störung wieder
+// aufhebt.
+const disturb = (broken) => (name, { hang = false } = {}) => {
+  broken.set(name, hang);
+  return () => broken.delete(name);
+};
+const failReads = disturb(brokenReads);
+const failWrites = disturb(brokenWrites);
+
+// Jeder weitere Mailversand scheitert: Ein `Error` wird geworfen, alles andere
+// meldet Resend als `error` zurück.
+function failMails(error) {
+  mailFailure = error;
+  return () => { mailFailure = null; };
+}
+
+async function pass(broken, name, what) {
+  if (!broken.has(name)) return;
+  const hang = broken.get(name);
+  if (hang === true) await new Promise(() => {});
+  if (hang) await hang;
+  else throw new Error(`${what} von „${name}“ ist gestört`);
 }
 
 async function noteRead(name) {
   readLog.push(name);
-  if (!brokenReads.has(name)) return;
-  if (brokenReads.get(name)) await new Promise(() => {});
-  throw new Error(`Lesen von „${name}“ ist gestört`);
+  await pass(brokenReads, name, 'Lesen');
+}
+
+async function write(collection, id, op, apply) {
+  writeAttempts.push({ collection, id, op });
+  await pass(brokenWrites, collection, 'Schreiben');
+  apply();
+  writeLog.push({ collection, id, op });
+}
+
+// `updateTime` wie bei Firestore: Jeder Schreibzugriff legt ein neues Objekt ab
+// und damit einen neuen Stand.
+class Timestamp {
+  constructor(sequence) {
+    this.sequence = sequence;
+  }
+}
+const updateTimes = new WeakMap();
+const hiddenUpdateTimes = new Set();
+let sequence = 0;
+
+function updateTimeOf(stored) {
+  if (!updateTimes.has(stored)) updateTimes.set(stored, new Timestamp(sequence += 1));
+  return updateTimes.get(stored);
+}
+
+// Snapshots der Sammlung kommen ohne `updateTime`.
+function hideUpdateTime(name) {
+  hiddenUpdateTimes.add(name);
+  return () => hiddenUpdateTimes.delete(name);
+}
+
+// Die Vorbedingung von update(), geprüft erst beim Anwenden: Was inzwischen
+// geschrieben wurde, zählt. Wie die Bibliothek prüft `{ lastUpdateTime:
+// undefined }` nichts.
+function checkPrecondition(name, id, precondition) {
+  const lastUpdateTime = precondition?.lastUpdateTime;
+  if (lastUpdateTime === undefined) return;
+  if (!(lastUpdateTime instanceof Timestamp)) {
+    throw new Error('"lastUpdateTime" is not a Firestore Timestamp.');
+  }
+  const stored = records(name).get(id);
+  if (!stored) throw Object.assign(new Error('5 NOT_FOUND: Dokument fehlt'), { code: 5 });
+  if (updateTimeOf(stored) !== lastUpdateTime) {
+    throw Object.assign(new Error('9 FAILED_PRECONDITION: Dokument wurde geändert'), { code: 9 });
+  }
 }
 
 function records(name) {
@@ -65,17 +135,22 @@ function docRef(name, id) {
     async get() {
       await noteRead(name);
       const stored = records(name).get(id);
-      return { id, ref, exists: Boolean(stored), data: () => (stored ? { ...stored } : undefined) };
+      return {
+        id,
+        ref,
+        exists: Boolean(stored),
+        updateTime: stored && !hiddenUpdateTimes.has(name) ? updateTimeOf(stored) : undefined,
+        data: () => (stored ? { ...stored } : undefined),
+      };
     },
-    async set(data, options = {}) {
+    set: (data, options = {}) => write(name, id, 'set', () => {
       records(name).set(id, options.merge ? { ...records(name).get(id), ...data } : { ...data });
-    },
-    async update(data) {
+    }),
+    update: (data, precondition) => write(name, id, 'update', () => {
+      checkPrecondition(name, id, precondition);
       records(name).set(id, applyUpdate(records(name).get(id), data));
-    },
-    async delete() {
-      records(name).delete(id);
-    },
+    }),
+    delete: () => write(name, id, 'delete', () => records(name).delete(id)),
   };
   return ref;
 }
@@ -120,7 +195,7 @@ const db = {
         if ((await ref.get()).exists) throw new Error(`Dokument existiert bereits: ${ref.id}`);
         await ref.set(data);
       }),
-      update: (ref, data) => writes.push(() => ref.update(data)),
+      update: (ref, data, precondition) => writes.push(() => ref.update(data, precondition)),
       delete: (ref) => writes.push(() => ref.delete()),
       async commit() {
         for (const write of writes) await write();
@@ -149,7 +224,10 @@ stubModule('resend', {
     constructor() {
       this.emails = {
         send: async (mail) => {
+          // `sentMails` zählt jeden Versuch, auch einen gescheiterten.
           sentMails.push(mail);
+          if (mailFailure instanceof Error) throw mailFailure;
+          if (mailFailure) return { data: null, error: mailFailure };
           return { data: { id: 'mail' }, error: null };
         },
       };
@@ -172,7 +250,12 @@ function reset() {
   collections.clear();
   sentMails.length = 0;
   readLog.length = 0;
+  writeLog.length = 0;
+  writeAttempts.length = 0;
+  hiddenUpdateTimes.clear();
   brokenReads.clear();
+  brokenWrites.clear();
+  mailFailure = null;
 }
 
 let clientCounter = 0;
@@ -209,4 +292,7 @@ async function startApp() {
   return { request, close };
 }
 
-module.exports = { dump, failReads, readLog, records, reset, seed, sentMails, startApp };
+module.exports = {
+  dump, failMails, failReads, failWrites, hideUpdateTime, readLog, records, reset, seed, sentMails, startApp,
+  writeAttempts, writeLog,
+};

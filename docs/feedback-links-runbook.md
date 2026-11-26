@@ -149,3 +149,139 @@ npm run feedback:sources -- disable --workspace <ziel-workspace> --board <ziel-b
 ```
 
 `disable --commit` stoppt auch einen gerade laufenden Holvorgang: Danach entsteht kein Ticket mehr aus dieser Quelle. Bei Bedarf den Code zurücknehmen. Migration und Tabellen bleiben; ältere Code-Stände kennen sie nicht. Schon geholte Tickets bleiben stehen. Wer eines löscht, bekommt es nicht erneut geholt.
+
+## Stufe 2: Status zurückschreiben
+
+Ab hier kann Roadlight öffentliche Einträge ändern: Status, Kennzeichen und ein Verlaufseintrag. Eine Mail an die einreichende Person geht nur, wenn ein angemeldeter Owner in der Konsole „Übernehmen und Mail senden“ anklickt. Spec und Bauplan: [plans/2026-11-26-verknuepfung-stufe2-plan.md](plans/2026-11-26-verknuepfung-stufe2-plan.md).
+
+Auch hier braucht **jeder Schritt Bens OK**, und nach jedem Schritt wird die Ausgabe geprüft. Weitere Platzhalter: `<absender-altes-board>` ist der Absender, mit dem das alte Board heute mailt. Er gehört nur in Vercel, nicht ins Repo.
+
+**Reihenfolge einhalten:** erst die Migration, dann der Merge. Der neue Code braucht die neuen Spalten; der laufende Code funktioniert mit ihnen weiter.
+
+### 1. Migration (Bens OK)
+
+Aus einem sauberen Worktree auf dem Stand, der ausgerollt wird:
+
+```bash
+npm run db:migrate:status
+```
+
+Erwartet: `Offen: 1`, darunter nur `offen: 0012_feedback_push.sql`. Steht dort mehr, anhalten.
+
+```bash
+npm run db:migrate
+```
+
+Erwartet: `anwenden: 0012_feedback_push.sql ... ok` und `Fertig: 1 Migration(en) angewandt.`
+
+Die Migration ergänzt nur Spalten. Das Zurückschreiben ist danach für jede Quelle aus.
+
+### 2. Absender für das alte Board (Bens OK, Ben selbst)
+
+Ben setzt in Vercel, Umgebung Production, die Variable `LEGACY_EMAIL_FROM` auf `<absender-altes-board>` und prüft, dass der Resend-Zugang von roadlight.pro von dieser Domain senden darf.
+
+Erwartet: Die Domain steht in diesem Resend-Zugang als verifiziert.
+
+Fehlt eines von beiden, bleibt es beim Veröffentlichen ohne Mail: Ohne die Variable lehnt die Konsole den Klick bei Einträgen mit Empfänger ab („Für Mails zum alten Board fehlt der Absender. Nichts veröffentlicht.“). Ist die Variable gesetzt, die Domain aber nicht freigegeben, wird veröffentlicht, die Mail scheitert, und sie wird nicht wiederholt.
+
+### 3. Merge nach `main` (Bens OK)
+
+Merge, dann das Deployment abwarten. Prüfen:
+
+```bash
+security find-generic-password -s roadlight-intern-api -w \
+  | sed 's/^/Authorization: Bearer /' \
+  | curl -s -H @- https://roadlight.pro/api/v1/feedback \
+  | python3 -c 'import json,sys; print([(s["boardName"], s["pushEnabled"]) for s in json.load(sys.stdin)["sources"]])'
+```
+
+Erwartet: jede angeschlossene Quelle mit `False`.
+
+### 4. Feste MCP-Kopie neu ziehen (Bens OK)
+
+Wie in Schritt 3 von Stufe 1.
+
+Erwartet: In einer neuen Session ist zusätzlich `voting_set_public_test` gelistet. Ein Werkzeug zum Bestätigen gibt es nicht.
+
+### 5. Nur noch ein Schreibweg (Bens OK, Texte vorher zeigen)
+
+„Mail erst nach Klick“ gilt nur, wenn niemand daran vorbei schreibt. Verknüpfte Einträge bekommen ihren Status ab jetzt nur noch über das interne Ticket. Anzupassen, jeweils erst nach Bens Blick auf den neuen Text:
+
+1. `~/.claude/CLAUDE.md`, Abschnitt „Tickets in Roadlight“
+2. `~/.claude/wissen/orchestrierung-und-boards.md`, „Immer aktuell halten“ und TheraBoard
+3. `~/.claude/skills/projekt-aufraeumen/SKILL.md`
+4. `TheraBoard/material/roadlight/roadlight-eintragen.py`: setzt keinen Status mehr an verknüpften Einträgen
+5. FamilyManager-Memory `feedback_votingtool_immer_aktuell`
+
+Morgenlauf, Kommentare und Release-Zuordnung bleiben, wie sie sind.
+
+Erwartet: Keine der fünf Stellen weist mehr an, an einem verknüpften öffentlichen Eintrag den Status direkt zu setzen.
+
+### 6. Testeintrag und erstes Board (Bens OK)
+
+Auf einem Board des alten Boards einen Testeintrag **ohne Mailadresse** anlegen und im alten Admin freigeben. Er braucht ein internes Ticket: Holt das Holen ihn (`voting_fetch_feedback`), ist er schon verknüpft; sonst ein Ticket anlegen und mit `voting_link_entry` verknüpfen.
+
+Dann nur für dieses Board, erst ohne `--commit`:
+
+```bash
+npm run feedback:sources -- enable-push --workspace <ziel-workspace> --board <ziel-board>
+```
+
+Erwartet: Ziel-Datenbank, Quelle, `Zurückschreiben: aus -> an` und `Probelauf: nichts geschrieben.`
+
+```bash
+npm run feedback:sources -- enable-push --workspace <ziel-workspace> --board <ziel-board> --commit
+```
+
+Erwartet: `Zurückschreiben für Board "<ziel-board>" ist an. Nachgeholt wird nichts.`
+
+```bash
+npm run feedback:sources -- list --workspace <ziel-workspace>
+```
+
+Erwartet: `Zurückschreiben: an` nur bei diesem Board.
+
+Das gilt sofort für **alle** verknüpften Tickets dieses Boards: Ihr nächster Statuswechsel zieht öffentlich nach, sofern keine Mail ginge und es kein Rückschritt ist.
+
+### 7. Erstes Schreiben in den Altbestand (Bens OK)
+
+Das interne Testticket auf `in Bearbeitung` setzen (Konsole oder `voting_update_suggestion`).
+
+Erwartet:
+
+- `publicPush.result` ist `written`; die Karte zeigt `Öffentlich: in Bearbeitung` (Feature: `wird umgesetzt`).
+- Der öffentliche Eintrag steht so, geprüft mit `curl -s https://votingtool.benkohler.de/api/apps/<app-id>/suggestions`.
+- Im alten Admin hat der Eintrag den Verlaufseintrag „Status geändert: … → …“.
+- In Resend ist keine Mail dazugekommen.
+
+Zeigt die Karte eine wartende Änderung mit „Übernehmen und Mail senden“, hängt am Testeintrag doch ein Empfänger, zum Beispiel eine alte Mail-Einstellung des Browsers, mit dem er angelegt wurde. Nicht klicken, „Verwerfen“, neuen Testeintrag aus einem frischen privaten Fenster anlegen.
+
+Zeigt sich, dass das Schreiben in den Altbestand scheitert (`publicPush.result` ist `error`): Zurückschreiben für das Board ausschalten (`disable-push --commit`, siehe Rückweg), anhalten und Ben fragen. Im Vercel-Log steht nur die feste Meldung („Push failed (link …): …“).
+
+### 8. Übrige Boards (Bens OK, je Board)
+
+Erst nach einem sauberen Schritt 7, je Board wie in Schritt 6 mit `enable-push`, erst ohne, dann mit `--commit`.
+
+Bei einem Roadlight-Quell-Workspace gilt dasselbe; der Verlaufseintrag steht am Eintrag im Quell-Workspace.
+
+### Was die Karte meldet
+
+| Anzeige | Bedeutung | Nächster Schritt |
+|---|---|---|
+| „Wartet auf Veröffentlichung: …“ mit „Übernehmen und Mail senden“ | Eine Mail ginge raus | Klicken sendet sie, „Verwerfen“ lässt öffentlich alles, wie es ist |
+| „Wartet auf Veröffentlichung: …“ mit „Übernehmen“ | Rückschritt, Fehler oder zwei Wechsel kurz nacheinander | Eintrag ansehen, dann klicken oder verwerfen |
+| „Die Quelle antwortet nicht.“ | Abbruch nach 8 Sekunden; ein Schreiben kann trotzdem noch angekommen sein | Eintrag ansehen. Steht er schon so, meldet der Klick „Der öffentliche Status stand schon so. Es ging keine Mail raus.“ |
+| „Status veröffentlicht, die Mail ging nicht raus.“ | Resend hat abgelehnt oder nicht geantwortet | Wird nicht wiederholt; „Verwerfen“ räumt die Zeile ab |
+| „Ob die Mail rausging, ist unklar.“ | Der Versand wurde nicht abgeschlossen | In Resend nachsehen, dann „Verwerfen“; es wird nie von selbst erneut gesendet |
+
+### Rückweg (Bens OK)
+
+Zurückschreiben stoppen, je Board erst ohne, dann mit `--commit`:
+
+```bash
+npm run feedback:sources -- disable-push --workspace <ziel-workspace> --board <ziel-board>
+```
+
+Erwartet ohne `--commit`: `Zurückschreiben: an -> aus` und die Anzahl wartender Änderungen, die gelöscht würden.
+
+`disable-push --commit` löscht die wartenden Änderungen dieser Quelle; danach beginnt kein Schreiben mehr. Ein Lauf, der in diesem Moment zwischen letzter Prüfung und Schreiben steht oder dessen Schreiben schon unterwegs ist, kann noch genau diesen einen Status veröffentlichen, ohne Mail. Ein laufender oder hängender Mailversand bleibt vermerkt. Schon Veröffentlichtes bleibt öffentlich stehen. Bei Bedarf den Code zurücknehmen; die Spalten bleiben, ältere Code-Stände kennen sie nicht.

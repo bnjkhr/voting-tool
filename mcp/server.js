@@ -12,6 +12,7 @@ import {
   listOpen,
   listReleases,
   requestError,
+  setPublicTest,
   unlinkEntry,
   updateRelease,
 } from './actions.js';
@@ -158,7 +159,7 @@ server.tool(
 
 server.tool(
   'voting_update_suggestion',
-  'Aktualisiert Status, Priorität und/oder Labels eines Eintrags. Mindestens eines der drei Felder muss angegeben werden. Benötigt Scope suggestions:status.',
+  'Aktualisiert Status, Priorität und/oder Labels eines Eintrags. Mindestens eines der drei Felder muss angegeben werden. Ist ein Ticket mit einem öffentlichen Eintrag verknüpft und das Zurückschreiben eingeschaltet, zieht ein Statuswechsel den öffentlichen Status nach; publicPush in der Antwort sagt, was geschah. Ginge eine Mail oder wäre es ein Rückschritt, wartet die Änderung auf Bens Klick in der Konsole. Benötigt Scope suggestions:status.',
   {
     suggestionId: z.string(),
     status: z.string().optional().describe('Neuer Status (z.B. "wird umgesetzt", "gelöst").'),
@@ -246,6 +247,15 @@ actionTool(
     suggestionId: z.string(),
   },
   unlinkEntry
+);
+
+actionTool(
+  'voting_set_public_test',
+  'Setzt den verknüpften öffentlichen Eintrag eines Tickets, das intern „im Test“ ist, auf „im Test“. Erst benutzen, wenn der Build bei den Testern ist. Ginge eine Mail, wartet die Änderung auf Bens Klick in der Konsole. publicPush in der Antwort sagt, was geschah. Benötigt Scope suggestions:status.',
+  {
+    suggestionId: z.string().describe('ID des internen Tickets.'),
+  },
+  setPublicTest
 );
 
 actionTool(

@@ -17,6 +17,31 @@ async function findById(id) {
   return mapRow(rows[0]);
 }
 
+// Wie findById, dazu der Stand der Zeile (`rowVersion`, aus `xmin`): Er ändert
+// sich mit jedem Update.
+async function findByIdWithVersion(id) {
+  const { rows } = await query(
+    `select ${COLUMNS}, xmin::text as row_version from suggestions where id = $1`,
+    [id]
+  );
+  return mapRow(rows[0]);
+}
+
+// Schreibt nur, wenn die Zeile seit findByIdWithVersion unverändert ist, sonst
+// null. Läuft gerade ein anderes Update, prüft Postgres die Bedingung danach am
+// neuen Stand.
+async function updateIfUnchanged(id, rowVersion, fields) {
+  const { setClause, values, nextIndex } = buildUpdate(fields);
+  if (!setClause || !rowVersion) return null;
+  const { rows } = await query(
+    `update suggestions set ${setClause}
+      where id = $${nextIndex} and xmin::text = $${nextIndex + 1}
+      returning ${COLUMNS}`,
+    [...values, id, rowVersion]
+  );
+  return mapRow(rows[0]);
+}
+
 // Öffentliches Board: nur freigegebene Einträge, meiste Stimmen zuerst.
 async function listPublicForApp(appId) {
   const { rows } = await query(
@@ -251,5 +276,5 @@ module.exports = {
   findById, listPublicForApp, listByAppFiltered, listByTenant, listByRelease,
   listApprovedByReleaseIds, countByReleaseIds, create, createWithImportedTicketNumber,
   isTicketNumberConflict, update, setApproved, addLabel, removeLabel, remove,
-  insertSuggestion,
+  insertSuggestion, findByIdWithVersion, updateIfUnchanged,
 };

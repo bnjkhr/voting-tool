@@ -4,6 +4,11 @@
 // Verknüpfungen interner Tickets mit öffentlichen Einträgen (feedback_links).
 // Eine Verknüpfung ohne suggestion_id ist ein Grabstein: Der Eintrag wurde
 // schon einmal geholt oder gelöst und wird nicht erneut zum Ticket.
+//
+// Zurückschreiben: `pending_*` ist die wartende öffentliche Änderung, `push_*`
+// der Anspruch darauf. Nur wer den Anspruch hält (Token), schreibt oder mailt.
+// Abfragen, die beides brauchen, sperren zuerst die Zeile der Quelle, damit
+// Ausschalten und Zurückschreiben sich nicht überholen.
 const crypto = require('crypto');
 const { query, withTransaction } = require('./pool');
 const { mapRow, mapRows } = require('./rows');
@@ -40,23 +45,31 @@ class NoSourceError extends Error {
 
 const SOURCE_COLUMNS = `
   id, tenant_id, app_id, source_kind, source_tenant_id, source_app_id,
-  fetch_enabled, last_fetched_at, unapproved_count, last_error, created_at
+  fetch_enabled, last_fetched_at, unapproved_count, last_error, created_at, push_enabled
 `;
 
 const LINK_COLUMNS = `
   id, tenant_id, source_id, entry_id, suggestion_id, public_type, public_status,
-  public_approved, public_deleted, public_seen_at, created_at
+  public_approved, public_deleted, public_seen_at, created_at,
+  pending_status, pending_reason, pending_mail, pending_error, pending_at,
+  push_stage, pushed_status, pushed_at
 `;
+
+const CLEAR_PENDING = `
+  pending_status = null, pending_reason = null, pending_mail = false,
+  pending_error = null, pending_at = null`;
+const CLEAR_CLAIM = 'push_claim = null, push_claimed_at = null, push_stage = null';
 
 const prefixed = (columns, alias) => columns.split(',')
   .map((column) => `${alias}.${column.trim()}`)
   .join(', ');
 
 // Legt die Quelle eines Boards an oder ändert sie. Dass Board und Workspace
-// zusammengehören und der Workspace privat ist, prüft der Insert selbst. Eine
-// geänderte Quelle ist ausgeschaltet, bis jemand sie wieder einschaltet; hängen
-// schon Verknüpfungen an der alten, bleibt sie (deren IDs gälten sonst für die
-// neue Quelle).
+// zusammengehören und der Workspace privat ist, prüft der Insert selbst. Bei
+// einer geänderten Quelle sind Holen und Zurückschreiben aus, bis jemand sie
+// wieder einschaltet; hängen schon Verknüpfungen an der alten, bleibt sie (deren
+// IDs gälten sonst für die neue Quelle). Eine umgehängte Quelle hat deshalb
+// nichts Wartendes.
 async function upsertSource({ tenantId, appId, sourceKind, sourceTenantId = null, sourceAppId }) {
   return withTransaction(async (client) => {
     const { rows: existing } = await client.query(
@@ -87,7 +100,8 @@ async function upsertSource({ tenantId, appId, sourceKind, sourceTenantId = null
          fetch_enabled = case when $6 then false else feedback_sources.fetch_enabled end,
          last_fetched_at = case when $6 then null else feedback_sources.last_fetched_at end,
          unapproved_count = case when $6 then 0 else feedback_sources.unapproved_count end,
-         last_error = case when $6 then null else feedback_sources.last_error end
+         last_error = case when $6 then null else feedback_sources.last_error end,
+         push_enabled = case when $6 then false else feedback_sources.push_enabled end
        returning ${SOURCE_COLUMNS}`,
       [tenantId, appId, sourceKind, sourceTenantId, sourceAppId, changed]
     );
@@ -99,6 +113,31 @@ async function upsertSource({ tenantId, appId, sourceKind, sourceTenantId = null
 async function setFetchEnabled(sourceId, enabled) {
   const { rows } = await query(
     `update feedback_sources set fetch_enabled = $2 where id = $1 returning ${SOURCE_COLUMNS}`,
+    [sourceId, Boolean(enabled)]
+  );
+  return mapRow(rows[0]);
+}
+
+// Schalter fürs Zurückschreiben. Beim Ausschalten verschwinden die wartenden
+// Änderungen der Quelle in derselben Abfrage; nur ein laufender Mailversand
+// behält seine, bis er abgeschlossen oder verworfen ist. Die Bedingung steht im
+// `set`, nicht im `where`: So gilt sie auch für eine Zeile, die sich während der
+// Abfrage ändert.
+async function setPushEnabled(sourceId, enabled) {
+  const keep = (column, empty = 'null') => (
+    `${column} = case when l.push_stage = 'mailing' then l.${column} else ${empty} end`
+  );
+  const { rows } = await query(
+    `with source as (
+       update feedback_sources set push_enabled = $2 where id = $1 returning ${SOURCE_COLUMNS}
+     ), cleared as (
+       update feedback_links l set
+         ${keep('pending_status')}, ${keep('pending_reason')}, ${keep('pending_mail', 'false')},
+         ${keep('pending_error')}, ${keep('pending_at')}
+        from source s
+       where l.source_id = s.id and not s.push_enabled
+     )
+     select * from source`,
     [sourceId, Boolean(enabled)]
   );
   return mapRow(rows[0]);
@@ -146,9 +185,10 @@ async function recordFetch(sourceId, { unapprovedCount = null, error = null, rel
   );
 }
 
+const LINK_SOURCE_COLUMNS = 's.app_id, s.source_kind, s.source_tenant_id, s.source_app_id, s.push_enabled';
+
 const SELECT_LINKS = `
-  select ${prefixed(LINK_COLUMNS, 'l')},
-         s.app_id, s.source_kind, s.source_tenant_id, s.source_app_id
+  select ${prefixed(LINK_COLUMNS, 'l')}, ${LINK_SOURCE_COLUMNS}
     from feedback_links l
     join feedback_sources s on s.id = l.source_id and s.tenant_id = l.tenant_id`;
 
@@ -256,7 +296,8 @@ async function linkSuggestion({ tenantId, suggestionId, entryId }) {
        on conflict (source_id, entry_id) do update set
          suggestion_id = excluded.suggestion_id,
          public_type = null, public_status = null, public_approved = null,
-         public_deleted = false, public_seen_at = null
+         public_deleted = false, public_seen_at = null, pushed_status = null, pushed_at = null,
+         ${CLEAR_PENDING}, ${CLEAR_CLAIM}
        where feedback_links.suggestion_id is null
        returning ${LINK_COLUMNS}`,
       [tenantId, suggestionId, entryId]
@@ -286,8 +327,185 @@ async function linkSuggestion({ tenantId, suggestionId, entryId }) {
 
 async function unlinkSuggestion({ tenantId, suggestionId }) {
   const { rowCount } = await query(
-    'update feedback_links set suggestion_id = null where tenant_id = $1 and suggestion_id = $2',
+    `update feedback_links set suggestion_id = null, ${CLEAR_PENDING}, ${CLEAR_CLAIM}
+      where tenant_id = $1 and suggestion_id = $2`,
     [tenantId, suggestionId]
+  );
+  return rowCount > 0;
+}
+
+async function findLink(tenantId, suggestionId) {
+  const { rows } = await query(
+    `${SELECT_LINKS} where l.tenant_id = $1 and l.suggestion_id = $2`,
+    [tenantId, suggestionId]
+  );
+  return mapRow(rows[0]);
+}
+
+// Setzt die wartende Änderung; `status: null` löscht sie. Nur bei
+// eingeschaltetem Schalter und verknüpftem Ticket. Läuft gerade ein Anspruch,
+// bleibt er unberührt und die neue Änderung bekommt den Grund `busy`.
+// Mit `ifTicketStatus` gilt der Aufruf nur, solange das Ticket noch diesen
+// Status hat: Ein überholter Statuswechsel, der spät hier ankommt, setzt nichts.
+async function setPending({
+  tenantId, suggestionId, status, reason = null, mail = false, error = null, ifTicketStatus = null,
+}) {
+  const { rows } = await query(
+    `with source as (
+       select s.id from feedback_sources s
+         join feedback_links l on l.source_id = s.id and l.tenant_id = s.tenant_id
+        where l.tenant_id = $1 and l.suggestion_id = $2 and s.push_enabled
+          for share of s
+     ), ticket as (
+       select g.id, source.id as source_id from suggestions g, source
+        where g.tenant_id = $1 and g.id = $2 and ($7::text is null or g.status = $7)
+          for share of g
+     )
+     update feedback_links l set
+       pending_status = $3::text,
+       pending_reason = case when $3::text is null then null
+                             when l.push_claim is not null then 'busy' else $4::text end,
+       pending_mail = $3::text is not null and $5::bool,
+       pending_error = case when $3::text is null then null else $6::text end,
+       pending_at = case when $3::text is null then null else now() end
+      from ticket
+     where l.tenant_id = $1 and l.suggestion_id = ticket.id and l.source_id = ticket.source_id
+     returning ${prefixed(LINK_COLUMNS, 'l')}`,
+    [tenantId, suggestionId, status, reason, Boolean(mail), error, ifTicketStatus]
+  );
+  return mapRow(rows[0]);
+}
+
+// Nimmt den Anspruch auf die wartende Änderung, in einem einzigen Update: Von
+// gleichzeitigen Aufrufen gewinnt genau einer. Frei ist sie ohne Anspruch oder
+// wenn ein Schreiben seit zwei Minuten hängt. Ein hängender Mailversand wird nie
+// neu genommen, sonst ginge die Mail womöglich zweimal.
+// `expectEntryId` bindet den Anspruch an den Eintrag, den ein Klick meinte.
+async function claimPush({ tenantId, suggestionId, expectStatus, expectEntryId = null }) {
+  const token = crypto.randomUUID();
+  const { rows } = await query(
+    `with source as (
+       select s.id, s.app_id, s.source_kind, s.source_tenant_id, s.source_app_id, s.push_enabled
+         from feedback_sources s
+         join feedback_links l on l.source_id = s.id and l.tenant_id = s.tenant_id
+         join tenants t on t.id = s.tenant_id and t.status = 'private'
+        where l.tenant_id = $1 and l.suggestion_id = $2 and s.push_enabled
+          for share of s
+     )
+     update feedback_links l set push_claim = $4, push_claimed_at = now(), push_stage = 'writing'
+       from source s
+      where l.tenant_id = $1 and l.suggestion_id = $2 and l.source_id = s.id
+        and l.pending_status = $3
+        and ($5::text is null or l.entry_id = $5)
+        and (l.push_claim is null
+             or (l.push_stage = 'writing' and l.push_claimed_at < now() - interval '2 minutes'))
+      returning ${prefixed(LINK_COLUMNS, 'l')}, ${LINK_SOURCE_COLUMNS}`,
+    [tenantId, suggestionId, expectStatus, token, expectEntryId]
+  );
+  return rows[0] ? { token, link: mapRow(rows[0]) } : null;
+}
+
+// Direkt vor dem öffentlichen Schreiben: Gilt der Anspruch noch, will das Ticket
+// noch dasselbe und ist der Schalter noch an?
+async function holdsPush(token, status) {
+  const { rowCount } = await query(
+    `select 1 from feedback_links l
+       join feedback_sources s on s.id = l.source_id and s.push_enabled
+      where l.push_claim = $1 and l.push_stage = 'writing' and l.pending_status = $2`,
+    [token, status]
+  );
+  return rowCount > 0;
+}
+
+// Der frisch gelesene Eintrag verlangt einen anderen Zielstatus (anderer Typ).
+async function retargetPush(token, from, to) {
+  const { rowCount } = await query(
+    `update feedback_links set pending_status = $3
+      where push_claim = $1 and push_stage = 'writing' and pending_status = $2`,
+    [token, from, to]
+  );
+  return rowCount > 0;
+}
+
+// Nur `true` erlaubt die Mail: Der Anspruch gilt noch und hat noch keine
+// verschickt.
+async function markMailing(token) {
+  const { rowCount } = await query(
+    `update feedback_links set push_stage = 'mailing'
+      where push_claim = $1 and push_stage = 'writing'`,
+    [token]
+  );
+  return rowCount > 0;
+}
+
+// Der Status steht öffentlich. Die wartende Änderung verschwindet, außer ein
+// neuerer Statuswechsel hat sie inzwischen ersetzt (und der Schalter ist an).
+// `error` meldet, was danach schiefging (die Mail).
+async function finishPush(token, { publicStatus, error = null }) {
+  const cleared = '(l.pending_status is null or l.pending_status = $2 or not source.push_enabled)';
+  const keep = (column, empty = 'null') => `${column} = case when ${cleared} then ${empty} else l.${column} end`;
+  await query(
+    `with source as (
+       select s.id, s.push_enabled from feedback_sources s
+         join feedback_links l on l.source_id = s.id
+        where l.push_claim = $1
+          for share of s
+     )
+     update feedback_links l set
+       public_status = $2, public_seen_at = now(), public_deleted = false,
+       pushed_status = $2, pushed_at = now(),
+       ${keep('pending_status')}, ${keep('pending_reason')}, ${keep('pending_mail', 'false')},
+       ${keep('pending_at')},
+       pending_error = case when ${cleared} then $3::text else l.pending_error end,
+       ${CLEAR_CLAIM}
+      from source
+     where l.push_claim = $1 and l.source_id = source.id`,
+    [token, publicStatus, error]
+  );
+}
+
+// Anspruch zurückgeben, ohne dass geschrieben wurde. Grund, Mail-Merker und
+// Fehler gelten nur für die Änderung, die dieser Anspruch geprüft hat (`status`);
+// eine neuere bleibt, wie sie ist. Ohne `reason` oder `mail` bleibt der Wert.
+async function releasePush(token, { status, reason = null, mail = null, error = null }) {
+  await query(
+    `update feedback_links set
+       pending_reason = case when pending_status = $2 then coalesce($3::text, pending_reason)
+                             else pending_reason end,
+       pending_mail = case when pending_status = $2 then coalesce($4::bool, pending_mail)
+                           else pending_mail end,
+       pending_error = case when pending_status = $2 then $5::text else pending_error end,
+       ${CLEAR_CLAIM}
+     where push_claim = $1 and push_stage = 'writing'`,
+    [token, status, reason, mail, error]
+  );
+}
+
+// Anspruch zurückgeben und die geprüfte Änderung fallen lassen: Es gibt nichts
+// zu schreiben. `publicStatus` ist der dabei gesehene öffentliche Stand.
+async function dropPush(token, { status, publicStatus = null }) {
+  const keep = (column, empty = 'null') => (
+    `${column} = case when pending_status = $2 then ${empty} else ${column} end`
+  );
+  await query(
+    `update feedback_links set
+       public_status = coalesce($3::text, public_status),
+       public_seen_at = case when $3::text is null then public_seen_at else now() end,
+       ${keep('pending_status')}, ${keep('pending_reason')}, ${keep('pending_mail', 'false')},
+       ${keep('pending_error')}, ${keep('pending_at')},
+       ${CLEAR_CLAIM}
+     where push_claim = $1 and push_stage = 'writing'`,
+    [token, status, publicStatus]
+  );
+}
+
+// Verwerfen räumt alles ab, auch einen hängenden Mailversand.
+async function discardPending({ tenantId, suggestionId, entryId = null }) {
+  const { rowCount } = await query(
+    `update feedback_links set ${CLEAR_PENDING}, ${CLEAR_CLAIM}
+      where tenant_id = $1 and suggestion_id = $2 and ($3::text is null or entry_id = $3)
+        and (pending_status is not null or pending_error is not null or push_claim is not null)`,
+    [tenantId, suggestionId, entryId]
   );
   return rowCount > 0;
 }
@@ -299,6 +517,7 @@ module.exports = {
   NoSourceError,
   upsertSource,
   setFetchEnabled,
+  setPushEnabled,
   listSources,
   findSourceByApp,
   claimFetch,
@@ -309,4 +528,14 @@ module.exports = {
   refreshLinks,
   linkSuggestion,
   unlinkSuggestion,
+  findLink,
+  setPending,
+  claimPush,
+  holdsPush,
+  retargetPush,
+  markMailing,
+  finishPush,
+  releasePush,
+  dropPush,
+  discardPending,
 };

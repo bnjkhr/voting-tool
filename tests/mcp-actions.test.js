@@ -365,3 +365,29 @@ test('Werkzeuge mit geholtem Text warnen davor', () => {
   assert.match(description('voting_list_open'), /In privaten Workspaces wird vorher neues Feedback/);
   for (const tool of ['voting_link_entry', 'voting_unlink_entry']) description(tool);
 });
+
+test('setPublicTest: POST mit kodiertem Pfad, ohne Inhalt', async () => {
+  const { api, calls } = fakeApi();
+
+  await actions.setPublicTest(api, { suggestionId: 'a/b ?' });
+
+  assert.deepEqual(calls, [{ method: 'POST', url: '/suggestions/a%2Fb%20%3F/public-test', body: undefined }]);
+});
+
+// Eine Mail verschickt nur der Klick in der Konsole: Das MCP kennt den Weg nicht.
+test('der MCP-Server bestätigt nie eine Veröffentlichung', () => {
+  const mcp = path.join(__dirname, '..', 'mcp');
+  for (const file of ['actions.js', 'server.js', 'README.md', 'start.sh']) {
+    const source = fs.readFileSync(path.join(mcp, file), 'utf8');
+    assert.equal(/\/publish\b|feedback\/links|voting_(publish|confirm)/.test(source), false, file);
+  }
+});
+
+test('voting_set_public_test ist registriert und nennt den Klick bei Mail', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'mcp', 'server.js'), 'utf8');
+  const tool = server.slice(server.indexOf("'voting_set_public_test'"));
+
+  assert.ok(server.includes("'voting_set_public_test'"));
+  assert.ok(tool.slice(0, 600).includes('Ginge eine Mail, wartet die Änderung auf Bens Klick in der Konsole.'));
+  assert.ok(tool.slice(0, 900).includes('setPublicTest'));
+});

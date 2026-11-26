@@ -23,6 +23,8 @@ class TenantAdminApp {
         this.feedbackMessage = '';
         // Ticket, für das der Verknüpfen-Dialog offen ist.
         this.linkTarget = null;
+        // Karten, deren öffentliche Aktion gerade läuft.
+        this.publishingCards = new Set();
         this.activeView = '';
         this.sessionReady = false;
         this.releases = [];
@@ -301,6 +303,12 @@ class TenantAdminApp {
 
     canManageWorkspace() {
         return this.isPlatformAdmin || this.currentRole === 'owner' || this.currentRole === 'admin';
+    }
+
+    // Öffentlich bestätigen oder verwerfen darf, wer Owner dieses Workspaces
+    // ist. Der Server prüft die Mitgliedschaft, nicht die Plattform-Rolle.
+    canPublishPublic() {
+        return this.currentMembership?.role === 'owner';
     }
 
     canManageOwnerRoles() {
@@ -721,6 +729,16 @@ class TenantAdminApp {
             const unlink = event.target.closest('[data-action="unlink-card"]');
             if (unlink) this.unlinkCard(unlink.dataset.id);
         });
+        columns.addEventListener('click', event => {
+            // Der zweite Klick eines Doppelklicks träfe womöglich schon den
+            // neuen Knopf, den die Antwort an dieselbe Stelle gesetzt hat.
+            const publish = event.target.closest('[data-action="publish-card"]');
+            if (publish && !(event.detail > 1)) this.publishCard(publish.dataset.id);
+            const discard = event.target.closest('[data-action="discard-card"]');
+            if (discard) this.discardCard(discard.dataset.id);
+            const test = event.target.closest('[data-action="test-card"]');
+            if (test) this.setPublicTest(test.dataset.id);
+        });
         columns.addEventListener('dragstart', event => {
             const card = event.target.closest('[data-board-card]');
             if (!card) return;
@@ -931,6 +949,110 @@ class TenantAdminApp {
         }
     }
 
+    // Übernimmt die wartende Änderung, so wie die Karte sie gerade zeigt:
+    // `mail: true` nur, wenn der Knopf die Mail nennt.
+    async publishCard(suggestionId) {
+        const link = this.feedbackLink(suggestionId);
+        if (!window.BoardModel.pendingLine(link, { isOwner: this.canPublishPublic() })?.action) return;
+        const body = { entryId: link.entryId, status: link.pendingStatus, mail: link.pendingMail === true };
+        await this.sendPublicAction(suggestionId, 'publish', body, result => {
+            if (result.result === 'published') return ['Veröffentlicht, die Mail ist raus.', 'success'];
+            if (result.result === 'published_no_mail' && !result.message) {
+                return ['Veröffentlicht, ohne Mail.', 'success'];
+            }
+            return [result.message || 'Aktion fehlgeschlagen', 'error'];
+        });
+    }
+
+    async discardCard(suggestionId) {
+        const link = this.feedbackLink(suggestionId);
+        if (!window.BoardModel.pendingLine(link, { isOwner: this.canPublishPublic() })?.canDiscard) return;
+        const body = { entryId: link.entryId };
+        await this.sendPublicAction(suggestionId, 'discard', body, result => (result.success
+            ? ['Wartende Änderung verworfen', 'success']
+            : [result.message || 'Hier wartet keine Änderung mehr.', 'error']));
+    }
+
+    async setPublicTest(suggestionId) {
+        const item = this.suggestions.find(entry => entry.id === suggestionId);
+        if (!item || !this.canManageWorkspace()
+            || !window.BoardModel.testAction(item, this.feedbackLink(suggestionId))) return;
+        await this.sendPublicAction(suggestionId, 'test', {}, ({ publicPush }) => [
+            publicPush?.message || 'Aktion fehlgeschlagen',
+            !publicPush?.message || publicPush.result === 'error' ? 'error' : 'success',
+        ]);
+    }
+
+    // Eine öffentliche Aktion je Karte zur Zeit. `describe` macht aus der Antwort
+    // Meldung und Art.
+    async sendPublicAction(suggestionId, action, body, describe) {
+        if (this.publishingCards.has(suggestionId)) return;
+        const hadFocus = Boolean(this.boardFocusKey());
+        this.publishingCards.add(suggestionId);
+        this.renderBoard();
+        try {
+            const path = `/feedback/links/${encodeURIComponent(suggestionId)}/${action}`;
+            const response = await this.adminFetch(this.tenantAdminPath(path), {
+                method: 'POST',
+                body: JSON.stringify(body),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Aktion fehlgeschlagen');
+
+            this.showToast(...describe(result));
+            if (result.state) {
+                // Ein noch laufendes Lesen wäre jetzt veraltet.
+                this.feedbackLoads += 1;
+                this.applyFeedback(result.state);
+            } else {
+                await this.reloadFeedbackState();
+            }
+        } catch (error) {
+            console.error('Error changing public entry:', error);
+            this.showToast(error.message || 'Aktion fehlgeschlagen', 'error');
+            // Was der Server erledigt hat, ist offen: neu lesen.
+            await this.reloadFeedbackState();
+        } finally {
+            this.publishingCards.delete(suggestionId);
+            this.renderBoard();
+            // Der Fokus ging beim Sperren verloren: zurück auf die Karte.
+            if (hadFocus && !this.boardFocusKey()) {
+                this.focusBoard(`${action}:${suggestionId}`, `card:${suggestionId}`);
+            }
+        }
+    }
+
+    feedbackLink(suggestionId) {
+        return this.feedback.links.find(entry => entry.suggestionId === suggestionId);
+    }
+
+    // Wartende Änderung und „Im Test“ unter der öffentlichen Zeile. Höchstens ein
+    // gefüllter Knopf je Karte, alles andere sind Textlinks.
+    renderPublicActions(item) {
+        const link = this.feedbackLink(item.id);
+        const line = window.BoardModel.pendingLine(link, { isOwner: this.canPublishPublic() });
+        // Bietet der Knopf schon „im Test“ an, braucht es den Link nicht.
+        const test = this.canManageWorkspace() && window.BoardModel.testAction(item, link)
+            && !(line?.action && link.pendingStatus === 'im Test');
+        if (!line && !test) return '';
+
+        const id = this.escapeHtml(item.id);
+        const disabled = this.publishingCards.has(item.id) ? ' disabled' : '';
+        const button = (action, className, label) => `<button type="button" class="${className}" data-action="${action}-card"
+                    data-id="${id}" data-focus="${action}:${id}"${disabled}>${label}</button>`;
+        const labels = { publish: 'Übernehmen', publish_mail: 'Übernehmen und Mail senden' };
+
+        return `
+            <div class="board-card-pending">
+                ${line ? `<p>${this.escapeHtml(line.text)}</p>` : ''}
+                ${line?.error ? `<p class="board-card-pending-error">${this.escapeHtml(line.error)}</p>` : ''}
+                ${line?.action ? button('publish', 'primary-btn', labels[line.action]) : ''}
+                ${line?.canDiscard ? button('discard', 'board-text-link', 'Verwerfen') : ''}
+                ${test ? button('test', 'board-text-link', 'Öffentlich auf Im Test setzen') : ''}
+            </div>
+        `;
+    }
+
     // Öffentlicher Stand einer Karte, samt Link zum Eintrag.
     renderPublicLine(item) {
         const link = this.feedback.links.find(entry => entry.suggestionId === item.id);
@@ -1118,6 +1240,7 @@ class TenantAdminApp {
                     ${this.renderLinkAction(item)}
                 </details>
                 ${this.renderPublicLine(item)}
+                ${this.renderPublicActions(item)}
                 ${targets.length ? `
                 <details class="board-card-move" name="board-card-move">
                     <summary data-focus="menu:${id}">Verschieben nach</summary>
@@ -1643,6 +1766,9 @@ class TenantAdminApp {
             { method: 'PUT', body: JSON.stringify({ status }) },
             'Status aktualisiert'
         );
+        // Wartende Änderung und öffentlicher Stand hängen am internen Status,
+        // auch wenn die Antwort dazu nichts sagt.
+        if (this.feedbackLink(suggestionId)?.pushEnabled) await this.reloadFeedbackState();
     }
 
     async updatePriority(suggestionId, priority) {
@@ -1659,7 +1785,12 @@ class TenantAdminApp {
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || 'Aktion fehlgeschlagen');
 
-            this.showToast(successMessage, 'success');
+            // Ein Statuswechsel sagt, was öffentlich daraus wurde.
+            const note = result.publicPush?.message;
+            this.showToast(
+                note ? `${successMessage}. ${note}` : successMessage,
+                result.publicPush?.result === 'error' ? 'error' : 'success'
+            );
             await Promise.all([this.loadStats(), this.loadSuggestions()]);
         } catch (error) {
             console.error('Tenant admin write failed:', error);
