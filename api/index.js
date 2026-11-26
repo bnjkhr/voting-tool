@@ -29,6 +29,8 @@ const {
 const {
   ACTIVE_TENANT_STATUS,
   LEGACY_TENANT_ID,
+  MEMBER_TENANT_STATUSES,
+  PRIVATE_TENANT_STATUS,
   buildAppSlug,
   getTenantId,
   parseSlugParam,
@@ -350,10 +352,13 @@ function isActiveTenant(data = {}) {
   return data.status === ACTIVE_TENANT_STATUS;
 }
 
-async function findActiveTenantBySlug(tenantSlug) {
-  if (usePostgres()) {
-    return repos.tenants.findActiveBySlug(tenantSlug);
-  }
+// "Member" = für angemeldete Wege (Konsole, API-Schlüssel, Anmeldung) sichtbar.
+// Öffentliche Wege nutzen ausschließlich die Active-Funktionen.
+function isMemberTenant(data = {}) {
+  return MEMBER_TENANT_STATUSES.includes(data.status);
+}
+
+async function findFirestoreTenantBySlug(tenantSlug, isVisible) {
   const snapshot = await db.collection('tenants')
     .where('slug', '==', tenantSlug)
     .limit(2)
@@ -369,29 +374,51 @@ async function findActiveTenantBySlug(tenantSlug) {
 
   const doc = snapshot.docs[0];
   const data = doc.data() || {};
-  if (!isActiveTenant(data)) {
+  if (!isVisible(data)) {
     return null;
   }
 
   return { id: doc.id, ...data };
 }
 
-// Backend-bewusstes Gegenstück zu findActiveTenantBySlug für den Fall, dass nur
-// die Tenant-ID vorliegt (API-Key-Auth). Unter Postgres kommt der Tenant damit
-// aus derselben Quelle wie sein Plan — der v1-Pfad braucht keinen zweiten
+async function findActiveTenantBySlug(tenantSlug) {
+  if (usePostgres()) {
+    return repos.tenants.findActiveBySlug(tenantSlug);
+  }
+  return findFirestoreTenantBySlug(tenantSlug, isActiveTenant);
+}
+
+async function findMemberTenantBySlug(tenantSlug) {
+  if (usePostgres()) {
+    return repos.tenants.findMemberBySlug(tenantSlug);
+  }
+  return findFirestoreTenantBySlug(tenantSlug, isMemberTenant);
+}
+
+// Backend-bewusstes Gegenstück zur Slug-Suche für den Fall, dass nur die
+// Tenant-ID vorliegt (API-Key-Auth, Einladung). Unter Postgres kommt der Tenant
+// damit aus derselben Quelle wie sein Plan — der v1-Pfad braucht keinen zweiten
 // Plan-Lookup mehr.
-async function findActiveTenantById(tenantId) {
+async function findTenantById(tenantId, isVisible) {
   if (!tenantId) return null;
   if (usePostgres()) {
     const tenant = await repos.tenants.findById(tenantId);
-    return tenant && isActiveTenant(tenant) ? tenant : null;
+    return tenant && isVisible(tenant) ? tenant : null;
   }
 
   const doc = await db.collection('tenants').doc(tenantId).get();
   if (!doc.exists) return null;
   const data = doc.data() || {};
-  if (!isActiveTenant(data)) return null;
+  if (!isVisible(data)) return null;
   return { id: doc.id, ...data };
+}
+
+function findActiveTenantById(tenantId) {
+  return findTenantById(tenantId, isActiveTenant);
+}
+
+function findMemberTenantById(tenantId) {
+  return findTenantById(tenantId, isMemberTenant);
 }
 
 async function findTenantAppBySlug(tenantId, appSlug) {
@@ -472,6 +499,14 @@ async function resolveTenantSuggestionById(tenantSlug, suggestionId) {
     return { errorStatus: 404, error: 'Tenant not found' };
   }
 
+  const found = await loadSuggestionForTenant(tenant.id, suggestionId);
+  return found.error ? found : { tenant, ...found };
+}
+
+// Wie resolveTenantSuggestionById, nur für angemeldete Wege: Der Tenant kommt
+// aus requireTenantAccess und darf deshalb auch `private` sein.
+async function loadAdminSuggestion(req, suggestionId) {
+  const tenant = req.adminTenant;
   const found = await loadSuggestionForTenant(tenant.id, suggestionId);
   return found.error ? found : { tenant, ...found };
 }
@@ -1349,7 +1384,7 @@ async function loadActiveUserTenants(userId) {
     const tenantIds = [...new Set(memberships.map((m) => m.tenantId).filter(Boolean))];
     const tenants = await Promise.all(tenantIds.map((id) => repos.tenants.findById(id)));
     const tenantsById = {};
-    tenants.forEach((t) => { if (t && isActiveTenant(t)) tenantsById[t.id] = t; });
+    tenants.forEach((t) => { if (t && isMemberTenant(t)) tenantsById[t.id] = t; });
     return memberships
       .filter((m) => tenantsById[m.tenantId])
       .map((m) => {
@@ -1380,7 +1415,7 @@ async function loadActiveUserTenants(userId) {
 
   const tenantsById = {};
   tenantDocs.forEach(doc => {
-    if (doc.exists && isActiveTenant(doc.data() || {})) {
+    if (doc.exists && isMemberTenant(doc.data() || {})) {
       tenantsById[doc.id] = { id: doc.id, ...doc.data() };
     }
   });
@@ -3253,7 +3288,7 @@ async function resolveAdminTenantFromParam(req, res) {
     return null;
   }
 
-  const tenant = await findActiveTenantBySlug(tenantSlug);
+  const tenant = await findMemberTenantBySlug(tenantSlug);
   if (!tenant) {
     res.status(404).json({ error: 'Tenant not found' });
     return null;
@@ -3848,7 +3883,7 @@ app.get('/api/admin/tenants/:tenantSlug/apps', requireTenantAccess(), async (req
 // und dieselbe Zähler-Anlage bekommen; ein zweiter, nachgebauter Pfad wäre
 // genau die Stelle, an der das Board-Limit später still auseinanderläuft.
 // `tenant` stammt in beiden Aufrufpfaden aus der Plan-Quelle (Admin-Konsole:
-// findActiveTenantBySlug, API-Schluessel: findActiveTenantById) und traegt unter
+// findMemberTenantBySlug, API-Schluessel: findMemberTenantById) und traegt unter
 // Postgres damit `plan`. requiresProUpgradeResolved kapselt die Fail-open-Regel:
 // ein nicht aufloesbarer Plan sperrt nicht.
 async function createTenantBoard(tenant, body = {}) {
@@ -4666,11 +4701,20 @@ app.delete('/api/admin/tenants/:tenantSlug/members/:membershipId', requireTenant
   }
 });
 
+// Wer eingeladen wird, könnte die Einladung nie annehmen: Die öffentliche
+// Annahme löst nur aktive Workspaces auf.
+function rejectPrivateInvite(tenant, res) {
+  if (tenant.status !== PRIVATE_TENANT_STATUS) return false;
+  res.status(409).json({ error: 'Private Workspaces haben keine Einladungen.' });
+  return true;
+}
+
 // Tenant Admin: create invite for one tenant
 app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), async (req, res) => {
   try {
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
+    if (rejectPrivateInvite(tenant, res)) return;
 
     let email;
     try {
@@ -4795,6 +4839,7 @@ app.post('/api/admin/tenants/:tenantSlug/invites/:inviteId/resend', requireTenan
   try {
     const tenant = await resolveAdminTenantFromParam(req, res);
     if (!tenant) return;
+    if (rejectPrivateInvite(tenant, res)) return;
 
     const { inviteId } = req.params;
     const resolved = await resolveTenantInviteById(tenant.id, inviteId);
@@ -4910,7 +4955,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/approve', req
       return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
     }
 
-    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { suggestionData, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -4964,7 +5009,7 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/status', requi
       return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
     }
 
-    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { suggestionData, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -5024,7 +5069,7 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/priority', req
       return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
     }
 
-    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { suggestionData, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -5500,7 +5545,7 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/release', requ
       return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
     }
 
-    const { suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { suggestionData, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -5526,7 +5571,7 @@ app.get('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', req
       return res.status(400).json({ error: 'Invalid tenant or suggestion ID' });
     }
 
-    const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { tenant, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -5582,7 +5627,7 @@ app.post('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/comments', re
       return res.status(400).json({ error: screenshotValidation.error });
     }
 
-    const { tenant, suggestionData, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+    const { tenant, suggestionData, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
     if (error) {
       return res.status(errorStatus).json({ error });
     }
@@ -5631,7 +5676,7 @@ async function updateTenantCommentModeration(req, res, approvalStatus) {
     return res.status(400).json({ error: 'Invalid ID format' });
   }
 
-  const { tenant, errorStatus, error } = await resolveTenantSuggestionById(tenantSlug, suggestionId);
+  const { tenant, errorStatus, error } = await loadAdminSuggestion(req, suggestionId);
   if (error) {
     return res.status(errorStatus).json({ error });
   }
@@ -7410,7 +7455,7 @@ function requireApiKey(requiredScopes = []) {
         });
       }
 
-      const tenant = await findActiveTenantById(data.tenantId);
+      const tenant = await findMemberTenantById(data.tenantId);
       if (!tenant) {
         return res.status(403).json({ error: 'API key tenant inactive or missing' });
       }
@@ -7421,7 +7466,7 @@ function requireApiKey(requiredScopes = []) {
       //
       // `plan` lebt in Postgres, wohin der Stripe-Webhook synct — und das Gate
       // ist ohnehin nur live, wenn Postgres das Backend ist
-      // (billing.proGatingActive verlangt postgres). Da findActiveTenantById
+      // (billing.proGatingActive verlangt postgres). Da findMemberTenantById
       // den Tenant dann aus genau dieser Quelle lädt, IST `tenant` bereits der
       // maßgebliche Plan-Tenant; ein zweiter Lookup auf dem Hot-Path entfällt.
       //
@@ -7439,7 +7484,7 @@ function requireApiKey(requiredScopes = []) {
       req.apiAuth = {
         keyId: data.id,
         tenantId: data.tenantId,
-        // findActiveTenantById laedt unter Postgres aus der Plan-Quelle — dieser
+        // findMemberTenantById laedt unter Postgres aus der Plan-Quelle — dieser
         // Tenant traegt also `plan` und taugt direkt fuer nachgelagerte
         // Pro-Gates (das Free-Plan-Board-Limit in createTenantBoard).
         tenant,

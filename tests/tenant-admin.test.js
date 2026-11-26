@@ -55,7 +55,7 @@ test('tenant admin api resolves documents through tenant scope', () => {
   );
 
   assert.ok(
-    apiSource.includes('resolveTenantSuggestionById'),
+    apiSource.includes('loadAdminSuggestion(req, suggestionId)'),
     'expected tenant admin suggestion actions to resolve suggestions through tenant scope'
   );
 });

@@ -1,6 +1,10 @@
 const LEGACY_TENANT_ID = 'legacy';
 const LEGACY_TENANT_SLUG = 'legacy';
 const ACTIVE_TENANT_STATUS = 'active';
+// `private`: ohne Anmeldung wie nicht vorhanden. Öffentliche Wege verlangen
+// weiter `active`, nur angemeldete Wege lassen beide Status zu.
+const PRIVATE_TENANT_STATUS = 'private';
+const MEMBER_TENANT_STATUSES = [ACTIVE_TENANT_STATUS, PRIVATE_TENANT_STATUS];
 
 function normalizeSlug(value, { fallback = 'item', maxLength = 60 } = {}) {
   const source = typeof value === 'string' ? value : String(value || '');
@@ -50,6 +54,8 @@ module.exports = {
   ACTIVE_TENANT_STATUS,
   LEGACY_TENANT_ID,
   LEGACY_TENANT_SLUG,
+  MEMBER_TENANT_STATUSES,
+  PRIVATE_TENANT_STATUS,
   buildAppSlug,
   buildLegacyTenantData,
   buildTenantSlug,

@@ -146,15 +146,15 @@ test('requiresProUpgradeResolved: aufgelöster Tenant gated exakt wie requiresPr
 test('requireApiKey: eine Tenant-Quelle, Gate weiter fail-open', () => {
   const body = handlerAfter('function requireApiKey(');
   // Das Gate ist nur live, wenn Postgres das Backend ist (proGatingActive
-  // verlangt postgres). findActiveTenantById löst den Tenant dann aus genau
+  // verlangt postgres). findMemberTenantById löst den Tenant dann aus genau
   // dieser Quelle auf — er trägt `plan` bereits, ein zweiter Lookup entfällt.
-  assert.ok(body.includes('const tenant = await findActiveTenantById(data.tenantId);'),
+  assert.ok(body.includes('const tenant = await findMemberTenantById(data.tenantId);'),
     'Tenant kommt aus der backend-bewussten Auflösung (unter Postgres inkl. plan)');
   assert.equal(body.includes('repos.tenants.findById(data.tenantId)'), false,
     'kein redundanter zweiter Plan-Lookup auf dem Hot-Path');
   // Kein Rückfall auf einen plan-losen Tenant — das würde einen zahlenden
   // Pro-Kunden bei einem Lookup-Miss fälschlich aussperren.
-  assert.ok(!/findActiveTenantById\(data\.tenantId\)\s*\|\|\s*/.test(body),
+  assert.ok(!/findMemberTenantById\(data\.tenantId\)\s*\|\|\s*/.test(body),
     'kein `|| ...`-Fallback auf eine zweite (plan-lose) Tenant-Quelle');
   assert.ok(body.includes('requiresProUpgradeResolved'),
     'Gate muss über den fail-open-Wrapper requiresProUpgradeResolved laufen');
@@ -190,7 +190,7 @@ test('Admin-Konsole UND v1-API laufen durch dasselbe Board-Gate', () => {
     'Admin-Route muss den geteilten Helfer aufrufen');
   assert.ok(apiRoute.includes('createTenantBoard('),
     'v1-Route muss den geteilten Helfer aufrufen');
-  // req.apiAuth.tenant kommt aus findActiveTenantById und ist unter Postgres
+  // req.apiAuth.tenant kommt aus findMemberTenantById und ist unter Postgres
   // bereits der Plan-Tenant — ein separates Durchreichen braucht es nicht mehr.
   assert.ok(apiRoute.includes('req.apiAuth.tenant'),
     'v1-Route muss den Tenant aus der Plan-Quelle verwenden');

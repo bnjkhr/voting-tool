@@ -43,6 +43,15 @@ async function findActiveBySlug(slug) {
   return mapTenant(rows[0]);
 }
 
+// Nur für angemeldete Wege: sieht zusätzlich private Workspaces.
+async function findMemberBySlug(slug) {
+  const { rows } = await query(
+    `select ${COLUMNS} from tenants where slug = $1 and status in ('active', 'private')`,
+    [slug]
+  );
+  return mapTenant(rows[0]);
+}
+
 async function list() {
   const { rows } = await query(`select ${COLUMNS} from tenants order by created_at asc`);
   return rows.map(mapTenant);
@@ -85,6 +94,7 @@ module.exports = {
   findById,
   findBySlug,
   findActiveBySlug,
+  findMemberBySlug,
   list,
   create,
   update,

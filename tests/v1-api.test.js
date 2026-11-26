@@ -153,25 +153,24 @@ test('requireApiKey enforces tenant + scope before any handler runs', () => {
   );
 
   assert.ok(
-    apiSource.includes('await findActiveTenantById(data.tenantId)'),
+    apiSource.includes('await findMemberTenantById(data.tenantId)'),
     'tenant must be resolved from the key, not from the URL'
   );
 
-  // findActiveTenantById ist das backend-bewusste Gegenstück zu
-  // findActiveTenantBySlug: unter DATA_BACKEND=postgres darf hier nicht mehr
-  // gegen Firestore aufgelöst werden.
+  // findTenantById ist das backend-bewusste Gegenstück zur Slug-Suche: unter
+  // DATA_BACKEND=postgres darf hier nicht mehr gegen Firestore aufgelöst werden.
   const tenantByIdHelper = apiSource
-    .split('async function findActiveTenantById(tenantId) {')[1]
-    ?.split('\nasync function ')[0] || '';
-  assert.ok(tenantByIdHelper.length > 0, 'findActiveTenantById muss existieren');
+    .split('async function findTenantById(tenantId, isVisible) {')[1]
+    ?.split('\nfunction ')[0] || '';
+  assert.ok(tenantByIdHelper.length > 0, 'findTenantById muss existieren');
   assert.ok(
     tenantByIdHelper.includes('if (usePostgres())')
       && tenantByIdHelper.includes('repos.tenants.findById(tenantId)'),
-    'findActiveTenantById muss unter Postgres aus tenants lesen'
+    'findTenantById muss unter Postgres aus tenants lesen'
   );
-  assert.ok(
-    tenantByIdHelper.includes('isActiveTenant('),
-    'inaktive Tenants müssen in beiden Backends als "nicht gefunden" gelten'
+  assert.equal(
+    (tenantByIdHelper.match(/isVisible\((?:tenant|data)\)/g) || []).length, 2,
+    'unsichtbare Tenants müssen in beiden Backends als "nicht gefunden" gelten'
   );
 
   assert.ok(
@@ -667,13 +666,13 @@ test('Board-Anlage über v1 nutzt den geteilten Pfad inkl. Free-Plan-Gate', () =
 });
 
 test('nachgelagerte Pro-Gates lesen den Plan aus der Plan-Quelle, nicht aus Firestore', () => {
-  // findActiveTenantById lädt unter Postgres aus der Plan-Quelle — der Tenant
+  // findMemberTenantById lädt unter Postgres aus der Plan-Quelle — der Tenant
   // hinter dem Schlüssel trägt damit `plan` und taugt direkt für die Gates.
   // Vorher kam er aus Firestore (ohne `plan`) und ein zahlender Pro-Kunde wäre
   // vom Board-Limit ausgesperrt worden.
   const middleware = helperBody('requireApiKey');
   assert.ok(
-    middleware.includes('findActiveTenantById(data.tenantId)'),
+    middleware.includes('findMemberTenantById(data.tenantId)'),
     'requireApiKey muss den Tenant backend-abhängig auflösen'
   );
   assert.ok(
@@ -681,7 +680,7 @@ test('nachgelagerte Pro-Gates lesen den Plan aus der Plan-Quelle, nicht aus Fire
     'das Gate muss auf genau diesen Tenant laufen'
   );
   assert.ok(
-    helperBody('findActiveTenantById').includes('repos.tenants.findById(tenantId)'),
+    helperBody('findTenantById').includes('repos.tenants.findById(tenantId)'),
     'unter Postgres muss der Tenant aus der Plan-Quelle kommen'
   );
 
