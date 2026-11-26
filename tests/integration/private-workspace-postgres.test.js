@@ -146,6 +146,107 @@ async function snapshot() {
   return rows[0];
 }
 
+const SCRIPT_SLUG = 'test-privat-skript';
+const SCRIPT_OWNER = 'test-privat-skript@example.test';
+const SCRIPT_USER_ID = 'test_privat_skript_user';
+
+async function cleanupScript() {
+  const { query } = require('../../db/pool');
+  await query('delete from tenants where slug like $1', [`${SCRIPT_SLUG}%`]); // cascade
+  await query('delete from users where id = $1', [SCRIPT_USER_ID]);
+}
+
+suite('Anlage-Skript gegen Postgres', async (t) => {
+  const { query } = require('../../db/pool');
+  const { run } = require('../../scripts/create-private-workspace');
+  const create = (slug, email, extra = ['--commit']) => run([
+    '--slug', slug, '--name', 'Intern', '--email', email,
+    '--boards', 'FamilyManager:FM,Websites:WEB', ...extra,
+  ], { log: () => {} });
+  const workspaceRows = async (slug) => (await query(
+    `select
+       (select count(*)::int from tenants where slug = $1) as tenants,
+       (select count(*)::int from apps where tenant_id = $1) as apps,
+       (select count(*)::int from memberships where tenant_id = $1) as memberships`,
+    [slug]
+  )).rows[0];
+
+  t.after(cleanupScript);
+  await cleanupScript();
+  await query('insert into users (id, email, display_name) values ($1, $2, $3)',
+    [SCRIPT_USER_ID, SCRIPT_OWNER, 'Skript']);
+
+  await t.test('Probelauf schreibt nichts', async () => {
+    await create(SCRIPT_SLUG, SCRIPT_OWNER, []);
+
+    assert.deepEqual(await workspaceRows(SCRIPT_SLUG), { tenants: 0, apps: 0, memberships: 0 });
+  });
+
+  await t.test('Anlage: privat, Plan pro, Boards, Owner', async () => {
+    // Groß-/Kleinschreibung der Adresse spielt keine Rolle (citext).
+    await create(SCRIPT_SLUG, SCRIPT_OWNER.toUpperCase());
+
+    const tenant = await query('select id, name, display_name, status, plan from tenants where slug = $1', [SCRIPT_SLUG]);
+    assert.deepEqual(tenant.rows[0], {
+      id: SCRIPT_SLUG, name: 'Intern', display_name: 'Intern', status: 'private', plan: 'pro',
+    });
+    const apps = await query(
+      'select name, slug, ticket_prefix, next_ticket_number from apps where tenant_id = $1 order by name',
+      [SCRIPT_SLUG]
+    );
+    assert.deepEqual(apps.rows, [
+      { name: 'FamilyManager', slug: 'familymanager', ticket_prefix: 'FM', next_ticket_number: 1 },
+      { name: 'Websites', slug: 'websites', ticket_prefix: 'WEB', next_ticket_number: 1 },
+    ]);
+    const memberships = await query('select user_id, role, status from memberships where tenant_id = $1', [SCRIPT_SLUG]);
+    assert.deepEqual(memberships.rows, [{ user_id: SCRIPT_USER_ID, role: 'owner', status: 'active' }]);
+  });
+
+  await t.test('zweiter Lauf: bestehender Workspace bleibt unverändert', async () => {
+    const before = await workspaceRows(SCRIPT_SLUG);
+
+    await assert.rejects(create(SCRIPT_SLUG, SCRIPT_OWNER), /existiert bereits\. Nichts geändert/);
+
+    assert.deepEqual(await workspaceRows(SCRIPT_SLUG), before);
+  });
+
+  await t.test('unbekannte E-Mail: keine Zeile, kein neues Konto', async () => {
+    const slug = `${SCRIPT_SLUG}-ohne-konto`;
+    const email = 'test-privat-skript-fehlt@example.test';
+
+    await assert.rejects(create(slug, email), /Kein aktives Konto.*Nichts geändert/s);
+
+    assert.deepEqual(await workspaceRows(slug), { tenants: 0, apps: 0, memberships: 0 });
+    const users = await query('select count(*)::int as n from users where email = $1', [email]);
+    assert.equal(users.rows[0].n, 0);
+  });
+
+  await t.test('deaktiviertes Konto wird nicht reaktiviert', async () => {
+    const slug = `${SCRIPT_SLUG}-deaktiviert`;
+    await query("update users set status = 'disabled' where id = $1", [SCRIPT_USER_ID]);
+
+    await assert.rejects(create(slug, SCRIPT_OWNER), /Kein aktives Konto/);
+
+    assert.deepEqual(await workspaceRows(slug), { tenants: 0, apps: 0, memberships: 0 });
+    const user = await query('select status from users where id = $1', [SCRIPT_USER_ID]);
+    assert.equal(user.rows[0].status, 'disabled');
+    await query("update users set status = 'active' where id = $1", [SCRIPT_USER_ID]);
+  });
+
+  await t.test('Fehler mitten in der Anlage: nichts halb geschrieben', async () => {
+    const slug = `${SCRIPT_SLUG}-abbruch`;
+    const { provisionPrivateWorkspace } = require('../../db/provisioning');
+    const board = { name: 'Doppelt', slug: 'doppelt', ticketPrefix: 'DO' };
+
+    await assert.rejects(provisionPrivateWorkspace({
+      tenantId: slug, slug, name: 'Intern', ownerEmail: SCRIPT_OWNER,
+      boards: [board, board], membershipId: `${slug}_m`,
+    }), { code: '23505' });
+
+    assert.deepEqual(await workspaceRows(slug), { tenants: 0, apps: 0, memberships: 0 });
+  });
+});
+
 suite('privater Workspace gegen Postgres', async (t) => {
   const { generateApiKeyToken, API_KEY_SCOPES } = require('../../api/api-key-utils');
   const tokens = Object.fromEntries(Object.keys(WORKSPACES).map((key) => [key, generateApiKeyToken()]));

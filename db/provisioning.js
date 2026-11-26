@@ -15,6 +15,13 @@ class WorkspaceExistsError extends Error {
   }
 }
 
+class OwnerNotFoundError extends Error {
+  constructor() {
+    super('No active user found for this email');
+    this.code = 'OWNER_NOT_FOUND';
+  }
+}
+
 class InviteNotPendingError extends Error {
   constructor() {
     super('Invite is no longer pending');
@@ -66,6 +73,55 @@ async function provisionWorkspace({
   });
 }
 
+// Privater Workspace (scripts/create-private-workspace.js): Tenant, Boards und
+// Owner-Mitgliedschaft atomar. Das Konto wird nur gesucht, nie angelegt oder
+// reaktiviert. Der Status steht von Anfang an auf `private`.
+const TENANT_UNIQUE_CONSTRAINTS = ['tenants_pkey', 'tenants_slug_key'];
+
+async function provisionPrivateWorkspace({
+  tenantId, slug, name, ownerEmail, boards, membershipId,
+}) {
+  return withTransaction(async (client) => {
+    const existing = await client.query(
+      'select 1 from tenants where id = $1 or slug = $2', [tenantId, slug]
+    );
+    if (existing.rowCount > 0) throw new WorkspaceExistsError();
+
+    // email ist citext -> Vergleich ist case-insensitive.
+    const owner = await client.query(
+      `select id from users where email = $1 and status = 'active' for share`, [ownerEmail]
+    );
+    if (owner.rowCount === 0) throw new OwnerNotFoundError();
+    const userId = owner.rows[0].id;
+
+    try {
+      await client.query(
+        `insert into tenants (id, name, display_name, slug, status, plan)
+         values ($1, $2, $2, $3, 'private', 'pro')`,
+        [tenantId, name, slug]
+      );
+    } catch (error) {
+      // Zwei Läufe gleichzeitig: der zweite scheitert an der Eindeutigkeit.
+      if (error.code === '23505' && TENANT_UNIQUE_CONSTRAINTS.includes(error.constraint)) {
+        throw new WorkspaceExistsError();
+      }
+      throw error;
+    }
+    for (const board of boards) {
+      await client.query(
+        `insert into apps (id, tenant_id, name, slug, ticket_prefix)
+         values ($1, $2, $3, $4, $5)`,
+        [crypto.randomUUID(), tenantId, board.name, board.slug, board.ticketPrefix]
+      );
+    }
+    await client.query(
+      `insert into memberships (id, tenant_id, user_id, role) values ($1, $2, $3, 'owner')`,
+      [membershipId, tenantId, userId]
+    );
+    return { userId, membershipId };
+  });
+}
+
 // Invite-Annahme: User + Membership + Invite-Status atomar. Reaktiviert einen
 // ggf. deaktivierten User (sonst schlüge die Session sofort in resolveSessionAuth
 // fehl). Gibt die tatsächlichen ids zurück.
@@ -106,4 +162,11 @@ async function acceptInvite({ tenantId, inviteId, email, displayName, role }) {
   });
 }
 
-module.exports = { provisionWorkspace, acceptInvite, WorkspaceExistsError, InviteNotPendingError };
+module.exports = {
+  provisionWorkspace,
+  provisionPrivateWorkspace,
+  acceptInvite,
+  WorkspaceExistsError,
+  OwnerNotFoundError,
+  InviteNotPendingError,
+};
