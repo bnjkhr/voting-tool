@@ -80,6 +80,7 @@ const repos = require('../db');
 const { usePostgres } = repos.backend;
 const billing = require('../lib/billing');
 const planLimits = require('../lib/plan-limits');
+const feedbackLinks = require('../lib/feedback-links');
 
 const BILLING_TERMS_VERSION = '2026-09-01-b2b';
 const PRO_PRICE_EUR = 9;
@@ -8307,6 +8308,359 @@ app.delete('/api/admin/tenants/:tenantSlug/api-keys/:keyId', requireTenantAccess
     res.status(500).json({ error: 'Failed to revoke API key' });
   }
 });
+
+// ----------------------------------------------------------------------------
+// Verknüpfungen mit öffentlichen Einträgen, Stufe 1: Holen und Verknüpfen.
+// Nur private Workspaces unter Postgres. An der Quelle wird nur gelesen, und
+// nur der Hol-Aufruf liest sie.
+// ----------------------------------------------------------------------------
+
+const FEEDBACK_ONLY_PRIVATE = 'Verknüpfungen gibt es nur in privaten Workspaces.';
+const FEEDBACK_ENTRY_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const FEEDBACK_FETCH_FAILED = 'Die Quelle ließ sich nicht holen.';
+// Deutlich unter der Laufzeitgrenze der Function (vercel.json), damit eine
+// hängende Quelle die anderen nicht mitnimmt.
+const FEEDBACK_READ_TIMEOUT_MS = 10000;
+// Ab dieser Zeit nach Beginn des Holens entsteht kein weiteres Ticket: Der Rest
+// folgt beim nächsten Aufruf, und Bericht und Stand kommen noch an.
+const FEEDBACK_FETCH_BUDGET_MS = 20000;
+
+// Meldungen, die so in die Antwort dürfen. Alles andere bleibt im Server-Log.
+class FeedbackSourceError extends Error {}
+
+function feedbackEnabled(tenant) {
+  return usePostgres() && tenant.status === 'private';
+}
+
+// Nur diese Felder verlassen die Quelle.
+function buildFeedbackEntry(data, type, status) {
+  return {
+    id: data.id,
+    type,
+    // Postgres lehnt Nullzeichen ab; der Status geht in ein Update für alle.
+    status: typeof status === 'string' ? status.replaceAll('\u0000', '') : status,
+    approved: data.approved === true,
+    title: data.title,
+    description: data.description,
+    priority: data.priority,
+  };
+}
+
+// Altbestand in Firestore. Nur lesen.
+async function readLegacySourceEntries(sourceAppId) {
+  const appDoc = await db.collection('apps').doc(sourceAppId).get();
+  if (!appDoc.exists || !isLegacyPublicAppVisible({ ...appDoc.data(), id: sourceAppId })) {
+    throw new FeedbackSourceError('Das öffentliche Board ist nicht erreichbar.');
+  }
+  const snapshot = await db.collection('suggestions').where('appId', '==', sourceAppId).get();
+  return snapshot.docs
+    .map(doc => ({ ...doc.data(), id: doc.id }))
+    .filter(data => isLegacyTenantData(data))
+    .map((data) => {
+      const type = normalizeSuggestionType(data.type);
+      return buildFeedbackEntry(data, type, data.status || mapLegacyTagToStatus(type, data.tag, data.approved));
+    });
+}
+
+// Ein Quell-Workspace ist nur lesbar, solange er aktiv und damit öffentlich ist.
+async function findFeedbackSourceBoard(source) {
+  const tenant = await findActiveTenantById(source.sourceTenantId);
+  if (!tenant) return { error: 'Der Quell-Workspace ist nicht öffentlich erreichbar.' };
+  const board = await repos.apps.findById(source.sourceAppId);
+  if (!board || board.tenantId !== tenant.id) return { error: 'Das Quell-Board gibt es nicht mehr.' };
+  return { tenant, board };
+}
+
+async function readWorkspaceSourceEntries(source) {
+  const { tenant, board, error } = await findFeedbackSourceBoard(source);
+  if (error) throw new FeedbackSourceError(error);
+  const rows = await repos.suggestions.listByAppFiltered(board.id, tenant.id);
+  return rows.map(row => buildFeedbackEntry(row, normalizeSuggestionType(row.type), row.status));
+}
+
+async function readFeedbackSourceEntries(source) {
+  const read = source.sourceKind === 'legacy'
+    ? readLegacySourceEntries(source.sourceAppId)
+    : readWorkspaceSourceEntries(source);
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new FeedbackSourceError('Die Quelle antwortet nicht.')),
+      FEEDBACK_READ_TIMEOUT_MS
+    );
+  });
+  try {
+    return await Promise.race([read, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Bezeichnung der Quelle und Link je Eintrag. Liest nur Postgres.
+async function describeFeedbackSource(source) {
+  if (source.sourceKind === 'legacy') {
+    return { label: 'Altes Board', entryUrl: () => feedbackLinks.legacyBoardUrl(source.sourceAppId) };
+  }
+  const { tenant, board, error } = await findFeedbackSourceBoard(source);
+  if (error) return { label: 'Quelle nicht erreichbar', entryUrl: () => null };
+  return {
+    label: `${tenant.slug}/${board.slug}`,
+    entryUrl: entryId => tenantBoardEntryUrl(process.env.BASE_URL, tenant.slug, board.slug, entryId),
+  };
+}
+
+function buildFeedbackLinkResponse(link, url) {
+  return {
+    suggestionId: link.suggestionId,
+    entryId: link.entryId,
+    publicType: link.publicType,
+    publicStatus: link.publicStatus,
+    publicApproved: link.publicApproved,
+    publicDeleted: link.publicDeleted,
+    publicSeenAt: link.publicSeenAt,
+    url,
+  };
+}
+
+// Stand für Konsole und API. Liest nie eine Quelle aus Firestore.
+async function loadFeedbackState(tenant) {
+  if (!feedbackEnabled(tenant)) return { enabled: false, sources: [], links: [] };
+  const [sources, links] = await Promise.all([
+    repos.feedback.listSources(tenant.id),
+    repos.feedback.listLinks(tenant.id),
+  ]);
+  const described = new Map(await Promise.all(
+    sources.map(async source => [source.id, await describeFeedbackSource(source)])
+  ));
+  return {
+    enabled: true,
+    sources: sources.map(source => ({
+      id: source.id,
+      appId: source.appId,
+      boardName: source.boardName,
+      sourceLabel: described.get(source.id).label,
+      fetchEnabled: source.fetchEnabled,
+      lastFetchedAt: source.lastFetchedAt,
+      unapprovedCount: source.unapprovedCount,
+      lastError: source.lastError,
+    })),
+    // Grabsteine (ohne Ticket) gehören auf keine Karte.
+    links: links
+      .filter(link => link.suggestionId && described.has(link.sourceId))
+      .map(link => buildFeedbackLinkResponse(link, described.get(link.sourceId).entryUrl(link.entryId))),
+  };
+}
+
+// Legt die Tickets einer Quelle an, jedes für sich: Ein fehlerhafter Eintrag
+// hält die anderen nicht auf. Nach `deadline` bleibt der Rest ausstehend.
+async function createFeedbackTickets(tenant, source, entries, { actor, deadline }) {
+  const outcome = { created: [], failed: 0, pending: 0 };
+  for (const [index, entry] of entries.entries()) {
+    if (Date.now() >= deadline) {
+      outcome.pending = entries.length - index;
+      break;
+    }
+    try {
+      const { created, suggestion } = await repos.feedback.createTicketWithLink({
+        source, entry, ticket: feedbackLinks.buildTicketFromEntry(entry),
+      });
+      if (!created) continue;
+      outcome.created.push({ id: suggestion.id, ticketNumber: suggestion.ticketNumber, title: suggestion.title });
+      await logActivity(suggestion.id, 'created', {
+        detail: 'Aus öffentlichem Feedback geholt', actor, tenantId: tenant.id,
+      });
+    } catch (error) {
+      outcome.failed += 1;
+      console.error(`Error creating ticket for feedback entry ${entry.id} (source ${source.id}):`, error);
+    }
+  }
+  return outcome;
+}
+
+async function fetchFeedbackSource(tenant, source, { dryRun, actor, deadline }) {
+  const report = {
+    sourceId: source.id,
+    board: source.boardSlug,
+    result: 'fetched',
+    created: [],
+    wouldCreate: [],
+    refreshed: 0,
+    missing: 0,
+    failed: 0,
+    pending: 0,
+    unapprovedCount: source.unapprovedCount,
+  };
+  try {
+    // Der Probelauf liest auch ausgeschaltete Quellen und setzt keine Marke.
+    if (!dryRun) {
+      if (!source.fetchEnabled) return { ...report, result: 'disabled' };
+      if (!(await repos.feedback.claimFetch(source.id))) {
+        return { ...report, result: 'throttled', ...(source.lastError ? { error: source.lastError } : {}) };
+      }
+    }
+
+    const entries = await readFeedbackSourceEntries(source);
+    const links = await repos.feedback.listLinksBySource(source.id);
+    const plan = feedbackLinks.planFetch({ entries, links, resolvedStatuses: RESOLVED_STATUSES });
+    report.unapprovedCount = plan.unapprovedCount;
+    // Gezählt werden nur Tickets, deren Eintrag fehlt; Grabsteine nicht.
+    const ticketLinks = new Set(links.filter(link => link.suggestionId).map(link => link.id));
+    report.missing = plan.missing.filter(linkId => ticketLinks.has(linkId)).length;
+
+    if (dryRun) {
+      const { entryUrl } = await describeFeedbackSource(source);
+      report.wouldCreate = plan.toCreate.map(entry => ({
+        entryId: entry.id,
+        title: feedbackLinks.buildTicketFromEntry(entry).title,
+        publicStatus: entry.status,
+        url: entryUrl(entry.id),
+      }));
+      return report;
+    }
+
+    report.refreshed = await repos.feedback.refreshLinks([
+      ...plan.refresh,
+      ...plan.missing.map(linkId => ({ linkId, publicDeleted: true })),
+    ]);
+
+    Object.assign(report, await createFeedbackTickets(tenant, source, plan.toCreate, { actor, deadline }));
+    if (report.failed > 0) {
+      report.result = 'error';
+      report.error = report.failed === 1
+        ? '1 Eintrag ließ sich nicht holen.'
+        : `${report.failed} Einträge ließen sich nicht holen.`;
+    }
+
+    await repos.feedback.recordFetch(source.id, {
+      unapprovedCount: plan.unapprovedCount,
+      error: report.error,
+      releaseMarker: report.pending > 0,
+    });
+    return report;
+  } catch (error) {
+    console.error(`Error fetching feedback source ${source.id}:`, error);
+    const message = error instanceof FeedbackSourceError ? error.message : FEEDBACK_FETCH_FAILED;
+    if (!dryRun) {
+      await repos.feedback.recordFetch(source.id, { error: message })
+        .catch(recordError => console.error('Error recording feedback fetch error:', recordError.message));
+    }
+    return { ...report, result: 'error', error: message };
+  }
+}
+
+// Jede Quelle für sich: Ein Fehler hält die anderen nicht auf.
+async function fetchFeedback(tenant, { dryRun = false, actor = 'admin' } = {}) {
+  const deadline = Date.now() + FEEDBACK_FETCH_BUDGET_MS;
+  const sources = await repos.feedback.listSources(tenant.id);
+  return {
+    sources: await Promise.all(sources.map(
+      source => fetchFeedbackSource(tenant, source, { dryRun, actor, deadline })
+    )),
+  };
+}
+
+// `dryRun: "true"` darf nicht als echter Lauf durchgehen.
+function isValidDryRun(body) {
+  return body?.dryRun === undefined || typeof body.dryRun === 'boolean';
+}
+
+async function handleFeedbackState(res, tenant) {
+  try {
+    res.json(await loadFeedbackState(tenant));
+  } catch (error) {
+    console.error('Error loading feedback state:', error);
+    res.status(500).json({ error: 'Failed to load feedback links' });
+  }
+}
+
+async function handleFeedbackFetch(req, res, tenant, actor) {
+  try {
+    if (!feedbackEnabled(tenant)) return res.status(409).json({ error: FEEDBACK_ONLY_PRIVATE });
+    if (!isValidDryRun(req.body)) return res.status(400).json({ error: 'dryRun muss true oder false sein.' });
+    const result = await fetchFeedback(tenant, { dryRun: req.body?.dryRun === true, actor });
+    // Die Tickets sind angelegt: Scheitert nur der Stand, kommt der Bericht
+    // ohne ihn an.
+    const state = await loadFeedbackState(tenant)
+      .catch(error => console.error('Error loading feedback state after fetch:', error));
+    res.json({ ...result, state });
+  } catch (error) {
+    console.error('Error fetching feedback:', error);
+    res.status(500).json({ error: 'Failed to fetch feedback' });
+  }
+}
+
+// Verknüpfen liest die Quelle nicht: Das nächste Holen füllt den Status oder
+// meldet, dass es den Eintrag nicht gibt.
+async function handleFeedbackLink(req, res, tenant) {
+  try {
+    if (!feedbackEnabled(tenant)) return res.status(409).json({ error: FEEDBACK_ONLY_PRIVATE });
+    const { suggestionId } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+      return res.status(400).json({ error: 'Invalid suggestion ID' });
+    }
+    const { errorStatus, error } = await loadSuggestionForTenant(tenant.id, suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+
+    if (req.method === 'DELETE') {
+      const removed = await repos.feedback.unlinkSuggestion({ tenantId: tenant.id, suggestionId });
+      if (!removed) return res.status(404).json({ error: 'Dieses Ticket ist nicht verknüpft.' });
+      return res.json({ success: true });
+    }
+
+    const entryId = req.body?.entryId;
+    if (typeof entryId !== 'string' || !FEEDBACK_ENTRY_ID.test(entryId)) {
+      return res.status(400).json({ error: 'Ungültige ID des öffentlichen Eintrags.' });
+    }
+    const link = await repos.feedback.linkSuggestion({ tenantId: tenant.id, suggestionId, entryId });
+    const source = (await repos.feedback.listSources(tenant.id)).find(item => item.id === link.sourceId);
+    const { entryUrl } = await describeFeedbackSource(source);
+    res.json(buildFeedbackLinkResponse(link, entryUrl(link.entryId)));
+  } catch (error) {
+    if (error instanceof repos.feedback.LinkConflictError) return res.status(409).json({ error: error.message });
+    if (error instanceof repos.feedback.NoSourceError) return res.status(404).json({ error: error.message });
+    console.error('Error changing feedback link:', error);
+    res.status(500).json({ error: 'Failed to change feedback link' });
+  }
+}
+
+// Eigener Zähler fürs Holen: rateLimitByApiKey zählt alle Aufrufe eines
+// Schlüssels in einem Topf, mit Grenze 10 wäre das Holen nach wenigen anderen
+// Aufrufen gesperrt.
+const feedbackFetchRateStore = new Map();
+
+function rateLimitFeedbackFetchByApiKey(windowMs, maxRequests) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const keyId = req.apiAuth.keyId;
+    const requests = (feedbackFetchRateStore.get(keyId) || []).filter(time => time > now - windowMs);
+    if (requests.length >= maxRequests) {
+      return res.status(429).json({ error: 'API key rate limit exceeded. Please slow down.' });
+    }
+    requests.push(now);
+    feedbackFetchRateStore.set(keyId, requests);
+    next();
+  };
+}
+
+// Ein Probelauf braucht nur Leserecht, ein echtes Holen legt Tickets an.
+function requireWriteScopeForFetch(req, res, next) {
+  if (req.body?.dryRun !== true && !req.apiAuth.scopes.includes('suggestions:write')) {
+    return res.status(403).json({ error: 'API key is missing required scope(s): suggestions:write' });
+  }
+  next();
+}
+
+const feedbackConsoleActor = req => req.tenantAuth?.user?.email || 'admin';
+
+app.get('/api/admin/tenants/:tenantSlug/feedback', requireTenantAccess(), (req, res) => handleFeedbackState(res, req.adminTenant));
+app.post('/api/admin/tenants/:tenantSlug/feedback/fetch', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 10), (req, res) => handleFeedbackFetch(req, res, req.adminTenant, feedbackConsoleActor(req)));
+app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/link', requireTenantAccess(['owner', 'admin']), (req, res) => handleFeedbackLink(req, res, req.adminTenant));
+app.delete('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/link', requireTenantAccess(['owner', 'admin']), (req, res) => handleFeedbackLink(req, res, req.adminTenant));
+
+app.get('/api/v1/feedback', requireApiKey(['suggestions:read']), rateLimitByApiKey(60000, 60), (req, res) => handleFeedbackState(res, req.apiAuth.tenant));
+app.post('/api/v1/feedback/fetch', requireApiKey(['suggestions:read']), rateLimitFeedbackFetchByApiKey(60000, 10), requireWriteScopeForFetch, (req, res) => handleFeedbackFetch(req, res, req.apiAuth.tenant, `api:${req.apiAuth.keyId}`));
+app.put('/api/v1/suggestions/:suggestionId/link', requireApiKey(['suggestions:write']), rateLimitByApiKey(60000, 60), (req, res) => handleFeedbackLink(req, res, req.apiAuth.tenant));
+app.delete('/api/v1/suggestions/:suggestionId/link', requireApiKey(['suggestions:write']), rateLimitByApiKey(60000, 60), (req, res) => handleFeedbackLink(req, res, req.apiAuth.tenant));
 
 // SPA-Fallback: pfad-basierte Board-URLs (/{tenant}/{board}/{view}) auf die
 // öffentliche Shell mappen. Läuft NACH allen API-Routen und express.static,

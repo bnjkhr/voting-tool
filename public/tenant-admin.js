@@ -16,6 +16,15 @@ class TenantAdminApp {
         this.draggedCardId = null;
         this.dropTarget = null;
         this.movingCards = new Set();
+        // Verknüpfungen mit öffentlichen Einträgen.
+        this.feedback = { enabled: false, sources: [], links: [] };
+        this.feedbackLoads = 0;
+        this.feedbackFetching = false;
+        this.feedbackMessage = '';
+        // Ticket, für das der Verknüpfen-Dialog offen ist.
+        this.linkTarget = null;
+        this.activeView = '';
+        this.sessionReady = false;
         this.releases = [];
         this.team = { members: [], invites: [] };
         this.apiKeys = [];
@@ -60,6 +69,10 @@ class TenantAdminApp {
         // Include the hash so the selected tab (e.g. #releases) survives a login redirect.
         window.adminAuth.requireTenantAuth(`${window.location.pathname}${window.location.search}${window.location.hash}`).then(async () => {
             await this.loadSession();
+            // Erst jetzt steht die Rolle fest: Wer direkt auf #board kommt,
+            // holt hier statt beim Reiterwechsel.
+            this.sessionReady = true;
+            if (this.activeView === 'board') this.loadFeedback();
             await this.loadData();
         });
     }
@@ -207,6 +220,10 @@ class TenantAdminApp {
         if (window.location.hash !== `#${target}`) {
             history.replaceState(null, '', `#${target}`);
         }
+
+        const opened = target !== this.activeView;
+        this.activeView = target;
+        if (opened && target === 'board' && this.sessionReady) this.loadFeedback();
     }
 
     async loadData() {
@@ -698,6 +715,12 @@ class TenantAdminApp {
             if (!trigger) return;
             this.moveCard(trigger.dataset.id, trigger.dataset.column);
         });
+        columns.addEventListener('click', event => {
+            const link = event.target.closest('[data-action="link-card"]');
+            if (link) this.linkCard(link.dataset.id);
+            const unlink = event.target.closest('[data-action="unlink-card"]');
+            if (unlink) this.unlinkCard(unlink.dataset.id);
+        });
         columns.addEventListener('dragstart', event => {
             const card = event.target.closest('[data-board-card]');
             if (!card) return;
@@ -727,6 +750,206 @@ class TenantAdminApp {
         // Am Dokument, damit auch ein Ende außerhalb des Boards aufräumt.
         document.addEventListener('dragend', () => this.endDrag());
         document.addEventListener('drop', () => this.endDrag());
+        document.getElementById('feedbackFetchBtn').addEventListener('click', () => this.fetchFeedbackNow());
+        document.getElementById('linkForm').addEventListener('submit', event => {
+            event.preventDefault();
+            this.submitLink();
+        });
+        document.getElementById('linkCancelBtn').addEventListener('click', () => {
+            this.linkTarget = null;
+            document.getElementById('linkDialog').close();
+        });
+    }
+
+    // Einmal je Öffnen des Reiters: öffentlichen Stand lesen, dann holen. Ein
+    // Fehler hier lässt das Board stehen.
+    async loadFeedback() {
+        this.feedbackMessage = '';
+        if (!await this.reloadFeedbackState()) return;
+        if (this.feedback.enabled && this.canManageWorkspace()) await this.fetchFeedbackNow();
+    }
+
+    // Nur lesen. false: nicht geladen oder von einem neueren Aufruf überholt.
+    async reloadFeedbackState() {
+        const load = ++this.feedbackLoads;
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/feedback'));
+            const state = await response.json();
+            if (!response.ok) throw new Error(state.error || 'Verknüpfungen konnten nicht geladen werden');
+            if (load !== this.feedbackLoads) return false;
+            this.applyFeedback(state);
+            return true;
+        } catch (error) {
+            console.error('Error loading feedback links:', error);
+            this.feedbackMessage = 'Der öffentliche Stand ließ sich nicht laden.';
+            this.renderFeedback();
+            return false;
+        }
+    }
+
+    applyFeedback(state) {
+        this.feedback = {
+            enabled: Boolean(state?.enabled),
+            sources: Array.isArray(state?.sources) ? state.sources : [],
+            links: Array.isArray(state?.links) ? state.links : [],
+        };
+        this.renderFeedback();
+        this.renderBoard();
+    }
+
+    async fetchFeedbackNow() {
+        if (this.feedbackFetching || !this.canManageWorkspace()) return;
+        this.feedbackFetching = true;
+        this.feedbackMessage = '';
+        this.renderFeedback();
+        let created = 0;
+        // Bericht ohne Stand: Tickets sind angelegt, der Stand fehlt noch.
+        let stateMissing = false;
+        try {
+            const response = await this.adminFetch(this.tenantAdminPath('/feedback/fetch'), {
+                method: 'POST',
+                body: JSON.stringify({}),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Holen fehlgeschlagen');
+
+            // Ein noch laufendes Lesen wäre jetzt veraltet.
+            this.feedbackLoads += 1;
+            created = result.sources.reduce((sum, source) => sum + (source.created?.length || 0), 0);
+            stateMissing = !result.state;
+            if (!stateMissing) this.applyFeedback(result.state);
+            this.feedbackMessage = this.describeFetch(result.sources, created);
+        } catch (error) {
+            console.error('Error fetching feedback:', error);
+            this.feedbackMessage = 'Feedback ließ sich nicht holen.';
+        } finally {
+            this.feedbackFetching = false;
+            this.renderFeedback();
+        }
+        if (created === 0 && !stateMissing) return;
+        try {
+            await Promise.all([this.loadStats(), this.loadSuggestions()]);
+        } catch (error) {
+            console.error('Error reloading after fetching feedback:', error);
+        }
+        if (!stateMissing) return;
+        // Das Ergebnis des Holens bleibt stehen, auch wenn das Lesen scheitert.
+        const summary = this.feedbackMessage;
+        await this.reloadFeedbackState();
+        this.feedbackMessage = summary;
+        this.renderFeedback();
+    }
+
+    // Ergebnis eines Holvorgangs als ein, zwei Sätze.
+    describeFetch(reports, created) {
+        const boardName = report => this.feedback.sources
+            .find(source => source.id === report.sourceId)?.boardName || report.board;
+        const parts = [];
+        if (created > 0) {
+            parts.push(created === 1 ? '1 neues Ticket geholt.' : `${created} neue Tickets geholt.`);
+        }
+        // Auch ein gebremster Aufruf nennt den Fehler des letzten Versuchs.
+        parts.push(...reports
+            .filter(report => report.result === 'error' || report.error)
+            .map(report => `${boardName(report)} ließ sich nicht holen.`));
+        const pending = reports.reduce((sum, report) => sum + (report.pending || 0), 0);
+        if (pending > 0) {
+            parts.push(pending === 1
+                ? '1 Eintrag folgt beim nächsten Holen.'
+                : `${pending} Einträge folgen beim nächsten Holen.`);
+        }
+        if (parts.length > 0) return parts.join(' ');
+
+        if (reports.length === 0) return 'Es ist noch kein Board angeschlossen.';
+        if (reports.every(report => report.result === 'disabled')) return 'Holen ist noch nicht eingeschaltet.';
+        if (reports.some(report => report.result === 'fetched')) return 'Keine neuen Tickets.';
+
+        // Alle gebremst: wieder, wenn bei jeder Quelle fünf Minuten um sind.
+        const throttled = new Set(reports.filter(report => report.result === 'throttled')
+            .map(report => report.sourceId));
+        const last = Math.max(0, ...this.feedback.sources
+            .filter(source => throttled.has(source.id))
+            .map(source => this.toDate(source.lastFetchedAt)?.getTime() || 0));
+        if (!last) return 'Gerade erst geholt.';
+        const again = new Date(last + 5 * 60 * 1000)
+            .toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        return `Gerade erst geholt. Wieder ab ${again}.`;
+    }
+
+    renderFeedback() {
+        const { enabled, sources } = this.feedback;
+        const show = (id, visible) => document.getElementById(id).classList.toggle('is-hidden', !visible);
+        const text = (id, value) => {
+            document.getElementById(id).textContent = value;
+            show(id, Boolean(value));
+        };
+        show('boardFeedback', enabled || Boolean(this.feedbackMessage));
+        show('feedbackFetchBtn', enabled && this.canManageWorkspace());
+        document.getElementById('feedbackFetchBtn').disabled = this.feedbackFetching;
+        text('feedbackUnapproved', enabled ? window.BoardModel.unapprovedSummary(sources) : '');
+        text('feedbackResult', this.feedbackMessage);
+    }
+
+    linkCard(suggestionId) {
+        if (!this.canManageWorkspace()) return;
+        this.linkTarget = suggestionId;
+        document.getElementById('linkEntryId').value = '';
+        document.getElementById('linkDialog').showModal();
+    }
+
+    async submitLink() {
+        const suggestionId = this.linkTarget;
+        const entryId = document.getElementById('linkEntryId').value.trim();
+        if (!suggestionId || !entryId) return;
+        // Sofort vergessen: Ein zweites Absenden schickt nichts mehr.
+        this.linkTarget = null;
+        // Vor der Anfrage schließen, sonst läge die Meldung hinter dem Dialog.
+        document.getElementById('linkDialog').close();
+        await this.writeLink(suggestionId, { method: 'PUT', body: JSON.stringify({ entryId }) }, 'Verknüpft');
+    }
+
+    async unlinkCard(suggestionId) {
+        if (!this.canManageWorkspace()) return;
+        if (!confirm('Verknüpfung lösen? Der öffentliche Eintrag wird danach nicht erneut als Ticket geholt.')) return;
+        await this.writeLink(suggestionId, { method: 'DELETE' }, 'Verknüpfung gelöst');
+    }
+
+    async writeLink(suggestionId, options, successMessage) {
+        try {
+            const response = await this.adminFetch(
+                this.tenantAdminPath(`/suggestions/${encodeURIComponent(suggestionId)}/link`),
+                options
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Aktion fehlgeschlagen');
+
+            this.showToast(successMessage, 'success');
+            await this.reloadFeedbackState();
+        } catch (error) {
+            console.error('Error changing feedback link:', error);
+            this.showToast(error.message || 'Aktion fehlgeschlagen', 'error');
+        }
+    }
+
+    // Öffentlicher Stand einer Karte, samt Link zum Eintrag.
+    renderPublicLine(item) {
+        const link = this.feedback.links.find(entry => entry.suggestionId === item.id);
+        const line = window.BoardModel.publicLine(link);
+        if (!line) return '';
+        const anchor = line.url
+            ? `<a href="${this.escapeHtml(line.url)}" target="_blank" rel="noopener" draggable="false">ansehen</a>`
+            : '';
+        return `<p class="board-card-public"><span>${this.escapeHtml(line.text)}</span>${anchor}</p>`;
+    }
+
+    // Verknüpfen oder lösen: nur mit Recht und nur an angeschlossenen Boards.
+    renderLinkAction(item) {
+        const { enabled, sources, links } = this.feedback;
+        if (!enabled || !this.canManageWorkspace() || !sources.some(source => source.appId === item.appId)) return '';
+        const linked = links.some(entry => entry.suggestionId === item.id);
+        const id = this.escapeHtml(item.id);
+        return `<button type="button" class="board-text-link" data-action="${linked ? 'unlink-card' : 'link-card'}"
+                        data-id="${id}" data-focus="link:${id}">${linked ? 'Verknüpfung lösen' : 'Verknüpfen'}</button>`;
     }
 
     // Die Spalte unter dem Zeiger, sofern die gezogene Karte dorthin darf.
@@ -892,7 +1115,9 @@ class TenantAdminApp {
                         <span class="tenant-badges">${priority}${badges}</span>
                     </summary>
                     <p class="board-card-description">${this.escapeHtml(item.description || 'Keine Beschreibung.')}</p>
+                    ${this.renderLinkAction(item)}
                 </details>
+                ${this.renderPublicLine(item)}
                 ${targets.length ? `
                 <details class="board-card-move" name="board-card-move">
                     <summary data-focus="menu:${id}">Verschieben nach</summary>

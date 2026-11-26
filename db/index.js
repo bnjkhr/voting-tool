@@ -20,4 +20,5 @@ module.exports = {
   attachments: require('./attachments'),
   billing: require('./billing'),
   provisioning: require('./provisioning'),
+  feedback: require('./feedback'),
 };

@@ -251,4 +251,5 @@ module.exports = {
   findById, listPublicForApp, listByAppFiltered, listByTenant, listByRelease,
   listApprovedByReleaseIds, countByReleaseIds, create, createWithImportedTicketNumber,
   isTicketNumberConflict, update, setApproved, addLabel, removeLabel, remove,
+  insertSuggestion,
 };

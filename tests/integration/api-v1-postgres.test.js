@@ -12,6 +12,10 @@
 // Initialisierung ist lazy und stellt keine Verbindung her. Schlägt hier
 // irgendein Pfad doch auf Firestore durch, scheitert der Request sichtbar —
 // genau das ist die Aussage dieses Tests.
+//
+// Einzige Ausnahme vom „kein Firestore“: der Hol-Aufruf für verknüpftes
+// Feedback (POST …/feedback/fetch) liest den Altbestand dort, und nur lesend
+// (feedback-fetch-postgres.test.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

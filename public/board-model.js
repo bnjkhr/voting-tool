@@ -1,6 +1,6 @@
 (function initBoardModel(globalScope) {
-    // Zuordnung und Sortierung fürs Kanban-Board der Konsole. Reine Funktionen:
-    // kein DOM, kein Netz, die Eingabe bleibt unverändert.
+    // Zuordnung, Sortierung und Texte fürs Kanban-Board der Konsole. Reine
+    // Funktionen: kein DOM, kein Netz, die Eingabe bleibt unverändert.
 
     const COLUMNS = [
         { key: 'offen', label: 'Offen' },
@@ -106,7 +106,40 @@
         };
     }
 
-    const api = { COLUMNS, columnFor, statusFor, needsConfirm, buildBoard };
+    // Nur https und Pfade auf dem eigenen Server. Steuerzeichen und
+    // Backslashes fallen weg, weil der Browser daraus eine fremde Adresse macht.
+    function safeUrl(url) {
+        const text = typeof url === 'string' ? url : '';
+        if (/[\u0000-\u0020\u007f\\]/.test(text)) return null;
+        return /^(https:\/\/|\/(?!\/))/i.test(text) ? text : null;
+    }
+
+    // Zeile auf der Karte zum verknüpften öffentlichen Eintrag. Ein Link nur,
+    // wo es dort etwas zu sehen gibt.
+    function publicLine(link) {
+        if (!link) return null;
+        const line = (state, url = null) => ({ text: `Öffentlich: ${state}`, url });
+        // Nie gesehen und trotzdem „fehlt“: meist eine vertippte ID.
+        if (link.publicDeleted) return line(link.publicSeenAt ? 'gelöscht' : 'nicht gefunden');
+        if (!link.publicSeenAt) return line('noch nicht geholt');
+        if (link.publicApproved === false) return line('nicht freigegeben');
+        return line(link.publicStatus || 'unbekannt', safeUrl(link.url));
+    }
+
+    // Wie viele öffentliche Einträge je Quelle auf Freigabe warten.
+    function unapprovedSummary(sources) {
+        const waiting = sources.filter(source => source.unapprovedCount > 0);
+        const total = waiting.reduce((sum, source) => sum + source.unapprovedCount, 0);
+        if (total === 0) return '';
+        const head = total === 1
+            ? 'Öffentlich wartet 1 Eintrag auf Freigabe'
+            : `Öffentlich warten ${total} Einträge auf Freigabe`;
+        return `${head}: ${waiting.map(source => `${source.boardName} ${source.unapprovedCount}`).join(', ')}.`;
+    }
+
+    const api = {
+        COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary,
+    };
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
