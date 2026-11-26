@@ -37,7 +37,7 @@ Gezeigt und von Ben gesehen am 26.11. Entschieden: **eine** Spalte „Im Test“
 | Fertig | gelöst | ist umgesetzt | gelöst | ist umgesetzt |
 
 - `geschlossen` und `wird nicht umgesetzt` erscheinen nicht auf dem Board.
-- Innerhalb einer Spalte: Priorität, dann Ticketnummer. „Fertig“ zeigt die letzten 20.
+- Innerhalb einer Spalte: Priorität, dann Ticketnummer. Ausnahme „Fertig“: die letzten 20, neueste zuerst.
 
 ## Verhalten
 

@@ -89,12 +89,12 @@
 
         const columns = {};
         COLUMNS.forEach(({ key }) => {
-            let cards = matching.filter(item => columnFor(item) === key);
-            const total = cards.length;
-            if (key === 'fertig') {
-                cards = cards.sort((a, b) => finishedAt(b) - finishedAt(a)).slice(0, DONE_LIMIT);
-            }
-            columns[key] = { items: cards.sort(compareCards), total };
+            const cards = matching.filter(item => columnFor(item) === key);
+            const items = key === 'fertig'
+                // Die letzten Erledigten, neueste zuerst.
+                ? cards.sort((a, b) => finishedAt(b) - finishedAt(a) || compareCards(a, b)).slice(0, DONE_LIMIT)
+                : cards.sort(compareCards);
+            columns[key] = { items, total: cards.length };
         });
 
         return {

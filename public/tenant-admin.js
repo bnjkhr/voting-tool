@@ -10,6 +10,7 @@ class TenantAdminApp {
         this.apps = [];
         this.suggestions = [];
         this.suggestionsLoaded = false;
+        this.suggestionLoads = 0;
         this.boardFilters = { appId: '', label: '' };
         this.boardColumn = 'arbeit';
         this.draggedCardId = null;
@@ -150,7 +151,6 @@ class TenantAdminApp {
                 this.renderTodoStack();
             }
         });
-        this.bindBoardEvents();
         const filterPanel = document.getElementById('filterPanel');
         if (filterPanel && !window.matchMedia('(max-width: 768px)').matches) filterPanel.open = true;
         document.getElementById('suggestionsList').addEventListener('change', event => {
@@ -189,6 +189,8 @@ class TenantAdminApp {
             if (action === 'resend-invite') this.resendInvite(inviteId);
             else if (action === 'revoke-invite') this.revokeInvite(inviteId);
         });
+        // Zuletzt: Ein Fehler beim Board lässt die übrigen Listener unberührt.
+        this.bindBoardEvents();
     }
 
     switchView(view) {
@@ -488,9 +490,12 @@ class TenantAdminApp {
     }
 
     async loadSuggestions() {
+        const load = ++this.suggestionLoads;
         const response = await this.adminFetch(this.tenantAdminPath('/suggestions'));
         const suggestions = await response.json();
         if (!response.ok) throw new Error(suggestions.error || 'Einträge konnten nicht geladen werden');
+        // Inzwischen läuft ein neuerer Ladevorgang: Diese Antwort ist veraltet.
+        if (load !== this.suggestionLoads) return;
 
         this.suggestions = suggestions;
         this.suggestionsLoaded = true;
@@ -711,11 +716,17 @@ class TenantAdminApp {
             const id = this.draggedCardId;
             this.endDrag();
             if (!column) return;
+            // Auch Fremdes abfangen, sonst öffnet der Browser das Abgelegte.
             event.preventDefault();
+            // Wird die gezogene Karte neu gezeichnet, bleibt ihr dragend aus und
+            // die id stehen. Darum zählt nur Ziehgut, das genau sie nennt.
+            if (event.dataTransfer.getData('text/plain') !== id) return;
             // Erst das Ziehen abschließen, dann ggf. die Rückfrage öffnen.
             setTimeout(() => this.moveCard(id, column.dataset.column), 0);
         });
-        columns.addEventListener('dragend', () => this.endDrag());
+        // Am Dokument, damit auch ein Ende außerhalb des Boards aufräumt.
+        document.addEventListener('dragend', () => this.endDrag());
+        document.addEventListener('drop', () => this.endDrag());
     }
 
     // Die Spalte unter dem Zeiger, sofern die gezogene Karte dorthin darf.
@@ -751,6 +762,8 @@ class TenantAdminApp {
         const item = this.suggestions.find(entry => entry.id === suggestionId);
         if (!item || this.movingCards.has(suggestionId) || !this.canMoveTo(item, columnKey)) return;
 
+        // Nur wer mit dem Fokus auf dem Board ist, bekommt ihn nachgeführt.
+        const hadFocus = Boolean(this.boardFocusKey());
         this.movingCards.add(suggestionId);
         try {
             if (window.BoardModel.needsConfirm(item)
@@ -763,7 +776,36 @@ class TenantAdminApp {
             // Zeichnet aus den geladenen Einträgen: Schlug das Speichern fehl,
             // steht die Karte wieder in der alten Spalte.
             this.renderBoard();
+            if (hadFocus) this.focusMovedCard(suggestionId, columnKey);
         }
+    }
+
+    boardFocusKey() {
+        return document.activeElement?.dataset?.focus;
+    }
+
+    // Fokussiert das erste Ziel, das es gibt und das sichtbar ist: Ausgeblendete
+    // Elemente nimmt der Browser nicht an.
+    focusBoard(...keys) {
+        const targets = [...document.querySelectorAll('.tenant-view[data-view="board"] [data-focus]')];
+        for (const key of keys) {
+            const target = targets.find(element => element.dataset.focus === key);
+            target?.focus({ preventScroll: true });
+            if (target && document.activeElement === target) return target;
+        }
+        return null;
+    }
+
+    focusMovedCard(suggestionId, columnKey) {
+        const active = document.activeElement;
+        // Wer inzwischen woanders ist, bleibt dort.
+        const elsewhere = active && active !== document.body
+            && ![`card:${suggestionId}`, `menu:${suggestionId}`].includes(this.boardFocusKey());
+        if (elsewhere) return;
+
+        const target = this.focusBoard(`card:${suggestionId}`, `switch:${columnKey}`, `column:${columnKey}`);
+        // Gescrollt wird nur für die Tastatur, nicht nach Antippen oder Ziehen.
+        if (target?.matches(':focus-visible')) target.scrollIntoView({ block: 'nearest' });
     }
 
     renderBoard() {
@@ -783,26 +825,36 @@ class TenantAdminApp {
             ? '1 Eintrag wartet auf Freigabe. Du findest ihn unter Einträge.'
             : `${board.pendingCount} Einträge warten auf Freigabe. Du findest sie unter Einträge.`;
 
+        // Neuzeichnen ersetzt die Elemente: Fokus und Aufgeklapptes merken.
+        const focusKey = this.boardFocusKey();
+        const columns = document.getElementById('boardColumns');
+        const openCards = new Set([...columns.querySelectorAll('.board-card-details[open]')]
+            .map(details => details.closest('[data-board-card]').dataset.boardCard));
+
         document.getElementById('boardSwitcher').innerHTML = window.BoardModel.COLUMNS.map(({ key, label: name }) => `
             <button type="button" class="board-switch ${key === this.boardColumn ? 'is-active' : ''}"
-                    data-action="board-column" data-column="${key}" aria-pressed="${key === this.boardColumn}">
+                    data-action="board-column" data-column="${key}" data-focus="switch:${key}"
+                    aria-pressed="${key === this.boardColumn}">
                 <span>${name}</span>
                 <strong>${board.columns[key].total}</strong>
             </button>
         `).join('');
 
         const draggable = this.canManageWorkspace() && window.matchMedia(TenantAdminApp.WIDE_BOARD).matches;
-        document.getElementById('boardColumns').innerHTML = window.BoardModel.COLUMNS.map(({ key, label: name }) => {
+        columns.innerHTML = window.BoardModel.COLUMNS.map(({ key, label: name }) => {
             const { items, total } = board.columns[key];
             return `
-                <section class="board-column ${key === this.boardColumn ? 'is-current' : ''}" data-column="${key}" aria-label="${name}">
+                <section class="board-column ${key === this.boardColumn ? 'is-current' : ''}" data-column="${key}"
+                         data-focus="column:${key}" tabindex="-1" aria-label="${name}">
                     <h3 class="board-column-head"><span>${name}</span> <span class="board-column-count">${total}</span></h3>
-                    ${items.map(item => this.renderBoardCard(item, draggable)).join('')
+                    ${items.map(item => this.renderBoardCard(item, draggable, openCards.has(String(item.id)))).join('')
                         || '<p class="board-column-note">Keine Einträge.</p>'}
                     ${total > items.length ? `<p class="board-column-note">Zu sehen sind die letzten ${items.length}.</p>` : ''}
                 </section>
             `;
         }).join('');
+
+        if (focusKey) this.focusBoard(focusKey);
     }
 
     renderBoardFilters(labels) {
@@ -821,7 +873,7 @@ class TenantAdminApp {
         );
     }
 
-    renderBoardCard(item, draggable) {
+    renderBoardCard(item, draggable, open) {
         const id = this.escapeHtml(item.id);
         const priority = item.priority === 'kritisch' || item.priority === 'hoch'
             ? `<span class="tenant-badge board-priority-${item.priority}">${item.priority}</span>`
@@ -834,8 +886,8 @@ class TenantAdminApp {
 
         return `
             <article class="board-card" data-board-card="${id}"${draggable ? ' draggable="true"' : ''}>
-                <details class="board-card-details">
-                    <summary>
+                <details class="board-card-details"${open ? ' open' : ''}>
+                    <summary data-focus="card:${id}">
                         <span class="board-card-title">${this.escapeHtml(item.title)}</span>
                         <span class="tenant-badges">${priority}${badges}</span>
                     </summary>
@@ -843,9 +895,9 @@ class TenantAdminApp {
                 </details>
                 ${targets.length ? `
                 <details class="board-card-move" name="board-card-move">
-                    <summary>Verschieben nach</summary>
+                    <summary data-focus="menu:${id}">Verschieben nach</summary>
                     <div class="board-move-options">
-                        ${targets.map(({ key, label }) => `<button type="button" data-action="move-card" data-id="${id}" data-column="${key}">${label}</button>`).join('')}
+                        ${targets.map(({ key, label }) => `<button type="button" data-action="move-card" data-id="${id}" data-column="${key}" data-focus="menu:${id}">${label}</button>`).join('')}
                     </div>
                 </details>` : ''}
             </article>

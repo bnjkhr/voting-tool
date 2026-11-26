@@ -43,8 +43,8 @@
 - [ ] **Step 1: Failing tests**
   - jede Zeile der Spaltentabelle in beide Richtungen, für `ticket`, `bug`, `feature`; `statusFor('wartet','feature') === null`
   - `columnFor({approved:false,status:'neu'}) === null`; `columnFor({approved:true,status:'xyz'}) === 'offen'`; leerer Status ebenso
-  - Sortierung: `kritisch`, `hoch`, `mittel`, `niedrig`, dann `ticketNumber` zahlenrichtig (`TB-002` vor `TB-010`)
-  - „Fertig“: höchstens 20, neueste nach `tagUpdatedAt` (ersatzweise `createdAt`); `total` zählt alle
+  - Sortierung (außer „Fertig“): `kritisch`, `hoch`, `mittel`, `niedrig`, dann `ticketNumber` zahlenrichtig (`TB-002` vor `TB-010`)
+  - „Fertig“: höchstens 20, nach `tagUpdatedAt` (ersatzweise `createdAt`), neueste zuerst; `total` zählt alle
   - Filter `appId` und `label`; `pendingCount` zählt nicht freigegebene nach demselben Filter; `labels` ist die sortierte, eindeutige Liste aller Labels
   - `needsConfirm`: `{userFingerprint:'api:k1'}` falsch; `{userFingerprint:'1.2.3.4_abc'}`, `{}` und `{userFingerprint:'api:k1',notificationEnabled:true}` wahr
 - [ ] **Step 2: Rot** `node --test tests/board-model.test.js` → FAIL (Modul fehlt)

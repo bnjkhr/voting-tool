@@ -32,6 +32,7 @@ function fakeClassList(initial = []) {
 function fakeElement() {
   const listeners = {};
   return {
+    listens: (type) => (listeners[type] || []).length,
     innerHTML: '',
     textContent: '',
     value: '',
@@ -98,6 +99,64 @@ function parseTags(markup) {
     }));
 }
 
+// Elemente aus gerendertem Markup: genug für closest(), [open] und den Fokus.
+function parseNodes(markup, container, dom) {
+  const nodes = [];
+  const stack = [];
+  const tag = /<(\/?)([a-zA-Z][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  for (const [, closing, name, rest] of String(markup).matchAll(tag)) {
+    if (closing) {
+      stack.pop();
+      continue;
+    }
+    const [{ attributes }] = parseTags(`<${name}${rest}>`);
+    const own = fakeTarget(attributes);
+    const node = {
+      tag: name.toLowerCase(),
+      attributes,
+      container,
+      parent: stack.at(-1) || null,
+      dataset: own.dataset,
+      classList: own.classList,
+      matchesSelf: (selector) => own.closest(selector) !== null,
+      closest(selector) {
+        for (let current = node; current; current = current.parent) {
+          if (current.matchesSelf(selector)) return current;
+        }
+        return null;
+      },
+      focus() { if (!dom.isHidden(node)) dom.active = node; },
+      matches: () => false,
+      scrollIntoView() {},
+    };
+    nodes.push(node);
+    stack.push(node);
+  }
+  return nodes;
+}
+
+function fakeContainer(id, dom) {
+  const element = fakeElement();
+  let html = '';
+  let nodes = [];
+  Object.defineProperty(element, 'innerHTML', {
+    get: () => html,
+    set(value) {
+      // Wie im Browser: mit dem alten Inhalt geht auch der Fokus verloren.
+      if (dom.active?.container === id) dom.active = null;
+      html = value;
+      nodes = parseNodes(value, id, dom);
+    },
+  });
+  element.nodes = () => nodes;
+  // Versteht zusammengesetzte Selektoren wie „.klasse[attr]“.
+  element.querySelectorAll = (selector) => {
+    const parts = selector.match(/\.[\w-]+|\[[^\]]+\]/g);
+    return nodes.filter((node) => parts.every((part) => node.matchesSelf(part)));
+  };
+  return element;
+}
+
 const settle = async () => {
   for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
 };
@@ -124,15 +183,25 @@ function entry(id, fields = {}) {
 
 const APPS = [{ id: 'a1', name: 'Web', slug: 'web' }, { id: 'a2', name: 'iOS', slug: 'ios' }];
 
-async function openConsole(suggestions, { role = 'owner', wide = true, confirmAnswer = true, apps = APPS, load = true } = {}) {
-  const server = { suggestions: structuredClone(suggestions), apps, failWith: null, hold: null };
+async function openConsole(suggestions, { role = 'owner', wide = true, confirmAnswer = true, apps = APPS, load = true, missing = [] } = {}) {
+  const server = {
+    suggestions: structuredClone(suggestions), apps, failWith: null, hold: null,
+    // Antworten auf die Liste zurückhalten, um sie in anderer Reihenfolge zu liefern.
+    deferList: false, waiting: [], failList: null, removeOnWrite: false,
+  };
   const calls = { requests: [], confirm: [], hash: [] };
 
+  const dom = { active: null };
   const elements = new Map();
+  const containers = ['boardSwitcher', 'boardColumns'];
   const element = (id) => {
-    if (!elements.has(id)) elements.set(id, fakeElement());
+    if (!elements.has(id)) {
+      elements.set(id, containers.includes(id) ? fakeContainer(id, dom) : fakeElement());
+    }
     return elements.get(id);
   };
+  const boardNodes = () => containers.flatMap((id) => element(id).nodes());
+  const documentNode = fakeElement();
 
   const viewNodes = (pattern) => [...html.matchAll(pattern)].map((match) => {
     const node = fakeElement();
@@ -155,20 +224,38 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
     return media.get(query);
   };
 
+  // Bildet nach, was das Stylesheet und geschlossene <details> ausblenden.
+  dom.isHidden = (node) => {
+    for (let child = node; child.parent; child = child.parent) {
+      if (child.parent.tag === 'details' && !('open' in child.parent.attributes) && child.tag !== 'summary') return true;
+    }
+    if (node.container === 'boardSwitcher') return matchMedia(WIDE).matches;
+    const column = node.closest('.board-column');
+    return !matchMedia(WIDE).matches && column !== null && !column.matchesSelf('.is-current');
+  };
+
   const respond = (payload, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => payload });
   async function authFetch(url, options = {}) {
     const method = options.method || 'GET';
     const body = options.body ? JSON.parse(options.body) : undefined;
     calls.requests.push({ method, url, body });
     const route = url.replace('/api/admin/tenants/acme', '');
-    if (method === 'GET' && route === '/suggestions') return respond(structuredClone(server.suggestions));
+    if (method === 'GET' && route === '/suggestions') {
+      const answer = server.failList
+        ? respond({ error: server.failList }, false)
+        : respond(structuredClone(server.suggestions));
+      if (server.deferList) await new Promise((resolve) => server.waiting.push(resolve));
+      return answer;
+    }
     if (method === 'GET' && route === '/apps') return respond(server.apps);
     if (method === 'GET') return respond({});
     const status = /^\/suggestions\/([^/]+)\/status$/.exec(route);
     if (method === 'PUT' && status) {
       if (server.hold) await server.hold;
       if (server.failWith) return respond({ error: server.failWith }, false);
-      server.suggestions.find((item) => item.id === decodeURIComponent(status[1])).status = body.status;
+      const id = decodeURIComponent(status[1]);
+      server.suggestions.find((item) => item.id === id).status = body.status;
+      if (server.removeOnWrite) server.suggestions = server.suggestions.filter((item) => item.id !== id);
       return respond({ success: true });
     }
     throw new Error(`Unerwartete Anfrage: ${method} ${url}`);
@@ -182,11 +269,16 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
     history: { replaceState: (state, title, url) => calls.hash.push(url) },
     confirm: (message) => { calls.confirm.push(message); return confirmAnswer; },
     document: {
-      getElementById: element,
+      get activeElement() { return dom.active; },
+      addEventListener: documentNode.addEventListener,
+      getElementById: (id) => (missing.includes(id) ? null : element(id)),
       querySelector: () => null,
       querySelectorAll: (selector) => {
         if (selector === '.tenant-view') return sections;
         if (selector.startsWith('#tenantTabs')) return tabs;
+        if (selector === '.tenant-view[data-view="board"] [data-focus]') {
+          return boardNodes().filter((node) => 'data-focus' in node.attributes);
+        }
         return [];
       },
     },
@@ -200,10 +292,17 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
 
   vm.createContext(context);
   vm.runInContext(read('board-model.js'), context);
-  vm.runInContext(
-    read('tenant-admin.js').replace('const tenantAdmin = new TenantAdminApp();', 'this.app = new TenantAdminApp();'),
-    context,
-  );
+  let startError = null;
+  try {
+    vm.runInContext(
+      read('tenant-admin.js').replace('const tenantAdmin = new TenantAdminApp();', 'this.app = new TenantAdminApp();'),
+      context,
+    );
+  } catch (error) {
+    if (!missing.length) throw error;
+    startError = error;
+  }
+  if (missing.length) return { element, startError };
 
   const { app } = context;
   app.currentRole = role;
@@ -241,8 +340,26 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
   const column = (key) => find('boardColumns', (attributes) => attributes['data-column'] === key
     && /(^| )board-column( |$)/.test(attributes.class || ''));
 
+  const node = (key) => {
+    const found = boardNodes().find((candidate) => candidate.attributes['data-focus'] === key);
+    assert.ok(found, `Kein Fokusziel ${key}`);
+    return found;
+  };
+  const focused = () => dom.active?.attributes?.['data-focus'] ?? null;
+  const cardDetails = (id) => element('boardColumns').querySelectorAll('.board-card-details')
+    .find((details) => details.closest('[data-board-card]').dataset.boardCard === id);
+  // Wie mit der Tastatur: Menü öffnen, Knopf fokussieren, auslösen.
+  const pressMove = (id, to) => {
+    const button = element('boardColumns').nodes().find(({ attributes }) => attributes['data-action'] === 'move-card'
+      && attributes['data-id'] === id && attributes['data-column'] === to);
+    button.parent.parent.attributes.open = '';
+    button.focus();
+    element('boardColumns').fire('click', fakeEvent(button));
+  };
+
   return {
     app, server, calls, element, markup, tags, columnMarkup, cardsIn, cardMarkup, moveTargets, writes, find, card, column, sections, tabs, matchMedia,
+    dom, documentNode, node, focused, cardDetails, pressMove,
   };
 }
 
@@ -549,12 +666,15 @@ function drag(board, id, to) {
   const start = fakeEvent(board.card(id));
   const over = fakeEvent(board.column(to));
   const drop = fakeEvent(over.target);
+  drop.dataTransfer = start.dataTransfer;
   const columns = board.element('boardColumns');
   columns.fire('dragstart', start);
   columns.fire('dragover', over);
   const highlighted = over.target.classList.contains('is-drop-target');
   columns.fire('drop', drop);
-  columns.fire('dragend', fakeEvent(start.target));
+  const end = fakeEvent(start.target);
+  columns.fire('dragend', end);
+  board.documentNode.fire('dragend', end);
   return { start, over, drop, highlighted };
 }
 
@@ -699,4 +819,292 @@ test('Wird das gefilterte Board gelöscht, zeigt das Board wieder alle', async (
   await board.app.loadApps();
 
   assert.deepEqual(board.cardsIn('offen'), ['a', 'b']);
+});
+
+// ---------------------------------------------------------------------------
+// Stehen gebliebene Karten-id beim Ziehen
+// ---------------------------------------------------------------------------
+
+// Ziehgut von außen: kein dragstart auf dem Board, eigene Daten.
+function dropForeign(board, to, text) {
+  const over = fakeEvent(board.column(to));
+  const drop = fakeEvent(over.target);
+  if (text) drop.dataTransfer.setData('text/plain', text);
+  board.element('boardColumns').fire('dragover', over);
+  board.element('boardColumns').fire('drop', drop);
+  board.documentNode.fire('drop', drop);
+  return { over, drop };
+}
+
+for (const [what, text] of [['Text', 'Irgendein Text'], ['Datei', '']]) {
+  test(`Neu gezeichnet während des Ziehens: ${what} von außen verschiebt die alte Karte nicht`, async () => {
+    const board = await openConsole([entry('a')]);
+    board.element('boardColumns').fire('dragstart', fakeEvent(board.card('a')));
+    // Die gezogene Karte wird ersetzt, ihr dragend erreicht niemanden mehr.
+    board.app.renderBoard();
+
+    const { drop } = dropForeign(board, 'arbeit', text);
+    await settle();
+
+    assert.deepEqual(board.writes(), []);
+    assert.deepEqual(board.calls.confirm, []);
+    // Das Überfahren war angenommen: Der Browser darf das Abgelegte nicht öffnen.
+    assert.equal(drop.prevented, true);
+  });
+}
+
+test('Neu gezeichnet während des Ziehens: die eigene Karte lässt sich noch ablegen', async () => {
+  const board = await openConsole([entry('a')]);
+  const start = fakeEvent(board.card('a'));
+  board.element('boardColumns').fire('dragstart', start);
+  board.app.renderBoard();
+
+  const drop = fakeEvent(board.column('arbeit'));
+  drop.dataTransfer = start.dataTransfer;
+  board.element('boardColumns').fire('drop', drop);
+  await settle();
+
+  assert.deepEqual(board.writes().map(({ body }) => body.status), ['in Bearbeitung']);
+});
+
+for (const type of ['dragend', 'drop']) {
+  test(`${type} irgendwo im Dokument beendet das Ziehen`, async () => {
+    const board = await openConsole([entry('a')]);
+    board.element('boardColumns').fire('dragstart', fakeEvent(board.card('a')));
+
+    board.documentNode.fire(type, fakeEvent(fakeTarget({})));
+    const over = fakeEvent(board.column('arbeit'));
+    board.element('boardColumns').fire('dragover', over);
+
+    assert.equal(over.prevented, false);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Parallele Ladevorgänge
+// ---------------------------------------------------------------------------
+
+for (const order of [['newer', 'older'], ['older', 'newer']]) {
+  test(`Zwei Ladevorgänge, Antworten ${order.join(' vor ')}: nur der neueste zählt`, async () => {
+    const board = await openConsole([entry('a')]);
+    board.server.deferList = true;
+    const loads = {};
+    board.server.suggestions[0].status = 'in Bearbeitung';
+    loads.older = board.app.loadSuggestions();
+    board.server.suggestions[0].status = 'im Test';
+    loads.newer = board.app.loadSuggestions();
+    await settle();
+    const release = { older: board.server.waiting[0], newer: board.server.waiting[1] };
+
+    release[order[0]]();
+    await loads[order[0]];
+    // Eine ältere Antwort wird auch dann nicht übernommen, wenn sie zuerst kommt.
+    assert.deepEqual(board.cardsIn(order[0] === 'newer' ? 'test' : 'offen'), ['a']);
+
+    release[order[1]]();
+    await loads[order[1]];
+
+    assert.deepEqual(board.cardsIn('test'), ['a']);
+    assert.equal(board.app.suggestions[0].status, 'im Test');
+    // Gilt auch für die Einträge-Ansicht samt Statusfilter.
+    for (const id of ['suggestionsList', 'statusFilter']) {
+      assert.ok(board.markup(id).includes('im Test'), id);
+    }
+    assert.equal(board.markup('statusFilter').includes('in Bearbeitung'), false);
+  });
+}
+
+test('Zwei schnelle Verschiebungen: beide bleiben am Ziel, wenn die erste Antwort zuletzt kommt', async () => {
+  const board = await openConsole([entry('a'), entry('b')]);
+  board.server.deferList = true;
+
+  const first = board.app.moveCard('a', 'arbeit');
+  await settle();
+  const second = board.app.moveCard('b', 'test');
+  await settle();
+  assert.equal(board.server.waiting.length, 2);
+  board.server.waiting[1]();
+  await second;
+  board.server.waiting[0]();
+  await first;
+
+  assert.deepEqual(board.cardsIn('arbeit'), ['a']);
+  assert.deepEqual(board.cardsIn('test'), ['b']);
+});
+
+test('Ein älterer fehlgeschlagener Ladevorgang meldet den Fehler weiterhin', async () => {
+  const board = await openConsole([entry('a')]);
+  board.server.deferList = true;
+  board.server.failList = 'Liste nicht erreichbar';
+  const older = board.app.loadSuggestions();
+  board.server.failList = null;
+  const newer = board.app.loadSuggestions();
+  await settle();
+
+  board.server.waiting[1]();
+  await newer;
+  board.server.waiting[0]();
+
+  await assert.rejects(older, /Liste nicht erreichbar/);
+});
+
+// ---------------------------------------------------------------------------
+// Listener
+// ---------------------------------------------------------------------------
+
+test('Fehlt ein Board-Element, hängen die übrigen Listener trotzdem', async () => {
+  const board = await openConsole([], { missing: ['boardAppFilter'] });
+
+  assert.ok(board.startError, 'der Fehler wird nicht verschluckt');
+  for (const [id, type] of [
+    ['suggestionsList', 'click'], ['suggestionsList', 'change'], ['teamMembersList', 'click'],
+    ['teamInvitesList', 'click'], ['todoStack', 'click'], ['tenantTabs', 'click'],
+  ]) {
+    assert.equal(board.element(id).listens(type), 1, `${id} ${type}`);
+  }
+  assert.equal(board.element('filterPanel').open, true);
+});
+
+// ---------------------------------------------------------------------------
+// Neuzeichnen: aufgeklappte Karten und Tastaturfokus
+// ---------------------------------------------------------------------------
+
+const isOpen = (board, id) => 'open' in board.cardDetails(id).attributes;
+
+test('Aufgeklappte Karte bleibt nach dem Neuladen und Verschieben aufgeklappt', async () => {
+  const board = await openConsole([entry('a'), entry('b')]);
+  board.cardDetails('a').attributes.open = '';
+
+  await board.app.loadSuggestions();
+  assert.deepEqual([isOpen(board, 'a'), isOpen(board, 'b')], [true, false]);
+
+  await board.app.moveCard('a', 'test');
+  assert.deepEqual([isOpen(board, 'a'), isOpen(board, 'b')], [true, false]);
+});
+
+test('Zugeklappte Karte bleibt zugeklappt', async () => {
+  const board = await openConsole([entry('a')]);
+  board.cardDetails('a').attributes.open = '';
+  await board.app.loadSuggestions();
+  delete board.cardDetails('a').attributes.open;
+
+  await board.app.loadSuggestions();
+
+  assert.equal(isOpen(board, 'a'), false);
+});
+
+for (const key of ['card:a', 'menu:a']) {
+  test(`Neuladen lässt den Fokus auf ${key}`, async () => {
+    const board = await openConsole([entry('a'), entry('b')]);
+    const before = board.node(key);
+    before.focus();
+
+    await board.app.loadSuggestions();
+
+    assert.equal(board.focused(), key);
+    assert.notEqual(board.dom.active, before);
+  });
+}
+
+test('Der gewählte Umschalter behält den Fokus', async () => {
+  const board = await openConsole([entry('a')], { wide: false });
+  const button = board.node('switch:wartet');
+  button.focus();
+
+  board.element('boardSwitcher').fire('click', fakeEvent(button));
+
+  assert.equal(board.focused(), 'switch:wartet');
+  assert.notEqual(board.dom.active, button);
+});
+
+test('Nach dem Verschieben liegt der Fokus auf der verschobenen Karte', async () => {
+  const board = await openConsole([entry('a'), entry('b')]);
+
+  board.pressMove('a', 'test');
+  await settle();
+
+  assert.equal(board.focused(), 'card:a');
+  assert.equal(board.dom.active.closest('.board-column').dataset.column, 'test');
+});
+
+test('Schmal: ist die Karte nicht mehr sichtbar, liegt der Fokus auf dem Umschalter der Zielspalte', async () => {
+  const board = await openConsole([entry('a', { status: 'in Bearbeitung' })], { wide: false });
+
+  board.pressMove('a', 'test');
+  await settle();
+
+  assert.equal(board.focused(), 'switch:test');
+});
+
+test('Breit: ist die Karte nicht mehr da, liegt der Fokus auf der Zielspalte', async () => {
+  const board = await openConsole([entry('a')]);
+  board.server.removeOnWrite = true;
+
+  board.pressMove('a', 'test');
+  await settle();
+
+  assert.equal(board.focused(), 'column:test');
+  assert.equal(board.dom.active.attributes.tabindex, '-1');
+});
+
+for (const wide of [true, false]) {
+  const width = wide ? 'Breit' : 'Schmal';
+
+  test(`${width}: nach Fehlerantwort liegt der Fokus auf der Karte in der alten Spalte`, async () => {
+    const board = await openConsole([entry('a', { status: 'in Bearbeitung' })], { wide });
+    board.server.failWith = 'Fehler';
+
+    board.pressMove('a', 'test');
+    await settle();
+
+    assert.equal(board.focused(), 'card:a');
+    assert.equal(board.dom.active.closest('.board-column').dataset.column, 'arbeit');
+  });
+
+  test(`${width}: nach abgelehnter Rückfrage liegt der Fokus auf der Karte`, async () => {
+    const board = await openConsole(
+      [entry('a', { status: 'in Bearbeitung', userFingerprint: '1.2.3.4_abc' })],
+      { wide, confirmAnswer: false },
+    );
+
+    board.pressMove('a', 'test');
+    await settle();
+
+    assert.equal(board.focused(), 'card:a');
+  });
+}
+
+async function moveSlowly(board, meanwhile) {
+  let release;
+  board.server.hold = new Promise((resolve) => { release = resolve; });
+  board.pressMove('a', 'test');
+  await settle();
+  meanwhile();
+  release();
+  await settle();
+}
+
+test('Wer während des Speicherns weitergeht, behält seinen Fokus', async () => {
+  const board = await openConsole([entry('a'), entry('b')]);
+
+  await moveSlowly(board, () => board.node('card:b').focus());
+
+  assert.equal(board.focused(), 'card:b');
+});
+
+test('Fokus außerhalb des Boards wird nicht zurückgeholt', async () => {
+  const board = await openConsole([entry('a')]);
+  const outside = { dataset: {} };
+
+  await moveSlowly(board, () => { board.dom.active = outside; });
+
+  assert.equal(board.dom.active, outside);
+});
+
+test('Ohne Fokus auf dem Board setzt das Verschieben keinen', async () => {
+  const board = await openConsole([entry('a')]);
+
+  await board.app.moveCard('a', 'test');
+
+  assert.equal(board.dom.active, null);
 });

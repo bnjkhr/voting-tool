@@ -141,7 +141,7 @@ test('buildBoard: ohne Priorität wie mittel, ohne Ticketnummer ans Ende', () =>
   assert.deepEqual(titles(board.columns.offen), ['mit Nummer', 'ohne Nummer', 'niedrig']);
 });
 
-test('buildBoard: Fertig zeigt die 20 neuesten, total zählt alle', () => {
+test('buildBoard: Fertig zeigt die 20 neuesten, neueste zuerst, total zählt alle', () => {
   const day = (n) => `2026-01-${String(n).padStart(2, '0')}T12:00:00.000Z`;
   const done = Array.from({ length: 25 }, (_, index) => entry({
     title: `Tag ${index + 1}`,
@@ -157,8 +157,32 @@ test('buildBoard: Fertig zeigt die 20 neuesten, total zählt alle', () => {
   assert.equal(board.columns.fertig.total, 25);
   assert.deepEqual(
     titles(board.columns.fertig),
-    Array.from({ length: 20 }, (_, index) => `Tag ${index + 6}`),
+    Array.from({ length: 20 }, (_, index) => `Tag ${25 - index}`),
   );
+});
+
+test('buildBoard: in Fertig zählt das Datum, nicht Priorität oder Nummer', () => {
+  const done = (title, day, fields) => entry({ title, status: 'gelöst', tagUpdatedAt: `2026-02-0${day}T12:00:00Z`, ...fields });
+  const board = buildBoard([
+    done('alt, kritisch', 1, { priority: 'kritisch', ticketNumber: 'TB-001' }),
+    done('neu, niedrig', 3, { priority: 'niedrig', ticketNumber: 'TB-003' }),
+    done('mitte', 2, { ticketNumber: 'TB-002' }),
+  ]);
+
+  assert.deepEqual(titles(board.columns.fertig), ['neu, niedrig', 'mitte', 'alt, kritisch']);
+});
+
+test('buildBoard: gleiche oder fehlende Daten in Fertig ordnen sich nach Priorität und Nummer', () => {
+  const done = (title, fields) => entry({ title, status: 'gelöst', ...fields });
+  const same = '2026-02-01T12:00:00Z';
+  const board = buildBoard([
+    done('ohne Datum 2', { ticketNumber: 'TB-004' }),
+    done('gleich 2', { tagUpdatedAt: same, ticketNumber: 'TB-002' }),
+    done('ohne Datum 1', { ticketNumber: 'TB-003' }),
+    done('gleich 1', { tagUpdatedAt: same, ticketNumber: 'TB-001' }),
+  ]);
+
+  assert.deepEqual(titles(board.columns.fertig), ['gleich 1', 'gleich 2', 'ohne Datum 1', 'ohne Datum 2']);
 });
 
 test('buildBoard: Fertig versteht Firestore-Zeitstempel und nimmt ersatzweise createdAt', () => {
