@@ -22,6 +22,24 @@ const collections = new Map();
 const sentMails = [];
 let nextId = 0;
 
+// Gelesene Sammlungen in Reihenfolge, und gestörte Sammlungen.
+const readLog = [];
+const brokenReads = new Map();
+
+// Lässt jedes Lesen der Sammlung scheitern, mit `hang` hängen. Gibt die
+// Funktion zurück, die die Störung wieder aufhebt.
+function failReads(name, { hang = false } = {}) {
+  brokenReads.set(name, hang);
+  return () => brokenReads.delete(name);
+}
+
+async function noteRead(name) {
+  readLog.push(name);
+  if (!brokenReads.has(name)) return;
+  if (brokenReads.get(name)) await new Promise(() => {});
+  throw new Error(`Lesen von „${name}“ ist gestört`);
+}
+
 function records(name) {
   if (!collections.has(name)) collections.set(name, new Map());
   return collections.get(name);
@@ -45,6 +63,7 @@ function docRef(name, id) {
   const ref = {
     id,
     async get() {
+      await noteRead(name);
       const stored = records(name).get(id);
       return { id, ref, exists: Boolean(stored), data: () => (stored ? { ...stored } : undefined) };
     },
@@ -67,6 +86,7 @@ function query(name, filters = [], max = Infinity) {
     limit: (count) => query(name, filters, count),
     orderBy: () => query(name, filters, max),
     async get() {
+      await noteRead(name);
       const matches = [...records(name).entries()]
         .filter(([, data]) => filters.every(({ field, op, value }) => (
           op === 'in' ? value.includes(data[field]) : data[field] === value
@@ -151,6 +171,8 @@ function dump() {
 function reset() {
   collections.clear();
   sentMails.length = 0;
+  readLog.length = 0;
+  brokenReads.clear();
 }
 
 let clientCounter = 0;
@@ -187,4 +209,4 @@ async function startApp() {
   return { request, close };
 }
 
-module.exports = { dump, records, reset, seed, sentMails, startApp };
+module.exports = { dump, failReads, readLog, records, reset, seed, sentMails, startApp };
