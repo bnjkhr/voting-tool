@@ -114,7 +114,8 @@ async function list(repos, tenant, log) {
     log(`Board ${source.boardSlug}`);
     log(`  Quelle: ${await describeSource(repos, source)}`);
     log(`  Holen: ${source.fetchEnabled ? 'an' : 'aus'}`);
-    log(`  Zuletzt geholt: ${source.lastFetchedAt ? source.lastFetchedAt.toISOString() : 'noch nie'}`);
+    const fetchedAt = source.lastFetchedAt?.toISOString() || 'offen (noch nie oder Einträge ausstehend)';
+    log(`  Zuletzt geholt: ${fetchedAt}`);
     log(`  Warten auf Freigabe: ${source.unapprovedCount}`);
     log(`  Fehler: ${source.lastError || 'keiner'}`);
   }

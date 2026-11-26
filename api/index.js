@@ -8321,6 +8321,9 @@ const FEEDBACK_FETCH_FAILED = 'Die Quelle ließ sich nicht holen.';
 // Deutlich unter der Laufzeitgrenze der Function (vercel.json), damit eine
 // hängende Quelle die anderen nicht mitnimmt.
 const FEEDBACK_READ_TIMEOUT_MS = 10000;
+// Ab dieser Zeit nach Beginn des Holens entsteht kein weiteres Ticket: Der Rest
+// folgt beim nächsten Aufruf, und Bericht und Stand kommen noch an.
+const FEEDBACK_FETCH_BUDGET_MS = 20000;
 
 // Meldungen, die so in die Antwort dürfen. Alles andere bleibt im Server-Log.
 class FeedbackSourceError extends Error {}
@@ -8334,7 +8337,8 @@ function buildFeedbackEntry(data, type, status) {
   return {
     id: data.id,
     type,
-    status,
+    // Postgres lehnt Nullzeichen ab; der Status geht in ein Update für alle.
+    status: typeof status === 'string' ? status.replaceAll('\u0000', '') : status,
     approved: data.approved === true,
     title: data.title,
     description: data.description,
@@ -8447,7 +8451,33 @@ async function loadFeedbackState(tenant) {
   };
 }
 
-async function fetchFeedbackSource(tenant, source, { dryRun, actor }) {
+// Legt die Tickets einer Quelle an, jedes für sich: Ein fehlerhafter Eintrag
+// hält die anderen nicht auf. Nach `deadline` bleibt der Rest ausstehend.
+async function createFeedbackTickets(tenant, source, entries, { actor, deadline }) {
+  const outcome = { created: [], failed: 0, pending: 0 };
+  for (const [index, entry] of entries.entries()) {
+    if (Date.now() >= deadline) {
+      outcome.pending = entries.length - index;
+      break;
+    }
+    try {
+      const { created, suggestion } = await repos.feedback.createTicketWithLink({
+        source, entry, ticket: feedbackLinks.buildTicketFromEntry(entry),
+      });
+      if (!created) continue;
+      outcome.created.push({ id: suggestion.id, ticketNumber: suggestion.ticketNumber, title: suggestion.title });
+      await logActivity(suggestion.id, 'created', {
+        detail: 'Aus öffentlichem Feedback geholt', actor, tenantId: tenant.id,
+      });
+    } catch (error) {
+      outcome.failed += 1;
+      console.error(`Error creating ticket for feedback entry ${entry.id} (source ${source.id}):`, error);
+    }
+  }
+  return outcome;
+}
+
+async function fetchFeedbackSource(tenant, source, { dryRun, actor, deadline }) {
   const report = {
     sourceId: source.id,
     board: source.boardSlug,
@@ -8456,6 +8486,8 @@ async function fetchFeedbackSource(tenant, source, { dryRun, actor }) {
     wouldCreate: [],
     refreshed: 0,
     missing: 0,
+    failed: 0,
+    pending: 0,
     unapprovedCount: source.unapprovedCount,
   };
   try {
@@ -8486,24 +8518,24 @@ async function fetchFeedbackSource(tenant, source, { dryRun, actor }) {
       return report;
     }
 
-    await repos.feedback.refreshLinks([
+    report.refreshed = await repos.feedback.refreshLinks([
       ...plan.refresh,
       ...plan.missing.map(linkId => ({ linkId, publicDeleted: true })),
     ]);
-    report.refreshed = plan.refresh.length;
 
-    for (const entry of plan.toCreate) {
-      const { created, suggestion } = await repos.feedback.createTicketWithLink({
-        source, entry, ticket: feedbackLinks.buildTicketFromEntry(entry),
-      });
-      if (!created) continue;
-      report.created.push({ id: suggestion.id, ticketNumber: suggestion.ticketNumber, title: suggestion.title });
-      await logActivity(suggestion.id, 'created', {
-        detail: 'Aus öffentlichem Feedback geholt', actor, tenantId: tenant.id,
-      });
+    Object.assign(report, await createFeedbackTickets(tenant, source, plan.toCreate, { actor, deadline }));
+    if (report.failed > 0) {
+      report.result = 'error';
+      report.error = report.failed === 1
+        ? '1 Eintrag ließ sich nicht holen.'
+        : `${report.failed} Einträge ließen sich nicht holen.`;
     }
 
-    await repos.feedback.recordFetch(source.id, { unapprovedCount: plan.unapprovedCount });
+    await repos.feedback.recordFetch(source.id, {
+      unapprovedCount: plan.unapprovedCount,
+      error: report.error,
+      releaseMarker: report.pending > 0,
+    });
     return report;
   } catch (error) {
     console.error(`Error fetching feedback source ${source.id}:`, error);
@@ -8518,9 +8550,12 @@ async function fetchFeedbackSource(tenant, source, { dryRun, actor }) {
 
 // Jede Quelle für sich: Ein Fehler hält die anderen nicht auf.
 async function fetchFeedback(tenant, { dryRun = false, actor = 'admin' } = {}) {
+  const deadline = Date.now() + FEEDBACK_FETCH_BUDGET_MS;
   const sources = await repos.feedback.listSources(tenant.id);
   return {
-    sources: await Promise.all(sources.map(source => fetchFeedbackSource(tenant, source, { dryRun, actor }))),
+    sources: await Promise.all(sources.map(
+      source => fetchFeedbackSource(tenant, source, { dryRun, actor, deadline })
+    )),
   };
 }
 
@@ -8543,7 +8578,11 @@ async function handleFeedbackFetch(req, res, tenant, actor) {
     if (!feedbackEnabled(tenant)) return res.status(409).json({ error: FEEDBACK_ONLY_PRIVATE });
     if (!isValidDryRun(req.body)) return res.status(400).json({ error: 'dryRun muss true oder false sein.' });
     const result = await fetchFeedback(tenant, { dryRun: req.body?.dryRun === true, actor });
-    res.json({ ...result, state: await loadFeedbackState(tenant) });
+    // Die Tickets sind angelegt: Scheitert nur der Stand, kommt der Bericht
+    // ohne ihn an.
+    const state = await loadFeedbackState(tenant)
+      .catch(error => console.error('Error loading feedback state after fetch:', error));
+    res.json({ ...result, state });
   } catch (error) {
     console.error('Error fetching feedback:', error);
     res.status(500).json({ error: 'Failed to fetch feedback' });

@@ -197,7 +197,7 @@ async function openConsole(suggestions, {
     deferList: false, waiting: [], failList: null, removeOnWrite: false,
     // Verknüpfungen: Stand, Antwort des Holens und Fehler.
     feedback: structuredClone(feedback), failFeedback: false, fetchAnswer: null, failFetch: null,
-    holdFetch: null, failLink: null,
+    holdFetch: null, failLink: null, dropState: false,
   };
   const calls = { requests: [], confirm: [], hash: [] };
 
@@ -269,6 +269,7 @@ async function openConsole(suggestions, {
       if (server.holdFetch) await server.holdFetch;
       if (server.failFetch) return respond({ error: server.failFetch }, false);
       const answer = server.fetchAnswer?.(server) || { sources: [] };
+      if (server.dropState) return respond(answer);
       return respond({ ...answer, state: structuredClone(server.feedback) });
     }
     const linkRoute = /^\/suggestions\/([^/]+)\/link$/.exec(route);
@@ -1299,6 +1300,53 @@ test('Holen gebremst: nennt die Uhrzeit fünf Minuten nach dem letzten Holen', a
     .toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 
   assert.equal(resultText(board), `Gerade erst geholt. Wieder ab ${time}.`);
+});
+
+for (const [fields, text] of [
+  [{ pending: 1 }, '1 Eintrag folgt beim nächsten Holen.'],
+  [{ pending: 2 }, '2 Einträge folgen beim nächsten Holen.'],
+  [{ pending: 3, created: [{ id: 'n' }] }, '1 neues Ticket geholt. 3 Einträge folgen beim nächsten Holen.'],
+]) {
+  test(`Holen mit Ausstehendem: „${text}“`, async () => {
+    const board = await openBoard([entry('a')], {}, (server) => {
+      server.fetchAnswer = report('fetched', fields);
+    });
+
+    assert.equal(resultText(board), text);
+  });
+}
+
+for (const [why, created] of [['mit neuen Tickets', [{ id: 'n' }]], ['ohne neue Tickets', []]]) {
+  test(`Holbericht ohne Stand (${why}): Das Board lädt neu und holt den Stand nach`, async () => {
+    const board = await openBoard([entry('a')], { feedback: connected([publicLink('a')]) }, (server) => {
+      server.dropState = true;
+      server.fetchAnswer = (current) => {
+        current.suggestions.push(entry('n'));
+        current.feedback = connected([publicLink('a'), publicLink('n', { publicStatus: 'wartend' })]);
+        return report('fetched', { created })();
+      };
+    });
+
+    assert.deepEqual(board.cardsIn('offen').sort(), ['a', 'n']);
+    assert.ok(board.cardMarkup('n').includes('Öffentlich: wartend'));
+    assert.equal(resultText(board), created.length ? '1 neues Ticket geholt.' : 'Keine neuen Tickets.');
+    assert.equal(hidden(board, 'boardFeedback'), false);
+    assert.equal(hidden(board, 'feedbackFetchBtn'), false);
+  });
+}
+
+test('Holbericht ohne Stand, Nachladen scheitert auch: Die Meldung bleibt, der alte Stand auch', async () => {
+  const board = await openBoard([entry('a')], { feedback: connected([publicLink('a')]) }, (server) => {
+    server.dropState = true;
+    server.fetchAnswer = (current) => {
+      current.failFeedback = true;
+      return report('fetched')();
+    };
+  });
+
+  assert.equal(resultText(board), 'Keine neuen Tickets.');
+  assert.ok(board.cardMarkup('a').includes('Öffentlich: im Test'));
+  assert.equal(hidden(board, 'feedbackFetchBtn'), false);
 });
 
 test('Eine Quelle holt, eine scheitert: beides steht da', async () => {

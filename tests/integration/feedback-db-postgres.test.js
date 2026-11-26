@@ -57,6 +57,12 @@ suite('Verknüpfungen: Repository', async (t) => {
     sourceAppId: `test_fbdb_quelle_${appId}`, ...overrides,
   });
 
+  // Angeschlossen und eingeschaltet: Nur so entstehen Tickets.
+  const ready = async (appId, overrides) => {
+    const source = await connect(appId, overrides);
+    return feedback.setFetchEnabled(source.id, true);
+  };
+
   const ticket = (overrides = {}) => ({
     type: 'ticket', title: 'Titel', description: 'Text', priority: 'hoch', status: 'neu',
     labels: ['Feedback'], approved: true, userFingerprint: 'api:feedback',
@@ -128,7 +134,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('Quelle mit Verknüpfungen lässt sich nicht umhängen', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     await create(source, 'e1');
 
     await assert.rejects(
@@ -167,7 +173,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('Ticket und Verknüpfung entstehen zusammen', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
 
     const result = await create(source, 'e1');
 
@@ -189,7 +195,7 @@ suite('Verknüpfungen: Repository', async (t) => {
   await t.test('Ziel-Board kommt aus der Zeile, nicht aus dem Aufruf', async () => {
     const appId = await board();
     const fremd = await board(ACME);
-    const source = await connect(appId);
+    const source = await ready(appId);
 
     const result = await feedback.createTicketWithLink({
       source: { ...source, appId: fremd, tenantId: ACME },
@@ -203,7 +209,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('kein Ticket, wenn der Workspace nicht mehr privat ist', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     await query("update tenants set status = 'active' where id = $1", [INTERN]);
     try {
       assert.equal((await create(source, 'e1')).created, false);
@@ -215,7 +221,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('gleichzeitige Inserts ergeben ein Ticket', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
 
     const results = await Promise.all(Array.from({ length: 5 }, () => create(source, 'e1')));
 
@@ -225,7 +231,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('Ticketnummer läuft in der Transaktion', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
 
     await assert.rejects(create(source, 'e1', { priority: 'dringend' }), { code: '23514' });
 
@@ -281,7 +287,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('refreshLinks zeigt den neuen Stand; gelöscht behält den letzten', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     await create(source, 'e1');
     const [link] = await feedback.listLinksBySource(source.id);
 
@@ -305,7 +311,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('listLinks nennt Board und Quelle und bleibt im Workspace', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     await create(source, 'e1');
 
     const link = (await feedback.listLinks(INTERN)).find((row) => row.sourceId === source.id);
@@ -319,7 +325,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('Grabstein nach Löschen und Lösen', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     const deleted = (await create(source, 'e1')).suggestion;
     const unlinked = (await create(source, 'e2')).suggestion;
 
@@ -335,7 +341,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('Lösen nur im eigenen Workspace und nur, was verknüpft ist', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     const { suggestion } = await create(source, 'e1');
 
     assert.equal(await feedback.unlinkSuggestion({ tenantId: ACME, suggestionId: suggestion.id }), false);
@@ -345,7 +351,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('von Hand verknüpfen', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     const tombstone = (await create(source, 'e1')).suggestion;
     await suggestions.remove(tombstone.id);
     const own = (id) => suggestions.create({
@@ -398,10 +404,76 @@ suite('Verknüpfungen: Repository', async (t) => {
     assert.equal((await feedback.listLinksBySource(source.id)).length, 1);
   });
 
+  await t.test('ausgeschaltete Quelle: kein Ticket, auch mitten in einem Lauf', async () => {
+    const appId = await board();
+    const source = await ready(appId);
+    assert.equal((await create(source, 'e1')).created, true);
+    // Der Lauf hält noch den Stand von vorher in der Hand.
+    await feedback.setFetchEnabled(source.id, false);
+
+    assert.equal((await create(source, 'e2')).created, false);
+
+    assert.deepEqual(await counts(appId, source.id), { tickets: 1, links: 1, next: 2 });
+  });
+
+  await t.test('recordFetch gibt die Marke frei, wenn Einträge ausstehen', async () => {
+    const appId = await board();
+    const source = await ready(appId);
+    await feedback.claimFetch(source.id);
+
+    await feedback.recordFetch(source.id, { unapprovedCount: 1 });
+    assert.equal(await feedback.claimFetch(source.id), false);
+
+    await feedback.recordFetch(source.id, { unapprovedCount: 1, releaseMarker: true });
+    assert.equal((await feedback.findSourceByApp(INTERN, appId)).lastFetchedAt, null);
+    const claims = await Promise.all(Array.from({ length: 5 }, () => feedback.claimFetch(source.id)));
+    assert.equal(claims.filter(Boolean).length, 1);
+  });
+
+  await t.test('refreshLinks schreibt nur, was sich geändert hat', async () => {
+    const appId = await board();
+    const source = await ready(appId);
+    await create(source, 'e1');
+    await create(source, 'e2');
+    const [first, second] = await feedback.listLinksBySource(source.id);
+    const versions = async () => (await query(
+      'select entry_id, xmin::text as version from feedback_links where source_id = $1 order by entry_id',
+      [source.id]
+    )).rows;
+    const seen = (link, overrides = {}) => ({
+      linkId: link.id, publicStatus: 'wird geprüft', publicType: 'feature', publicApproved: true,
+      publicDeleted: false, ...overrides,
+    });
+    const before = await versions();
+
+    assert.equal(await feedback.refreshLinks([]), 0);
+    assert.equal(await feedback.refreshLinks([seen(first), seen(second)]), 0);
+    assert.deepEqual(await versions(), before);
+
+    for (const change of [{ publicStatus: 'im Test' }, { publicType: 'bug' }, { publicApproved: false }]) {
+      const rows = await versions();
+      assert.equal(await feedback.refreshLinks([seen(first, change), seen(second)]), 1, JSON.stringify(change));
+      const after = await versions();
+      assert.notEqual(after[0].version, rows[0].version);
+      assert.equal(after[1].version, rows[1].version);
+      assert.equal(await feedback.refreshLinks([seen(first)]), 1);
+    }
+
+    const gone = { linkId: first.id, publicDeleted: true };
+    assert.equal(await feedback.refreshLinks([gone]), 1);
+    assert.equal(await feedback.refreshLinks([gone]), 0);
+    // Wieder da.
+    assert.equal(await feedback.refreshLinks([seen(first)]), 1);
+
+    // Nie gesehen (von Hand verknüpft) wird auch ohne Unterschied geschrieben.
+    await query('update feedback_links set public_seen_at = null where id = $1', [second.id]);
+    assert.equal(await feedback.refreshLinks([seen(second)]), 1);
+  });
+
   await t.test('inzwischen geänderte Quelle: kein Ticket aus dem alten Stand', async () => {
     const appId = await board();
-    const stale = await connect(appId);
-    await connect(appId, { sourceAppId: `test_fbdb_neu_${appId}` });
+    const stale = await ready(appId);
+    await ready(appId, { sourceAppId: `test_fbdb_neu_${appId}` });
 
     assert.equal((await create(stale, 'e1')).created, false);
 
@@ -510,7 +582,7 @@ suite('Verknüpfungen: Repository', async (t) => {
 
   await t.test('Board löschen räumt Quelle und Verknüpfungen ab', async () => {
     const appId = await board();
-    const source = await connect(appId);
+    const source = await ready(appId);
     await create(source, 'e1');
 
     await apps.remove(appId, INTERN);

@@ -141,6 +141,14 @@ test('list zeigt Quelle, Schalter, letzte Marke und Fehler', async () => {
   assertClean(output);
 });
 
+test('list: freie Marke (noch nie geholt oder Einträge ausstehend)', async () => {
+  const { output } = await runScript(['list', '--workspace', 'intern'], {
+    repos: fakeRepos({ sources: [SOURCE] }),
+  });
+
+  assert.ok(output.includes('Zuletzt geholt: offen (noch nie oder Einträge ausstehend)'), output);
+});
+
 test('list ohne Quellen', async () => {
   const { output } = await runScript(['list', '--workspace', 'intern']);
 

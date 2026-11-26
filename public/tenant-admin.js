@@ -803,6 +803,8 @@ class TenantAdminApp {
         this.feedbackMessage = '';
         this.renderFeedback();
         let created = 0;
+        // Bericht ohne Stand: Tickets sind angelegt, der Stand fehlt noch.
+        let stateMissing = false;
         try {
             const response = await this.adminFetch(this.tenantAdminPath('/feedback/fetch'), {
                 method: 'POST',
@@ -814,7 +816,8 @@ class TenantAdminApp {
             // Ein noch laufendes Lesen wäre jetzt veraltet.
             this.feedbackLoads += 1;
             created = result.sources.reduce((sum, source) => sum + (source.created?.length || 0), 0);
-            this.applyFeedback(result.state);
+            stateMissing = !result.state;
+            if (!stateMissing) this.applyFeedback(result.state);
             this.feedbackMessage = this.describeFetch(result.sources, created);
         } catch (error) {
             console.error('Error fetching feedback:', error);
@@ -823,12 +826,18 @@ class TenantAdminApp {
             this.feedbackFetching = false;
             this.renderFeedback();
         }
-        if (created === 0) return;
+        if (created === 0 && !stateMissing) return;
         try {
             await Promise.all([this.loadStats(), this.loadSuggestions()]);
         } catch (error) {
             console.error('Error reloading after fetching feedback:', error);
         }
+        if (!stateMissing) return;
+        // Das Ergebnis des Holens bleibt stehen, auch wenn das Lesen scheitert.
+        const summary = this.feedbackMessage;
+        await this.reloadFeedbackState();
+        this.feedbackMessage = summary;
+        this.renderFeedback();
     }
 
     // Ergebnis eines Holvorgangs als ein, zwei Sätze.
@@ -843,6 +852,12 @@ class TenantAdminApp {
         parts.push(...reports
             .filter(report => report.result === 'error' || report.error)
             .map(report => `${boardName(report)} ließ sich nicht holen.`));
+        const pending = reports.reduce((sum, report) => sum + (report.pending || 0), 0);
+        if (pending > 0) {
+            parts.push(pending === 1
+                ? '1 Eintrag folgt beim nächsten Holen.'
+                : `${pending} Einträge folgen beim nächsten Holen.`);
+        }
         if (parts.length > 0) return parts.join(' ');
 
         if (reports.length === 0) return 'Es ist noch kein Board angeschlossen.';

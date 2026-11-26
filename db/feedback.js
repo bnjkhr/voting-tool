@@ -134,13 +134,15 @@ async function claimFetch(sourceId) {
 }
 
 // Ergebnis eines Holvorgangs. Ohne `unapprovedCount` (Fehler) bleibt die
-// zuletzt gezählte Anzahl stehen.
-async function recordFetch(sourceId, { unapprovedCount = null, error = null } = {}) {
+// zuletzt gezählte Anzahl stehen. `releaseMarker`: Es stehen noch Einträge aus,
+// der nächste Aufruf darf ohne die 5 Minuten weitermachen.
+async function recordFetch(sourceId, { unapprovedCount = null, error = null, releaseMarker = false } = {}) {
   await query(
     `update feedback_sources
-        set unapproved_count = coalesce($2::int, unapproved_count), last_error = $3
+        set unapproved_count = coalesce($2::int, unapproved_count), last_error = $3,
+            last_fetched_at = case when $4::bool then null else last_fetched_at end
       where id = $1`,
-    [sourceId, unapprovedCount, error]
+    [sourceId, unapprovedCount, error, releaseMarker]
   );
 }
 
@@ -171,7 +173,9 @@ async function listLinksBySource(sourceId) {
 // bekommt dann keine Zeile und legt nichts an. Workspace und Board kommen aus der
 // Zeile der Quelle, nie aus dem Aufruf.
 // Wurde die Quelle seit dem Lesen umgehängt, gehören die Einträge nicht mehr zu
-// ihr: Dann entsteht nichts (`for share` hält die Zeile bis zum Commit).
+// ihr, und wurde das Holen inzwischen ausgeschaltet, soll ein laufender Lauf
+// aufhören: In beiden Fällen entsteht nichts (`for share` hält die Zeile bis zum
+// Commit).
 async function createTicketWithLink({ source, entry, ticket }) {
   return withTransaction(async (client) => {
     const exec = (text, params) => client.query(text, params);
@@ -181,7 +185,7 @@ async function createTicketWithLink({ source, entry, ticket }) {
        select s.tenant_id, s.id, $2, $3, $4, $5, now()
          from feedback_sources s
          join tenants t on t.id = s.tenant_id and t.status = 'private'
-        where s.id = $1 and s.source_app_id = $6
+        where s.id = $1 and s.source_app_id = $6 and s.fetch_enabled
           for share of s
        on conflict do nothing
        returning id, tenant_id, source_id`,
@@ -206,23 +210,34 @@ async function createTicketWithLink({ source, entry, ticket }) {
   });
 }
 
-// Zuletzt gesehener öffentlicher Stand. Bei `publicDeleted` bleiben Status, Typ
-// und Zeitpunkt der letzten Sichtung stehen.
+// Zuletzt gesehener öffentlicher Stand, in einer Abfrage. Geschrieben wird nur,
+// was sich geändert hat oder noch nie gesehen wurde; `public_seen_at` ist also
+// der Zeitpunkt der letzten Änderung. Bei `publicDeleted` bleiben Status, Typ
+// und dieser Zeitpunkt stehen. Liefert die Anzahl geschriebener Verknüpfungen.
 async function refreshLinks(changes) {
-  for (const {
-    linkId, publicStatus = null, publicType = null, publicApproved = null, publicDeleted = false,
-  } of changes) {
-    await query(
-      `update feedback_links set
-         public_status = case when $5::bool then public_status else $2 end,
-         public_type = case when $5::bool then public_type else $3 end,
-         public_approved = case when $5::bool then public_approved else $4::bool end,
-         public_deleted = $5::bool,
-         public_seen_at = case when $5::bool then public_seen_at else now() end
-       where id = $1`,
-      [linkId, publicStatus, publicType, publicApproved, publicDeleted]
-    );
-  }
+  if (changes.length === 0) return 0;
+  const column = (key, fallback = null) => changes.map((change) => change[key] ?? fallback);
+  const { rowCount } = await query(
+    `update feedback_links l set
+       public_status = case when c.deleted then l.public_status else c.status end,
+       public_type = case when c.deleted then l.public_type else c.type end,
+       public_approved = case when c.deleted then l.public_approved else c.approved end,
+       public_deleted = c.deleted,
+       public_seen_at = case when c.deleted then l.public_seen_at else now() end
+     from unnest($1::text[], $2::text[], $3::text[], $4::bool[], $5::bool[])
+       as c(id, status, type, approved, deleted)
+    where l.id = c.id and (
+      l.public_deleted <> c.deleted
+      or (not c.deleted and (
+        l.public_seen_at is null
+        or (l.public_status, l.public_type, l.public_approved)
+           is distinct from (c.status, c.type, c.approved))))`,
+    [
+      column('linkId'), column('publicStatus'), column('publicType'),
+      column('publicApproved'), column('publicDeleted', false),
+    ]
+  );
+  return rowCount;
 }
 
 // Verknüpft ein vorhandenes Ticket von Hand. Ein Grabstein bekommt das neue

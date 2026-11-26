@@ -406,9 +406,156 @@ suite('Holen und Verknüpfen gegen Postgres', async (t) => {
     for (const key of ['alt', 'neu']) {
       assert.equal(resultFor(res, key).result, 'fetched');
       assert.deepEqual(resultFor(res, key).created, []);
-      assert.equal(resultFor(res, key).refreshed, 2);
+      // Nichts hat sich geändert, also wird nichts geschrieben.
+      assert.equal(resultFor(res, key).refreshed, 0);
+      assert.equal(resultFor(res, key).pending, 0);
     }
     assert.equal((await fetched()).length, 2);
+  });
+
+  const linkVersions = () => rows(
+    'select id, xmin::text as version, public_seen_at from feedback_links where tenant_id = $1 order by id',
+    [INTERN]
+  );
+
+  await t.test('unveränderte Verknüpfungen werden nicht geschrieben', async () => {
+    await seed();
+    await consoleFetch();
+    // Auch ein fehlender Eintrag wird nur einmal vermerkt.
+    fake.records('suggestions').delete('leg_offen');
+    await resetMarks();
+    await consoleFetch();
+    const before = await linkVersions();
+    await resetMarks();
+
+    await consoleFetch();
+
+    assert.deepEqual(await linkVersions(), before);
+  });
+
+  // Weitere offene Einträge in der Workspace-Quelle.
+  const addOpen = async (...ids) => {
+    for (const id of ids) await sourceRow(id, SOURCE_APP, ACME, { title: `Neu ${id}`, status: 'offen' });
+  };
+  // Stört das Anlegen: `before` läuft vor jedem Aufruf und darf werfen.
+  const interceptCreate = (before) => {
+    const original = repos.feedback.createTicketWithLink;
+    let calls = 0;
+    repos.feedback.createTicketWithLink = async (input) => {
+      calls += 1;
+      await before(input, calls);
+      return original(input);
+    };
+    return () => { repos.feedback.createTicketWithLink = original; };
+  };
+
+  await t.test('ein fehlerhafter Eintrag bricht die Quelle nicht ab', async () => {
+    await seed();
+    await addOpen('test_fbget_zwei', 'test_fbget_drei');
+    const restore = interceptCreate((input) => {
+      if (input.entry.id === 'test_fbget_zwei') throw new Error('kaputter Eintrag');
+    });
+    let res;
+    try {
+      res = await consoleFetch();
+    } finally {
+      restore();
+    }
+
+    assert.equal(res.status, 200, res.text);
+    const result = resultFor(res, 'neu');
+    assert.equal(result.result, 'error');
+    assert.equal(result.error, '1 Eintrag ließ sich nicht holen.');
+    assert.equal(result.failed, 1);
+    assert.equal(result.pending, 0);
+    assert.deepEqual(result.created.map((item) => item.title).sort(), ['Neu offen', 'Neu test_fbget_drei']);
+    assert.equal(result.unapprovedCount, 1);
+    const stored = res.body.state.sources.find((source) => source.id === sources.neu.id);
+    assert.equal(stored.lastError, '1 Eintrag ließ sich nicht holen.');
+    assert.equal(stored.unapprovedCount, 1);
+    assert.equal(resultFor(res, 'alt').result, 'fetched');
+    // Beim nächsten Holen kommt er nach, und der Fehler ist weg.
+    await resetMarks();
+    const again = await consoleFetch();
+    assert.deepEqual(resultFor(again, 'neu').created.map((item) => item.title), ['Neu test_fbget_zwei']);
+    assert.equal(again.body.state.sources.find((source) => source.id === sources.neu.id).lastError, null);
+  });
+
+  await t.test('Zeitgrenze: Rest steht aus, der nächste Aufruf macht ohne Sperre weiter', async () => {
+    await seed();
+    await addOpen('test_fbget_zwei', 'test_fbget_drei');
+    await repos.feedback.setFetchEnabled(sources.alt.id, false);
+    const realNow = Date.now;
+    let skew = 0;
+    // Nach dem ersten Ticket ist die Zeit um.
+    const restore = interceptCreate((input, calls) => { if (calls === 1) skew = 25000; });
+    Date.now = () => realNow() + skew;
+    let res;
+    try {
+      res = await consoleFetch();
+    } finally {
+      Date.now = realNow;
+      restore();
+    }
+
+    assert.equal(res.status, 200, res.text);
+    const result = resultFor(res, 'neu');
+    assert.equal(result.result, 'fetched');
+    assert.equal(result.created.length, 1);
+    assert.equal(result.pending, 2);
+    assert.equal(result.unapprovedCount, 1);
+    const stored = res.body.state.sources.find((source) => source.id === sources.neu.id);
+    assert.equal(stored.lastFetchedAt, null);
+    assert.equal(stored.unapprovedCount, 1);
+    assert.equal(stored.lastError, null);
+
+    const next = await consoleFetch();
+
+    assert.equal(resultFor(next, 'neu').result, 'fetched');
+    assert.equal(resultFor(next, 'neu').created.length, 2);
+    assert.equal(resultFor(next, 'neu').pending, 0);
+    assert.equal((await fetched()).length, 3);
+    assert.equal(resultFor(await consoleFetch(), 'neu').result, 'throttled');
+  });
+
+  await t.test('Ausschalten stoppt einen laufenden Lauf', async () => {
+    await seed();
+    await addOpen('test_fbget_zwei', 'test_fbget_drei');
+    const restore = interceptCreate(async (input, calls) => {
+      if (calls === 2) await repos.feedback.setFetchEnabled(sources.neu.id, false);
+    });
+    await repos.feedback.setFetchEnabled(sources.alt.id, false);
+    let res;
+    try {
+      res = await consoleFetch();
+    } finally {
+      restore();
+    }
+
+    assert.equal(res.status, 200, res.text);
+    assert.equal(resultFor(res, 'neu').created.length, 1);
+    assert.equal((await fetched()).length, 1);
+  });
+
+  await t.test('lässt sich nach dem Holen nur der Stand nicht laden, kommt der Bericht', async () => {
+    for (const headers of ['console', 'v1']) {
+      await seed();
+      const original = repos.feedback.listLinks;
+      repos.feedback.listLinks = async () => { throw new Error('Stand gestört'); };
+      let res;
+      try {
+        res = headers === 'console'
+          ? await consoleFetch()
+          : await send('POST', '/api/v1/feedback/fetch', {}, keys.full);
+      } finally {
+        repos.feedback.listLinks = original;
+      }
+
+      assert.equal(res.status, 200, res.text);
+      assert.equal(res.body.state, undefined);
+      assert.deepEqual(res.body.sources.map((source) => source.result), ['fetched', 'fetched']);
+      assert.equal(res.body.sources.flatMap((source) => source.created).length, 2);
+    }
   });
 
   await t.test('Probelauf schreibt nichts', async () => {

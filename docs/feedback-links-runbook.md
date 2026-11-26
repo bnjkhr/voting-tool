@@ -126,7 +126,7 @@ Erwartet mit `--commit`: `Holen für Board "<ziel-board>" ist an.`
 
 `voting_fetch_feedback` ohne Argumente. Meldet eine Quelle `throttled`, hat schon ein anderer Aufruf geholt; dann die neuen Tickets mit `voting_list_open` messen.
 
-Bricht der Aufruf mit einer Zeitüberschreitung ab (die Function läuft höchstens 30 Sekunden), nach fünf Minuten wiederholen: Schon angelegte Tickets bleiben, nichts entsteht doppelt. Meldet eine Quelle `result: "error"`, steht der Grund in `error` und im Vercel-Log.
+Nach 20 Sekunden legt ein Aufruf keine weiteren Tickets an (die Function läuft höchstens 30 Sekunden). Dann steht in `notice` „… Einträge folgen beim nächsten Holen.“: sofort wiederholen, die 5-Minuten-Sperre gilt in diesem Fall nicht. Meldet eine Quelle `result: "error"`, steht der Grund in `error` und im Vercel-Log; einzelne fehlerhafte Einträge (`failed`) halten die anderen nicht auf und werden beim nächsten Holen erneut versucht. Bricht ein Aufruf trotzdem ganz ab, nach fünf Minuten wiederholen: Schon angelegte Tickets bleiben, nichts entsteht doppelt.
 
 Messen:
 
@@ -148,4 +148,4 @@ Holen stoppen, je Board erst ohne, dann mit `--commit`:
 npm run feedback:sources -- disable --workspace <ziel-workspace> --board <ziel-board>
 ```
 
-Danach bei Bedarf den Code zurücknehmen. Migration und Tabellen bleiben; ältere Code-Stände kennen sie nicht. Schon geholte Tickets bleiben stehen. Wer eines löscht, bekommt es nicht erneut geholt.
+`disable --commit` stoppt auch einen gerade laufenden Holvorgang: Danach entsteht kein Ticket mehr aus dieser Quelle. Bei Bedarf den Code zurücknehmen. Migration und Tabellen bleiben; ältere Code-Stände kennen sie nicht. Schon geholte Tickets bleiben stehen. Wer eines löscht, bekommt es nicht erneut geholt.
