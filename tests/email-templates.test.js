@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { senderAddress, brandButton, wrapEmail, htmlEscape, adminNotificationUrl, tenantBoardEntryUrl } = require('../api/email-templates');
+const {
+  senderAddress, brandButton, wrapEmail, htmlEscape, adminNotificationUrl, tenantBoardEntryUrl,
+  buildLegacyStatusMail, buildTenantStatusMail, legacySenderAddress,
+} = require('../api/email-templates');
+const { reset, seed, sentMails, startApp } = require('./fake-app');
 const apiSource = fs.readFileSync(path.join(__dirname, '..', 'api/index.js'), 'utf8');
 
 test('brandButton rendert einen Terracotta-CTA mit der Ziel-URL', () => {
@@ -78,3 +82,84 @@ test('keine E-Mail nennt mehr "Voting Tool" oder dupliziert die Absenderzeile', 
   assert.equal(apiSource.includes("process.env.EMAIL_FROM || 'onboarding@resend.dev'"), false,
     'Absenderadresse läuft jetzt über senderAddress()');
 });
+
+const LEGACY_MAIL = {
+  entryId: 'e1', title: 'Beispieltitel', appName: 'Beispiel-App', entryType: 'feature', status: 'ist umgesetzt',
+};
+
+test('Mail zum alten Board sieht aus wie im alten Stand, Link auf votingtool.benkohler.de', () => {
+  // Fixture: die Vorlage aus origin/legacy-stable, mit Platzhaltern ausgewertet.
+  const fixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'legacy-status-mail.html'), 'utf8');
+
+  const mail = buildLegacyStatusMail(LEGACY_MAIL);
+
+  assert.equal(mail.html, fixture);
+  assert.equal(mail.subject, 'Ihr Vorschlag "Beispieltitel" - Status aktualisiert');
+  assert.ok(mail.html.includes('href="https://votingtool.benkohler.de/#suggestion-e1"'));
+  assert.ok(mail.html.includes('<strong>Typ:</strong> Vorschlag'));
+});
+
+test('Mail zum alten Board maskiert Werte, Link und Absender kommen nie aus BASE_URL', () => {
+  const mail = buildLegacyStatusMail({
+    ...LEGACY_MAIL, entryType: 'bug', title: '<b>fett</b>', appName: 'A & "B"', status: '<i>x</i>',
+  });
+
+  assert.ok(mail.html.includes('&lt;b&gt;fett&lt;/b&gt;'));
+  assert.ok(mail.html.includes('A &amp; &quot;B&quot;'));
+  assert.ok(mail.html.includes('Neuer Status: &lt;i&gt;x&lt;/i&gt;'));
+  assert.equal(/<b>|<i>/.test(mail.html), false);
+  assert.equal(mail.html.includes('localhost'), false);
+  assert.equal(mail.subject, 'Ihr Bug "<b>fett</b>" - Status aktualisiert');
+});
+
+test('legacySenderAddress kommt nur aus LEGACY_EMAIL_FROM', () => {
+  const before = { legacy: process.env.LEGACY_EMAIL_FROM, from: process.env.EMAIL_FROM };
+  try {
+    process.env.EMAIL_FROM = 'Roadlight <hallo@example.test>';
+    delete process.env.LEGACY_EMAIL_FROM;
+    assert.equal(legacySenderAddress(), null);
+    process.env.LEGACY_EMAIL_FROM = '   ';
+    assert.equal(legacySenderAddress(), null);
+    process.env.LEGACY_EMAIL_FROM = '  Altes Board <alt@example.test> ';
+    assert.equal(legacySenderAddress(), 'Altes Board <alt@example.test>');
+  } finally {
+    for (const [name, value] of [['LEGACY_EMAIL_FROM', before.legacy], ['EMAIL_FROM', before.from]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+for (const [type, label] of [['ticket', 'Ticket'], ['bug', 'Bug'], ['feature', 'Vorschlag']]) {
+  test(`Workspace-Mail (${label}) gleicht der Mail der Statusroute`, async () => {
+    reset();
+    seed('tenants', 't1', { slug: 'acme', status: 'active', name: 'Acme' });
+    seed('apps', 'a1', { tenantId: 't1', slug: 'board', name: 'Board & <Co>' });
+    seed('suggestions', 's1', {
+      tenantId: 't1', appId: 'a1', type, title: 'Titel <mit> "Zeichen"', status: 'neu', approved: true,
+      notificationEnabled: true, notificationEmail: 'person@example.test',
+    });
+    const server = await startApp();
+    try {
+      const res = await server.request('/api/admin/tenants/acme/suggestions/s1/status', {
+        method: 'PUT',
+        body: { status: type === 'feature' ? 'ist umgesetzt' : 'gelöst' },
+        headers: { authorization: 'Bearer test-admin-password' },
+      });
+      assert.equal(res.status, 200, res.text);
+    } finally {
+      await server.close();
+    }
+
+    assert.equal(sentMails.length, 1);
+    const mail = buildTenantStatusMail({
+      title: 'Titel <mit> "Zeichen"', appName: 'Board & <Co>', entryType: type,
+      status: type === 'feature' ? 'ist umgesetzt' : 'gelöst',
+      entryUrl: tenantBoardEntryUrl(process.env.BASE_URL, 'acme', 'board', 's1'),
+    });
+    assert.deepEqual(
+      { subject: mail.subject, html: mail.html, from: senderAddress() },
+      { subject: sentMails[0].subject, html: sentMails[0].html, from: sentMails[0].from }
+    );
+  });
+}
