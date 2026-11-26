@@ -119,8 +119,10 @@ async function remove(id, tenantId) {
 
 // Atomarer Ticketnummer-Bump: liefert die auszugebende Nummer und erhöht den
 // Zähler in einem Schritt. Ersetzt collection 'counters' + runTransaction.
-async function nextTicketNumber(appId) {
-  const { rows } = await query(
+// `exec` ist der Pool oder ein Transaktions-Client: Innerhalb einer Transaktion
+// rollt ein Fehler auch den Zähler zurück.
+async function nextTicketNumber(appId, exec = query) {
+  const { rows } = await exec(
     `update apps set next_ticket_number = next_ticket_number + 1
      where id = $1 returning next_ticket_number - 1 as issued, ticket_prefix`,
     [appId]
