@@ -45,7 +45,7 @@ Stand 26.11.2026, Tickets RL-012 und RL-013. Entwurfsbild freigegeben, gebaut wi
 | 6 | `#F2E8DD` | `#7A4A1E` |
 | 7 | `#E6E9EE` | `#3E4C63` |
 
-Die Board-Auswahl der Anlege-Karte trägt dieselbe Farbe. Die Konsole hat keinen Dunkelmodus.
+Die Board-Auswahl der Anlege-Karte hat dieselbe Farbe. Die Konsole hat keinen Dunkelmodus.
 
 ## Prüfen
 

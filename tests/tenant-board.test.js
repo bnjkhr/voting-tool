@@ -565,7 +565,7 @@ const DATED_APPS = [
 ];
 const badge = (board, id, text) => parseTags(`${board.cardMarkup(id).split(`>${text}</span>`)[0]}>`).at(-1).attributes.class;
 
-test('Board-Tag trägt die Farbe seines Boards, Nummer und Labels bleiben neutral', async () => {
+test('Board-Tag hat die Farbe seines Boards, Nummer und Labels bleiben neutral', async () => {
   const board = await openConsole([
     entry('a', { ticketNumber: 'WEB-042', labels: ['Export'] }),
     entry('b', { appId: 'a2', app: DATED_APPS[0] }),
