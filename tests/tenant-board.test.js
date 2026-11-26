@@ -38,6 +38,10 @@ function fakeElement() {
     value: '',
     dataset: {},
     classList: fakeClassList(),
+    // Für <dialog>.
+    open: false,
+    showModal() { this.open = true; },
+    close() { this.open = false; },
     addEventListener(type, handler) { (listeners[type] ||= []).push(handler); },
     fire(type, event) { (listeners[type] || []).forEach((handler) => handler(event)); },
   };
@@ -183,11 +187,17 @@ function entry(id, fields = {}) {
 
 const APPS = [{ id: 'a1', name: 'Web', slug: 'web' }, { id: 'a2', name: 'iOS', slug: 'ios' }];
 
-async function openConsole(suggestions, { role = 'owner', wide = true, confirmAnswer = true, apps = APPS, load = true, missing = [] } = {}) {
+async function openConsole(suggestions, {
+  role = 'owner', wide = true, confirmAnswer = true, apps = APPS, load = true, missing = [],
+  feedback = { enabled: false, sources: [], links: [] }, signIn = false, hash = '',
+} = {}) {
   const server = {
     suggestions: structuredClone(suggestions), apps, failWith: null, hold: null,
     // Antworten auf die Liste zurückhalten, um sie in anderer Reihenfolge zu liefern.
     deferList: false, waiting: [], failList: null, removeOnWrite: false,
+    // Verknüpfungen: Stand, Antwort des Holens und Fehler.
+    feedback: structuredClone(feedback), failFeedback: false, fetchAnswer: null, failFetch: null,
+    holdFetch: null, failLink: null,
   };
   const calls = { requests: [], confirm: [], hash: [] };
 
@@ -248,6 +258,29 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
       return answer;
     }
     if (method === 'GET' && route === '/apps') return respond(server.apps);
+    if (url === '/api/auth/session') {
+      return respond({ user: { email: 'a@example.test' }, memberships: [{ tenantSlug: 'acme', role }] });
+    }
+    if (method === 'GET' && route === '/feedback') {
+      if (server.failFeedback) return respond({ error: 'Failed to load feedback links' }, false);
+      return respond(structuredClone(server.feedback));
+    }
+    if (method === 'POST' && route === '/feedback/fetch') {
+      if (server.holdFetch) await server.holdFetch;
+      if (server.failFetch) return respond({ error: server.failFetch }, false);
+      const answer = server.fetchAnswer?.(server) || { sources: [] };
+      return respond({ ...answer, state: structuredClone(server.feedback) });
+    }
+    const linkRoute = /^\/suggestions\/([^/]+)\/link$/.exec(route);
+    if (linkRoute) {
+      if (server.failLink) return respond({ error: server.failLink }, false);
+      const suggestionId = decodeURIComponent(linkRoute[1]);
+      const others = server.feedback.links.filter((item) => item.suggestionId !== suggestionId);
+      server.feedback.links = method === 'PUT'
+        ? [...others, { suggestionId, entryId: body.entryId, publicDeleted: false, publicSeenAt: null, url: null }]
+        : others;
+      return respond({ success: true });
+    }
     if (method === 'GET') return respond({});
     const status = /^\/suggestions\/([^/]+)\/status$/.exec(route);
     if (method === 'PUT' && status) {
@@ -284,10 +317,11 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
     },
   };
   context.window = {
-    location: { search: '?tenant=acme', hash: '', pathname: '/tenant-admin.html', host: 'localhost', protocol: 'http:' },
+    location: { search: '?tenant=acme', hash, pathname: '/tenant-admin.html', host: 'localhost', protocol: 'http:' },
     matchMedia,
     // Die Anmeldung bleibt offen: die Tests laden selbst, was sie brauchen.
-    adminAuth: { requireTenantAuth: () => new Promise(() => {}), authFetch },
+    // Mit `signIn` läuft der echte Start samt Sitzung durch.
+    adminAuth: { requireTenantAuth: () => (signIn ? Promise.resolve() : new Promise(() => {})), authFetch },
   };
 
   vm.createContext(context);
@@ -305,12 +339,17 @@ async function openConsole(suggestions, { role = 'owner', wide = true, confirmAn
   if (missing.length) return { element, startError };
 
   const { app } = context;
-  app.currentRole = role;
-  if (load) {
-    await app.loadApps();
-    await app.loadSuggestions();
+  if (signIn) {
+    await settle();
+  } else {
+    app.currentRole = role;
+    app.sessionReady = true;
+    if (load) {
+      await app.loadApps();
+      await app.loadSuggestions();
+    }
+    calls.requests.length = 0;
   }
-  calls.requests.length = 0;
 
   const markup = (id) => element(id).innerHTML;
   const tags = () => parseTags(markup('boardColumns'));
@@ -1107,4 +1146,366 @@ test('Ohne Fokus auf dem Board setzt das Verschieben keinen', async () => {
   await board.app.moveCard('a', 'test');
 
   assert.equal(board.dom.active, null);
+});
+
+// ---------------------------------------------------------------------------
+// Verknüpfung mit öffentlichen Einträgen
+// ---------------------------------------------------------------------------
+
+const FEEDBACK_BASE = '/api/admin/tenants/acme';
+const connected = (links = [], sources = [{}]) => ({
+  enabled: true,
+  sources: sources.map((source, index) => ({
+    id: `q${index + 1}`, appId: 'a1', boardName: 'Web', sourceLabel: 'Altes Board', fetchEnabled: true,
+    lastFetchedAt: '2026-11-26T10:00:00.000Z', unapprovedCount: 0, lastError: null, ...source,
+  })),
+  links,
+});
+const publicLink = (suggestionId, fields = {}) => ({
+  suggestionId, entryId: 'e1', publicStatus: 'im Test', publicApproved: true, publicDeleted: false,
+  publicSeenAt: '2026-11-26T10:00:00.000Z', url: 'https://example.test/board', ...fields,
+});
+const report = (result, fields = {}) => () => ({
+  sources: [{ sourceId: 'q1', board: 'web', result, created: [], ...fields }],
+});
+const requested = (board) => board.calls.requests
+  .filter(({ url }) => url.includes('/feedback') || url.endsWith('/link'))
+  .map(({ method, url }) => `${method} ${url.replace(FEEDBACK_BASE, '')}`);
+const resultText = (board) => board.element('feedbackResult').textContent;
+const hidden = (board, id) => board.element(id).classList.contains('is-hidden');
+const actions = (board, id) => parseTags(board.cardMarkup(id))
+  .map(({ attributes }) => attributes['data-action'])
+  .filter((action) => action === 'link-card' || action === 'unlink-card');
+
+async function openBoard(suggestions, options, prepare = () => {}) {
+  const board = await openConsole(suggestions, { feedback: connected(), ...options });
+  prepare(board.server);
+  board.app.switchView('board');
+  await settle();
+  return board;
+}
+
+const clickCard = async (board, action, id) => {
+  const button = board.find('boardColumns', (attributes) => attributes['data-action'] === action
+    && attributes['data-id'] === id);
+  board.element('boardColumns').fire('click', fakeEvent(button));
+  await settle();
+};
+
+test('Board öffnen lädt den Stand und holt dann', async () => {
+  const board = await openBoard([entry('a')]);
+
+  assert.deepEqual(requested(board), ['GET /feedback', 'POST /feedback/fetch']);
+  assert.deepEqual(board.calls.requests.find(({ method }) => method === 'POST').body, {});
+  assert.equal(hidden(board, 'boardFeedback'), false);
+  assert.equal(hidden(board, 'feedbackFetchBtn'), false);
+});
+
+test('Den offenen Reiter noch einmal antippen holt nicht erneut, erneutes Öffnen schon', async () => {
+  const board = await openBoard([entry('a')]);
+
+  board.app.switchView('board');
+  await settle();
+  assert.equal(requested(board).length, 2);
+
+  board.app.switchView('entries');
+  board.app.switchView('board');
+  await settle();
+  assert.equal(requested(board).length, 4);
+});
+
+test('Direkt auf #board: geholt wird erst mit geladener Sitzung', async () => {
+  const board = await openConsole([entry('a')], { feedback: connected(), signIn: true, hash: '#board' });
+
+  assert.deepEqual(requested(board), ['GET /feedback', 'POST /feedback/fetch']);
+});
+
+test('Andere Reiter holen nicht', async () => {
+  const board = await openConsole([entry('a')], { feedback: connected(), signIn: true });
+
+  assert.deepEqual(requested(board), []);
+});
+
+test('viewer: kein Holen, kein „Verknüpfen“, aber der öffentliche Stand', async () => {
+  const board = await openBoard([entry('a'), entry('b')], {
+    role: 'viewer', feedback: connected([publicLink('a')]),
+  });
+
+  assert.deepEqual(requested(board), ['GET /feedback']);
+  assert.equal(hidden(board, 'feedbackFetchBtn'), true);
+  assert.deepEqual(actions(board, 'a'), []);
+  assert.deepEqual(actions(board, 'b'), []);
+  assert.ok(board.cardMarkup('a').includes('Öffentlich: im Test'));
+});
+
+test('Ohne Verknüpfungen (enabled false): kein Holen, kein Link, nichts zu sehen', async () => {
+  const board = await openBoard([entry('a')], { feedback: { enabled: false, sources: [], links: [] } });
+
+  assert.deepEqual(requested(board), ['GET /feedback']);
+  assert.equal(hidden(board, 'boardFeedback'), true);
+  assert.deepEqual(actions(board, 'a'), []);
+  assert.equal(board.cardMarkup('a').includes('Öffentlich'), false);
+});
+
+test('Holen scheitert: Das Board zeigt die Karten und die Meldung', async () => {
+  const board = await openBoard([entry('a')], {}, (server) => { server.failFetch = 'Failed to fetch feedback'; });
+
+  assert.deepEqual(board.cardsIn('offen'), ['a']);
+  assert.equal(resultText(board), 'Feedback ließ sich nicht holen.');
+  assert.equal(hidden(board, 'feedbackResult'), false);
+});
+
+test('Stand lässt sich nicht laden: Karten bleiben, Meldung, kein Holen', async () => {
+  const board = await openBoard([entry('a')], {}, (server) => { server.failFeedback = true; });
+
+  assert.deepEqual(board.cardsIn('offen'), ['a']);
+  assert.deepEqual(requested(board), ['GET /feedback']);
+  assert.equal(resultText(board), 'Der öffentliche Stand ließ sich nicht laden.');
+  assert.equal(hidden(board, 'boardFeedback'), false);
+  assert.equal(hidden(board, 'feedbackFetchBtn'), true);
+});
+
+for (const [count, text] of [[1, '1 neues Ticket geholt.'], [2, '2 neue Tickets geholt.']]) {
+  test(`Neue Tickets (${count}): Meldung, und das Board lädt neu`, async () => {
+    const created = Array.from({ length: count }, (_, i) => ({ id: `n${i}` }));
+    const board = await openBoard([entry('a')], {}, (server) => {
+      server.fetchAnswer = (current) => {
+        current.suggestions.push(...created.map(({ id }) => entry(id)));
+        return report('fetched', { created })();
+      };
+    });
+
+    assert.equal(resultText(board), text);
+    assert.equal(board.cardsIn('offen').length, count + 1);
+  });
+}
+
+for (const [why, answer, text] of [
+  ['nichts Neues', report('fetched'), 'Keine neuen Tickets.'],
+  ['ausgeschaltet', report('disabled'), 'Holen ist noch nicht eingeschaltet.'],
+  ['Fehler', report('error', { error: 'x' }), 'Web ließ sich nicht holen.'],
+  ['alter Fehler', report('throttled', { error: 'x' }), 'Web ließ sich nicht holen.'],
+]) {
+  test(`Holen, ${why}: „${text}“`, async () => {
+    const board = await openBoard([entry('a')], {}, (server) => { server.fetchAnswer = answer; });
+
+    assert.equal(resultText(board), text);
+  });
+}
+
+test('Holen gebremst: nennt die Uhrzeit fünf Minuten nach dem letzten Holen', async () => {
+  const board = await openBoard([entry('a')], {}, (server) => { server.fetchAnswer = report('throttled'); });
+  const time = new Date('2026-11-26T10:05:00.000Z')
+    .toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+
+  assert.equal(resultText(board), `Gerade erst geholt. Wieder ab ${time}.`);
+});
+
+test('Eine Quelle holt, eine scheitert: beides steht da', async () => {
+  const board = await openBoard([entry('a')], {
+    feedback: connected([], [{}, { appId: 'a2', boardName: 'iOS' }]),
+  }, (server) => {
+    server.fetchAnswer = () => ({
+      sources: [
+        { sourceId: 'q1', board: 'web', result: 'fetched', created: [{ id: 'n' }] },
+        { sourceId: 'q2', board: 'ios', result: 'error', created: [], error: 'x' },
+      ],
+    });
+  });
+
+  assert.equal(resultText(board), '1 neues Ticket geholt. iOS ließ sich nicht holen.');
+});
+
+test('Textlink „Feedback holen“ holt, aber nie doppelt gleichzeitig', async () => {
+  const board = await openBoard([entry('a')]);
+  let release;
+  board.server.holdFetch = new Promise((resolve) => { release = resolve; });
+  board.calls.requests.length = 0;
+
+  board.element('feedbackFetchBtn').fire('click', {});
+  board.element('feedbackFetchBtn').fire('click', {});
+  await settle();
+  assert.equal(board.element('feedbackFetchBtn').disabled, true);
+  release();
+  await settle();
+
+  assert.deepEqual(requested(board), ['POST /feedback/fetch']);
+  assert.equal(board.element('feedbackFetchBtn').disabled, false);
+});
+
+test('Über dem Board steht, wie viele öffentlich auf Freigabe warten', async () => {
+  const board = await openBoard([entry('a')], {
+    feedback: connected([], [{ unapprovedCount: 2 }, { appId: 'a2', boardName: 'iOS', unapprovedCount: 1 }]),
+  });
+
+  assert.equal(
+    board.element('feedbackUnapproved').textContent,
+    'Öffentlich warten 3 Einträge auf Freigabe: Web 2, iOS 1.'
+  );
+  assert.equal(hidden(board, 'feedbackUnapproved'), false);
+});
+
+test('Ohne wartende Einträge bleibt die Zeile weg', async () => {
+  const board = await openBoard([entry('a')]);
+
+  assert.equal(hidden(board, 'feedbackUnapproved'), true);
+});
+
+test('Karte zeigt den öffentlichen Status mit „ansehen“ in neuem Tab', async () => {
+  const board = await openBoard([entry('a'), entry('b')], { feedback: connected([publicLink('a')]) });
+
+  assert.ok(board.cardMarkup('a').includes('Öffentlich: im Test'));
+  const [anchor] = parseTags(board.cardMarkup('a')).filter(({ tag }) => tag === 'a');
+  assert.deepEqual(
+    [anchor.attributes.href, anchor.attributes.target, anchor.attributes.rel, anchor.attributes.draggable],
+    ['https://example.test/board', '_blank', 'noopener', 'false']
+  );
+  assert.equal(board.cardMarkup('b').includes('Öffentlich'), false);
+});
+
+test('Status von außen wird als Text gezeigt', async () => {
+  const board = await openBoard([entry('a')], {
+    feedback: connected([publicLink('a', {
+      publicStatus: '<img src=x onerror=alert(1)>', url: 'https://example.test/"><img src=x>',
+    })]),
+  });
+
+  assert.equal(board.tags().some(({ tag }) => tag === 'img'), false);
+  assert.ok(board.cardMarkup('a').includes('&lt;img src=x onerror=alert(1)&gt;'));
+});
+
+test('Eine javascript:-Adresse ergibt keinen Link', async () => {
+  const board = await openBoard([entry('a')], {
+    feedback: connected([publicLink('a', { url: 'javascript:alert(1)' })]),
+  });
+
+  assert.ok(board.cardMarkup('a').includes('Öffentlich: im Test'));
+  assert.equal(parseTags(board.cardMarkup('a')).some(({ tag }) => tag === 'a'), false);
+  assert.equal(board.markup('boardColumns').includes('javascript:'), false);
+});
+
+test('„Verknüpfen“ nur mit Quelle fürs Board, „Verknüpfung lösen“ nur mit Verknüpfung', async () => {
+  const board = await openBoard([entry('a'), entry('b'), entry('c', { appId: 'a2' })], {
+    feedback: connected([publicLink('a')]),
+  });
+
+  assert.deepEqual(actions(board, 'a'), ['unlink-card']);
+  assert.deepEqual(actions(board, 'b'), ['link-card']);
+  assert.deepEqual(actions(board, 'c'), []);
+});
+
+const dialog = (board) => board.element('linkDialog');
+async function submitLink(board, value) {
+  board.element('linkEntryId').value = value;
+  const event = fakeEvent(board.element('linkForm'));
+  board.element('linkForm').fire('submit', event);
+  await settle();
+  // Sonst lädt der Browser die Seite neu.
+  assert.equal(event.prevented, true);
+}
+
+test('„Verknüpfen“ öffnet den Dialog mit leerem Feld und sendet noch nichts', async () => {
+  const board = await openBoard([entry('a')]);
+  board.element('linkEntryId').value = 'von vorher';
+  board.calls.requests.length = 0;
+
+  await clickCard(board, 'link-card', 'a');
+
+  assert.equal(dialog(board).open, true);
+  assert.equal(board.element('linkEntryId').value, '');
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('„Verknüpfen“ sendet die ID, schließt den Dialog und zeigt den neuen Stand', async () => {
+  const board = await openBoard([entry('a')]);
+  await clickCard(board, 'link-card', 'a');
+  board.calls.requests.length = 0;
+
+  await submitLink(board, '  e42  ');
+
+  assert.equal(dialog(board).open, false);
+  assert.deepEqual(requested(board), ['PUT /suggestions/a/link', 'GET /feedback']);
+  assert.deepEqual(board.calls.requests[0].body, { entryId: 'e42' });
+  assert.ok(board.cardMarkup('a').includes('Öffentlich: noch nicht geholt'));
+  assert.deepEqual(actions(board, 'a'), ['unlink-card']);
+});
+
+test('„Verknüpfen“ mit leerer ID: nichts wird gesendet, der Dialog bleibt', async () => {
+  const board = await openBoard([entry('a')]);
+  await clickCard(board, 'link-card', 'a');
+  board.calls.requests.length = 0;
+
+  await submitLink(board, '   ');
+
+  assert.equal(dialog(board).open, true);
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('„Abbrechen“ schließt den Dialog, nichts wird gesendet', async () => {
+  const board = await openBoard([entry('a')]);
+  await clickCard(board, 'link-card', 'a');
+  board.calls.requests.length = 0;
+
+  board.element('linkCancelBtn').fire('click', {});
+
+  assert.equal(dialog(board).open, false);
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('Doppeltes Absenden verknüpft nur einmal', async () => {
+  const board = await openBoard([entry('a')]);
+  await clickCard(board, 'link-card', 'a');
+  board.calls.requests.length = 0;
+  board.element('linkEntryId').value = 'e1';
+
+  board.element('linkForm').fire('submit', fakeEvent(board.element('linkForm')));
+  board.element('linkForm').fire('submit', fakeEvent(board.element('linkForm')));
+  await settle();
+
+  assert.deepEqual(requested(board), ['PUT /suggestions/a/link', 'GET /feedback']);
+});
+
+test('„Verknüpfen“ abgelehnt: Die Meldung des Servers erscheint', async () => {
+  const board = await openBoard([entry('a')]);
+  board.server.failLink = 'Der Eintrag oder das Ticket ist schon verknüpft.';
+  await clickCard(board, 'link-card', 'a');
+
+  await submitLink(board, 'e1');
+
+  assert.equal(board.element('toast').textContent, 'Der Eintrag oder das Ticket ist schon verknüpft.');
+  assert.deepEqual(actions(board, 'a'), ['link-card']);
+});
+
+test('viewer kann nicht verknüpfen oder lösen', async () => {
+  const board = await openBoard([entry('a')], { role: 'viewer', feedback: connected([publicLink('a')]) });
+  board.calls.requests.length = 0;
+
+  board.app.linkCard('a');
+  await board.app.unlinkCard('a');
+  await submitLink(board, 'e1');
+
+  assert.equal(dialog(board).open, false);
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('„Verknüpfung lösen“ fragt nach', async () => {
+  const board = await openBoard([entry('a')], { feedback: connected([publicLink('a')]), confirmAnswer: false });
+  board.calls.requests.length = 0;
+
+  await clickCard(board, 'unlink-card', 'a');
+
+  assert.deepEqual(board.calls.confirm, [
+    'Verknüpfung lösen? Der öffentliche Eintrag wird danach nicht erneut als Ticket geholt.',
+  ]);
+  assert.deepEqual(board.calls.requests, []);
+});
+
+test('„Verknüpfung lösen“ bestätigt: DELETE, die Karte verliert die Zeile', async () => {
+  const board = await openBoard([entry('a')], { feedback: connected([publicLink('a')]) });
+  board.calls.requests.length = 0;
+
+  await clickCard(board, 'unlink-card', 'a');
+
+  assert.deepEqual(requested(board), ['DELETE /suggestions/a/link', 'GET /feedback']);
+  assert.equal(board.cardMarkup('a').includes('Öffentlich'), false);
 });

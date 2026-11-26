@@ -885,6 +885,90 @@
             font-size: 0.88rem;
         }
 
+        .board-feedback {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            column-gap: var(--spacing-md);
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        /* Nebenaktion: schlichter Textlink ohne Rahmen. */
+        .board-text-link {
+            min-height: 44px;
+            padding: 0;
+            border: none;
+            border-radius: var(--radius-sm);
+            background: transparent;
+            color: var(--text-secondary);
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-align: left;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            cursor: pointer;
+        }
+
+        .board-feedback .board-text-link {
+            color: var(--text-primary);
+            font-size: 0.88rem;
+        }
+
+        .board-text-link:disabled {
+            cursor: progress;
+            opacity: 0.6;
+        }
+
+        /* Der globale Reset nimmt dem Dialog sonst die Zentrierung. */
+        #linkDialog {
+            margin: auto;
+        }
+
+        .board-link-field {
+            display: grid;
+            gap: 6px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .board-link-field input {
+            width: 100%;
+            min-height: 44px;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font: inherit;
+            font-size: 1rem;
+        }
+
+        /* Bricht der Text um, bleibt „ansehen“ daneben stehen. */
+        .board-card-public {
+            display: flex;
+            align-items: center;
+            column-gap: var(--spacing-sm);
+            margin: var(--spacing-xs) 0 0;
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+        }
+
+        .board-card-public a {
+            display: inline-flex;
+            flex-shrink: 0;
+            align-items: center;
+            min-width: 44px;
+            min-height: 44px;
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-weight: 600;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
         .board-switcher {
             display: none;
         }
@@ -959,6 +1043,9 @@
         }
 
         .board-card summary:focus-visible,
+        .board-card-public a:focus-visible,
+        .board-link-field input:focus-visible,
+        .board-text-link:focus-visible,
         .board-column:focus-visible,
         .board-move-options button:focus-visible,
         .board-switch:focus-visible {
@@ -1202,11 +1289,30 @@
                         </label>
                     </div>
                 </div>
+                <div id="boardFeedback" class="board-feedback is-hidden">
+                    <button type="button" id="feedbackFetchBtn" class="board-text-link is-hidden">Feedback holen</button>
+                    <p id="feedbackUnapproved" class="is-hidden"></p>
+                    <p id="feedbackResult" class="is-hidden" role="status"></p>
+                </div>
                 <p id="boardPending" class="board-pending is-hidden" role="status"></p>
                 <div id="boardSwitcher" class="board-switcher" role="group" aria-label="Spalte wählen"></div>
                 <div id="boardColumns" class="board-columns">
                     <div class="tenant-empty">Lade Einträge...</div>
                 </div>
+                <dialog id="linkDialog" class="billing-consent-dialog" aria-labelledby="linkDialogTitle">
+                    <form id="linkForm" class="billing-consent-form">
+                        <h3 id="linkDialogTitle">Öffentlichen Eintrag verknüpfen</h3>
+                        <label class="board-link-field">
+                            ID des öffentlichen Eintrags
+                            <input id="linkEntryId" type="text" maxlength="64" autocomplete="off"
+                                   autocapitalize="off" spellcheck="false" required>
+                        </label>
+                        <div class="billing-consent-actions">
+                            <button type="button" id="linkCancelBtn" class="board-text-link">Abbrechen</button>
+                            <button type="submit" class="primary-btn">Verknüpfen</button>
+                        </div>
+                    </form>
+                </dialog>
             </section>
 
             <section class="tenant-view" data-view="releases">

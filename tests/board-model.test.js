@@ -3,7 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { COLUMNS, columnFor, statusFor, needsConfirm, buildBoard } = require('../public/board-model');
+const {
+  COLUMNS, columnFor, statusFor, needsConfirm, buildBoard, publicLine, unapprovedSummary,
+} = require('../public/board-model');
 
 const TICKET_TYPES = ['ticket', 'bug'];
 
@@ -255,4 +257,69 @@ test('buildBoard: verändert die Eingabe nicht', () => {
   buildBoard(items);
 
   assert.deepEqual(items.map((item) => item.title), ['zweiter', 'erster']);
+});
+
+// ---------------------------------------------------------------------------
+// Verknüpfung mit öffentlichen Einträgen
+// ---------------------------------------------------------------------------
+
+const link = (fields = {}) => ({
+  suggestionId: 's1', publicStatus: 'im Test', publicApproved: true, publicDeleted: false,
+  publicSeenAt: '2026-11-26T10:00:00.000Z', url: 'https://example.test/board/t/e1', ...fields,
+});
+
+test('publicLine: Status mit Link', () => {
+  assert.deepEqual(publicLine(link()), { text: 'Öffentlich: im Test', url: 'https://example.test/board/t/e1' });
+});
+
+for (const [why, fields, text] of [
+  ['gelöscht', { publicDeleted: true }, 'Öffentlich: gelöscht'],
+  ['nie gefunden', { publicDeleted: true, publicSeenAt: null, publicStatus: null }, 'Öffentlich: nicht gefunden'],
+  ['nicht freigegeben', { publicApproved: false }, 'Öffentlich: nicht freigegeben'],
+  ['noch nie geholt', { publicSeenAt: null, publicStatus: null, publicApproved: null }, 'Öffentlich: noch nicht geholt'],
+]) {
+  test(`publicLine: ${why}, ohne Link`, () => {
+    assert.deepEqual(publicLine(link(fields)), { text, url: null });
+  });
+}
+
+test('publicLine: ohne Verknüpfung nichts', () => {
+  assert.equal(publicLine(undefined), null);
+  assert.equal(publicLine(null), null);
+});
+
+for (const url of [
+  'javascript:alert(1)', 'JavaScript:alert(1)', ' javascript:alert(1)', 'data:text/html,x',
+  'http://example.test/', '//boese.example', '/\\boese.example', '/\t/boese.example', 'https:boese', '', null,
+]) {
+  test(`publicLine: kein Link für ${JSON.stringify(url)}`, () => {
+    assert.equal(publicLine(link({ url })).url, null);
+  });
+}
+
+test('publicLine: relativer Link ist erlaubt', () => {
+  assert.equal(publicLine(link({ url: '/acme/board/t/e1' })).url, '/acme/board/t/e1');
+});
+
+test('unapprovedSummary: leer, wenn nichts wartet', () => {
+  assert.equal(unapprovedSummary([]), '');
+  assert.equal(unapprovedSummary([{ boardName: 'GymBo', unapprovedCount: 0 }]), '');
+});
+
+test('unapprovedSummary: Einzahl', () => {
+  assert.equal(
+    unapprovedSummary([{ boardName: 'FamilyManager', unapprovedCount: 0 }, { boardName: 'GymBo', unapprovedCount: 1 }]),
+    'Öffentlich wartet 1 Eintrag auf Freigabe: GymBo 1.'
+  );
+});
+
+test('unapprovedSummary: Mehrzahl je Quelle', () => {
+  assert.equal(
+    unapprovedSummary([{ boardName: 'FamilyManager', unapprovedCount: 2 }, { boardName: 'GymBo', unapprovedCount: 1 }]),
+    'Öffentlich warten 3 Einträge auf Freigabe: FamilyManager 2, GymBo 1.'
+  );
+});
+
+test('needsConfirm: geholtes Feedback fragt nicht', () => {
+  assert.equal(needsConfirm({ userFingerprint: 'api:feedback', notificationEnabled: false }), false);
 });
