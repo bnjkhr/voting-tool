@@ -110,7 +110,7 @@
     // Backslashes fallen weg, weil der Browser daraus eine fremde Adresse macht.
     function safeUrl(url) {
         const text = typeof url === 'string' ? url : '';
-        if (/[\u0000- \u007f\\]/.test(text)) return null;
+        if (/[\u0000-\u0020\u007f\\]/.test(text)) return null;
         return /^(https:\/\/|\/(?!\/))/i.test(text) ? text : null;
     }
 
