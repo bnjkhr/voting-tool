@@ -29,9 +29,39 @@ async function listBoard(api, board) {
     ));
 }
 
-// Offene Einträge über alle Boards. Scheitert ein Board, steht es in `errors`:
-// Die Liste darf nie vollständig aussehen, wenn sie es nicht ist.
+// Holt freigegebenes, offenes Feedback aus den angeschlossenen Boards als
+// Tickets. Mit dryRun nur zeigen, was geholt würde.
+export function fetchFeedback(api, { dryRun } = {}) {
+  return api('POST', '/feedback/fetch', dryRun === undefined ? {} : { dryRun });
+}
+
+export function linkEntry(api, { suggestionId, entryId }) {
+  return api('PUT', `/suggestions/${segment(suggestionId)}/link`, { entryId });
+}
+
+export function unlinkEntry(api, { suggestionId }) {
+  return api('DELETE', `/suggestions/${segment(suggestionId)}/link`);
+}
+
+// Holt vor dem Auflisten. Wirft nie: Was nicht geholt werden konnte, kommt als
+// Eintrag zurück ({ board: null } = der ganze Aufruf).
+async function fetchBeforeListing(api) {
+  try {
+    const result = await fetchFeedback(api);
+    if (!Array.isArray(result?.sources)) throw new Error('Unerwartete Antwort beim Holen.');
+    return result.sources
+      .filter((source) => source.result === 'error' || source.error)
+      .map((source) => ({ board: source.board, message: source.error || 'Die Quelle ließ sich nicht holen.' }));
+  } catch (error) {
+    return [{ board: null, message: error?.message || String(error) }];
+  }
+}
+
+// Offene Einträge über alle Boards, nach dem Holen von neuem Feedback. Scheitert
+// ein Board, steht es in `errors`, scheitert das Holen, in `fetchErrors`: Die
+// Liste darf nie vollständig aussehen, wenn sie es nicht ist.
 export async function listOpen(api, { appSlug } = {}) {
+  const fetchErrors = await fetchBeforeListing(api);
   let boards = [appSlug];
   if (!appSlug) {
     const apps = await api('GET', '/apps');
@@ -47,8 +77,8 @@ export async function listOpen(api, { appSlug } = {}) {
   ));
   const items = results.flatMap((result) => result.value || []).sort(compareOpen);
 
-  // `errors` zuerst, damit es in der Ausgabe vor der langen Liste steht.
-  return { errors, items };
+  // Fehler zuerst, damit sie in der Ausgabe vor der langen Liste stehen.
+  return { fetchErrors, errors, items };
 }
 
 export function createBoard(api, { name, slug, ticketPrefix }) {
