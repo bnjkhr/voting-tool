@@ -1008,4 +1008,208 @@ suite('Zurückschreiben gegen Postgres', async (t) => {
     assert.equal(await ticketStatus(item), 'gelöst');
     assert.equal(logged.join('\n').includes('GEHEIMFEHLER'), false);
   });
+  // Ein Versprechen, das der Testfall selbst erfüllt: Bis dahin hängt die Quelle.
+  function gate() {
+    let open;
+    const closed = new Promise((resolve) => { open = resolve; });
+    return { closed, open };
+  }
+  const until = async (condition, what) => {
+    for (let i = 0; i < 400; i += 1) {
+      if (await condition()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail(`nicht eingetreten: ${what}`);
+  };
+  // Nachlaufendes zu Ende kommen lassen.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+  for (const [what, disturb, message] of [
+    ['Lesen hängt', (fake_) => fake_.failReads('suggestions', { hang: true }), PUSH_MESSAGES.timeout],
+    ['Lesen scheitert', (fake_) => fake_.failReads('suggestions'), PUSH_MESSAGES.failed],
+    ['Schreiben hängt', (fake_) => fake_.failWrites('suggestions', { hang: true }), PUSH_MESSAGES.timeout],
+    ['Schreiben scheitert', (fake_) => fake_.failWrites('suggestions'), PUSH_MESSAGES.failed],
+  ]) {
+    await t.test(`interner Status bleibt, wenn die Quelle streikt: ${what}`, { timeout: 30000 }, async () => {
+      await seed();
+      const item = await pair({});
+      const restore = disturb(fake);
+      const started = Date.now();
+      let res;
+      try {
+        res = await captureLog(() => setStatus(item, 'gelöst'));
+      } finally {
+        restore();
+      }
+
+      assert.ok(Date.now() - started < 10000, `${Date.now() - started} ms`);
+      assert.deepEqual(ok(res).publicPush, { result: 'error', message });
+      assert.equal(res.body.success, true);
+      assert.equal(await ticketStatus(item), 'gelöst');
+      assert.deepEqual(await pending(item), ['gelöst', 'failed', false]);
+      const link = await linkRow(item);
+      assert.deepEqual([link.pending_error, link.push_claim], [message, null]);
+      assert.equal(legacyDoc(item.entryId).status, 'offen');
+      assert.equal(fake.sentMails.length, 0);
+      // Die Karte bietet die Änderung weiter an.
+      assert.equal(ok(await publish(item, 'gelöst')).result, 'published_no_mail');
+      assert.equal(legacyDoc(item.entryId).status, 'gelöst');
+    });
+  }
+
+  await t.test('auch ein Schlüssel bekommt bei hängender Quelle seine Antwort', { timeout: 30000 }, async () => {
+    await seed();
+    const item = await pair({});
+    const restore = fake.failReads('apps', { hang: true });
+    try {
+      const res = ok(await captureLog(() => patchStatus(item, 'gelöst')));
+      assert.equal(res.status, 'gelöst');
+      assert.deepEqual(res.publicPush, { result: 'error', message: PUSH_MESSAGES.timeout });
+    } finally {
+      restore();
+    }
+  });
+
+  await t.test('was nach der Zeitgrenze weiterläuft, schreibt nicht mehr', { timeout: 30000 }, async () => {
+    await seed();
+    const item = await pair({});
+    const held = gate();
+    const restore = fake.failReads('suggestions', { hang: held.closed });
+    const res = ok(await captureLog(() => setStatus(item, 'gelöst')));
+    restore();
+    assert.equal(res.publicPush.message, PUSH_MESSAGES.timeout);
+    fake.readLog.length = 0;
+
+    held.open();
+    await settle();
+
+    assert.deepEqual(writes('suggestions'), []);
+    assert.equal(legacyDoc(item.entryId).status, 'offen');
+    assert.deepEqual(await pending(item), ['gelöst', 'failed', false]);
+    assert.equal((await linkRow(item)).push_claim, null);
+  });
+
+  // Bekannte Grenze: Ein Schreiben, das bei Ablauf schon unterwegs ist, lässt
+  // sich nicht zurückholen. Es darf dann aber keine Mail nach sich ziehen.
+  await t.test('ein verspätet ankommendes Schreiben mailt nicht', { timeout: 30000 }, async () => {
+    await seed();
+    const item = await pair({ entry: NOTIFY });
+    ok(await setStatus(item, 'gelöst'));
+    const held = gate();
+    const restore = fake.failWrites('suggestions', { hang: held.closed });
+    const first = ok(await captureLog(() => publish(item, 'gelöst', true)));
+    restore();
+    assert.deepEqual([first.result, first.message], ['error', PUSH_MESSAGES.timeout]);
+
+    held.open();
+    await settle();
+
+    assert.equal(legacyDoc(item.entryId).status, 'gelöst');
+    assert.deepEqual(await pending(item), ['gelöst', 'failed', true]);
+    assert.equal(fake.sentMails.length, 0);
+    const again = ok(await publish(item, 'gelöst', true));
+    assert.deepEqual([again.result, again.message], ['published_no_mail', PUSH_MESSAGES.alreadyPublic]);
+    assert.deepEqual(await pending(item), NOTHING_PENDING);
+    assert.equal(fake.sentMails.length, 0);
+  });
+
+  await t.test('ein verspäteter erster Klick mailt nicht nach dem zweiten', { timeout: 30000 }, async () => {
+    await seed();
+    const item = await pair({ entry: NOTIFY });
+    ok(await setStatus(item, 'gelöst'));
+    const held = gate();
+    const restore = fake.failReads('suggestions', { hang: held.closed });
+    const first = ok(await captureLog(() => publish(item, 'gelöst', true)));
+    restore();
+    assert.deepEqual([first.result, first.message], ['error', PUSH_MESSAGES.timeout]);
+    assert.deepEqual(await pending(item), ['gelöst', 'failed', true]);
+
+    assert.equal(ok(await publish(item, 'gelöst', true)).result, 'published');
+    held.open();
+    await settle();
+
+    assert.equal(fake.sentMails.length, 1);
+    assert.equal(writes('suggestions').length, 1);
+    assert.equal(writes('activity').length, 1);
+    assert.deepEqual(await pending(item), NOTHING_PENDING);
+  });
+
+  // Zwei Statuswechsel, während der erste an der Quelle hängt.
+  for (const [what, disturb, expectedWrites] of [
+    ['beim Lesen', (hang) => fake.failReads('suggestions', { hang }), 0],
+    ['beim Schreiben', (hang) => fake.failWrites('suggestions', { hang }), 1],
+  ]) {
+    await t.test(`zweiter Statuswechsel, während der erste ${what} hängt`, async () => {
+      await seed();
+      const item = await pair({});
+      const held = gate();
+      const restore = disturb(held.closed);
+      const first = setStatus(item, 'in Bearbeitung');
+      await until(async () => (await linkRow(item)).push_claim !== null, 'erster Anspruch');
+      if (what === 'beim Schreiben') {
+        await until(() => fake.readLog.includes('suggestions'), 'Eintrag gelesen');
+        await settle();
+      }
+
+      const second = ok(await setStatus(item, 'gelöst'));
+      held.open();
+      const done = ok(await first);
+      restore();
+
+      assert.deepEqual(second.publicPush, { result: 'waiting', message: PUSH_MESSAGES.waitingBusy });
+      assert.ok(done.publicPush, JSON.stringify(done));
+      assert.equal(writes('suggestions').length, expectedWrites);
+      assert.deepEqual(await pending(item), ['gelöst', 'busy', false]);
+      assert.equal((await linkRow(item)).push_claim, null);
+      assert.equal(ok(await publish(item, 'gelöst')).result, 'published_no_mail');
+      assert.equal(legacyDoc(item.entryId).status, 'gelöst');
+    });
+  }
+
+  for (const kind of ['alt', 'neu']) {
+    await t.test(`gleichzeitige Statuswechsel: Der letzte interne Stand zählt (${kind})`, async () => {
+      await seed();
+      const expected = { 'in Bearbeitung': 'in Bearbeitung', 'gelöst': 'gelöst', offen: null };
+      const combos = [['in Bearbeitung', 'gelöst'], ['gelöst', 'in Bearbeitung'], ['in Bearbeitung', 'offen']];
+      for (let round = 0; round < 12; round += 1) {
+        const item = await pair({ kind, ticket: { status: 'neu' } });
+        const [a, b] = combos[round % combos.length];
+        const before = await publicStatus(item);
+
+        for (const res of await Promise.all([setStatus(item, a), patchStatus(item, b)])) ok(res);
+
+        const internal = await ticketStatus(item);
+        const link = await linkRow(item);
+        const published = await publicStatus(item);
+        const context = JSON.stringify({ round, a, b, internal, pending: link.pending_status, published });
+        assert.equal(link.push_claim, null, context);
+        if (expected[internal] === null) {
+          // Nichts wartet; geschrieben wurde höchstens der Zwischenstand.
+          assert.equal(link.pending_status, null, context);
+          assert.ok([before, expected[a]].includes(published), context);
+        } else if (link.pending_status !== null) {
+          assert.equal(link.pending_status, expected[internal], context);
+        } else {
+          assert.equal(published, expected[internal], context);
+        }
+      }
+      assert.equal(fake.sentMails.length, 0);
+    });
+  }
+
+  await t.test('Ticket ohne Verknüpfung: Antwort wie bisher, kein Zugriff auf die Quelle', async () => {
+    await seed();
+    await repos.suggestions.create({
+      id: 'test_fbpushapi_frei', tenantId: INTERN, appId: BOARDS.alt.id, type: 'ticket', title: 'Frei',
+      status: 'offen', approved: true, approvedAt: new Date(),
+    });
+    const item = { id: 'test_fbpushapi_frei' };
+
+    assert.deepEqual(ok(await setStatus(item, 'gelöst')), {
+      success: true, message: 'Status erfolgreich aktualisiert',
+    });
+    assert.equal('publicPush' in ok(await patchStatus(item, 'in Bearbeitung')), false);
+
+    assert.deepEqual(fake.readLog, []);
+  });
 });

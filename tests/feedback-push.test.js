@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { functionBody } = require('./source-slice');
 const {
   TEST_STATUS, PUSH_MESSAGES, targetFor, isBackward, decidePush, legacyStatus,
   legacyMailAddress, legacyMailRecipient, workspaceMailAddress, workspaceMailRecipient,
@@ -200,4 +201,14 @@ test('feste Meldungen aus dem Plan', () => {
     'Mailversand ist nicht eingerichtet. Nichts veröffentlicht.',
   ]) assert.ok(texts.includes(text), text);
   assert.ok(texts.every((text) => typeof text === 'string' && text.endsWith('.')));
+});
+
+// „Mail nur per Klick“: Im ganzen Server gibt es genau einen Aufruf.
+test('sendPushMail wird nur von confirmPush aufgerufen', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'api', 'index.js'), 'utf8');
+  const calls = source.match(/(?<!function )\bsendPushMail\(/g) || [];
+
+  assert.equal(calls.length, 1);
+  assert.ok(functionBody(source, 'confirmPush').includes('await sendPushMail('));
+  assert.equal(source.match(/\bsendPushMail\b/g).length, 2, 'nur Definition und Aufruf');
 });

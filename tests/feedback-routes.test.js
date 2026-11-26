@@ -59,6 +59,10 @@ for (const [method, url, headers, body] of [
   ['POST', '/api/v1/feedback/fetch', asKey, {}],
   ['PUT', '/api/v1/suggestions/s1/link', asKey, { entryId: 'x' }],
   ['DELETE', '/api/v1/suggestions/s1/link', asKey, undefined],
+  ['POST', '/api/admin/tenants/intern/feedback/links/s1/publish', asAdmin, { status: 'gelöst', mail: true }],
+  ['POST', '/api/admin/tenants/intern/feedback/links/s1/discard', asAdmin, {}],
+  ['POST', '/api/admin/tenants/intern/feedback/links/s1/test', asAdmin, {}],
+  ['POST', '/api/v1/suggestions/s1/public-test', asKey, undefined],
 ]) {
   test(`${method} ${url} ${JSON.stringify(body) || ''}: 409 ohne Schreibzugriff`, async () => {
     const before = stored();
@@ -71,3 +75,23 @@ for (const [method, url, headers, body] of [
     assert.equal(readLog.includes('suggestions'), false);
   });
 }
+
+// Ohne Postgres antworten die Statusrouten wie bisher.
+test('Statusroute der Konsole: Antwort unverändert', async () => {
+  const res = await server.request('/api/admin/tenants/intern/suggestions/s1/status', {
+    method: 'PUT', headers: asAdmin, body: { status: 'gelöst' },
+  });
+
+  assert.equal(res.status, 200, res.text);
+  assert.deepEqual(res.body, { success: true, message: 'Status erfolgreich aktualisiert' });
+});
+
+test('Statusroute der API: Antwort ohne publicPush', async () => {
+  const res = await server.request('/api/v1/suggestions/s1', {
+    method: 'PATCH', headers: asKey, body: { status: 'gelöst' },
+  });
+
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.body.status, 'gelöst');
+  assert.equal('publicPush' in res.body, false);
+});

@@ -8788,6 +8788,28 @@ async function sendPushMail(source, entry, status) {
   if (error) throw new Error(PUSH_MESSAGES.mailFailed);
 }
 
+// Für Lesen und Schreiben an der Quelle zusammen. Die Function läuft höchstens
+// 30 Sekunden, und der interne Statuswechsel soll seine Antwort sicher bekommen.
+const FEEDBACK_PUSH_TIMEOUT_MS = 8000;
+
+// Bricht das Warten nach der Zeitgrenze ab. Die Arbeit selbst läuft weiter;
+// `attempt.expired` sagt ihr, dass sie nichts mehr schreiben darf. Mailen kann
+// sie ohnehin nie.
+async function withPushDeadline(attempt, work) {
+  let timer;
+  const deadline = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      attempt.expired = true;
+      reject(new FeedbackSourceError(PUSH_MESSAGES.timeout));
+    }, FEEDBACK_PUSH_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Arbeit unter einem gewonnenen Anspruch: lesen, entscheiden, schreiben. Mailt
 // nie; ist eine Mail fällig, bleibt der Anspruch bestehen (`mailDue`).
 async function writeClaimedPush({ token: claimId, link }, attempt, { mode, mailRequested }) {
@@ -8796,6 +8818,7 @@ async function writeClaimedPush({ token: claimId, link }, attempt, { mode, mailR
 
   const { entry, mail } = await readPushTarget(link, link.entryId);
   const ticket = await repos.suggestions.findById(link.suggestionId);
+  if (attempt.expired) return { result: 'expired' };
   const decision = decidePush({
     internalStatus: ticket?.status, entry, mail, explicitTest: attempt.status === TEST_STATUS,
   });
@@ -8840,7 +8863,9 @@ async function writeClaimedPush({ token: claimId, link }, attempt, { mode, mailR
     }
   }
 
-  if (!(await repos.feedback.holdsPush(claimId, status))) {
+  const held = await repos.feedback.holdsPush(claimId, status);
+  if (attempt.expired) return { result: 'expired' };
+  if (!held) {
     await release();
     return { result: 'busy' };
   }
@@ -8861,7 +8886,7 @@ async function runPush(tenant, link, { mode, target, mailRequested = false }) {
 
   const attempt = { status: target };
   try {
-    return await writeClaimedPush(claim, attempt, { mode, mailRequested });
+    return await withPushDeadline(attempt, writeClaimedPush(claim, attempt, { mode, mailRequested }));
   } catch (error) {
     const message = error instanceof FeedbackSourceError ? error.message : PUSH_MESSAGES.failed;
     console.error(`Push failed (link ${claim.link.id}): ${message}`);
