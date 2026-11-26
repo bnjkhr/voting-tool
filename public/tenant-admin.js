@@ -252,6 +252,12 @@ class TenantAdminApp {
         const platformLink = document.getElementById('platformAdminLink');
         platformLink.classList.toggle('is-hidden', !this.isPlatformAdmin);
 
+        // Owner einladen dürfen nur Owner, wie bei der Rollenauswahl der Mitglieder.
+        const inviteRoles = this.canManageOwnerRoles() ? ['admin', 'owner', 'viewer'] : ['admin', 'viewer'];
+        document.getElementById('teamInviteRole').innerHTML = inviteRoles
+            .map(role => `<option value="${role}">${this.formatRole(role)}</option>`)
+            .join('');
+
         document.querySelectorAll('[data-admin-only]').forEach(element => {
             element.classList.toggle('is-hidden', !this.canManageWorkspace());
         });
@@ -954,6 +960,8 @@ class TenantAdminApp {
     }
 
     renderTeamInvite(invite) {
+        const canResend = invite.role !== 'owner' || this.canManageOwnerRoles();
+
         return `
             <div class="tenant-team-item">
                 <strong>${this.escapeHtml(invite.email || 'Unbekannt')}</strong>
@@ -963,7 +971,7 @@ class TenantAdminApp {
                 </div>
                 ${this.canManageWorkspace() ? `
                 <div class="tenant-team-actions">
-                    <button class="secondary-btn btn-small" type="button" data-action="resend-invite" data-invite-id="${this.escapeHtml(invite.id)}">Erneut senden</button>
+                    ${canResend ? `<button class="secondary-btn btn-small" type="button" data-action="resend-invite" data-invite-id="${this.escapeHtml(invite.id)}">Erneut senden</button>` : ''}
                     <button class="secondary-btn btn-small" type="button" data-action="revoke-invite" data-invite-id="${this.escapeHtml(invite.id)}">Widerrufen</button>
                 </div>
                 ` : ''}
@@ -1696,9 +1704,14 @@ class TenantAdminApp {
     }
 
     escapeHtml(value) {
-        const div = document.createElement('div');
-        div.textContent = value == null ? '' : String(value);
-        return div.innerHTML;
+        // Maskiert auch beide Anführungszeichen, damit das Ergebnis in Text und
+        // Attributwerten sicher ist. In on*-Handler gehört trotzdem kein Nutzertext.
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     // Öffentliche Board-URL: pfad-basiert (/{tenant}/{board}) auf der Hauptdomain.

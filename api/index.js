@@ -9,6 +9,7 @@ const {
   buildAdminCommentResponse,
   buildCommentStats,
   buildPublicCommentResponse,
+  isScreenshotDataUrl,
   normalizeCommentData,
   validateCommentScreenshots,
 } = require('./comment-utils');
@@ -508,10 +509,12 @@ function buildCommentStatsMap(commentDocs, tenantId) {
 
 function buildPublicSuggestionResponse(data, commentStatsMap, userVotesSet) {
   const type = normalizeSuggestionType(data.type);
+  // Daten der einreichenden Person bleiben intern.
+  const { notificationEmail, notificationEnabled, userFingerprint, ...publicData } = data;
 
   return {
     id: data.id,
-    ...data,
+    ...publicData,
     type,
     status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
     priority: data.priority || 'mittel',
@@ -2762,21 +2765,7 @@ app.get('/api/apps/:appId/suggestions', async (req, res) => {
     const suggestions = suggestionsSnapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter(data => isLegacyTenantData(data))
-      .map(data => {
-        const type = normalizeSuggestionType(data.type);
-
-        return {
-          id: data.id,
-          ...data,
-          type,
-          status: data.status || mapLegacyTagToStatus(type, data.tag, data.approved),
-          priority: data.priority || 'mittel',
-          labels: data.labels || [],
-          ticketNumber: data.ticketNumber || null,
-          commentCount: commentStatsMap[data.id]?.publicCount || 0,
-          hasVoted: type === 'feature' && userVotesSet.has(data.id)
-        };
-      });
+      .map(data => buildPublicSuggestionResponse(data, commentStatsMap, userVotesSet));
 
     // Sort: resolved/implemented items sink to the bottom, votable first, then newest
     suggestions.sort((a, b) => {
@@ -3127,7 +3116,7 @@ function buildSuggestionFromRequest(body, appId, userFingerprint, tenantId = LEG
     // Bug screenshots (optional)
     if (body.screenshots && Array.isArray(body.screenshots)) {
       const validScreenshots = body.screenshots
-        .filter(s => typeof s === 'string' && s.startsWith('data:image/') && s.length < 300000)
+        .filter(s => isScreenshotDataUrl(s) && s.length < 300000)
         .slice(0, 3);
       const totalSize = validScreenshots.reduce((sum, s) => sum + s.length, 0);
       if (totalSize <= 800000) {
@@ -4694,6 +4683,9 @@ app.post('/api/admin/tenants/:tenantSlug/invites', requireTenantAccess(['owner',
     if (!MEMBERSHIP_ROLES.includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
+    if (role === 'owner' && !canManageTenantOwners(req)) {
+      return res.status(403).json({ error: 'Only owners can manage owner memberships' });
+    }
 
     if (usePostgres()) {
       const pending = await repos.invites.findPending(tenant.id, email);
@@ -4812,6 +4804,10 @@ app.post('/api/admin/tenants/:tenantSlug/invites/:inviteId/resend', requireTenan
 
     if (resolved.invite.status !== 'pending') {
       return res.status(400).json({ error: 'Only pending invites can be resent' });
+    }
+    // Erneutes Ausstellen verlängert die Einladung, also gilt dieselbe Regel.
+    if (normalizeMembershipRole(resolved.invite.role) === 'owner' && !canManageTenantOwners(req)) {
+      return res.status(403).json({ error: 'Only owners can manage owner memberships' });
     }
 
     const token = buildInviteToken();
@@ -6524,13 +6520,22 @@ async function getSuggestionsByUserFingerprint(userFingerprint) {
   }
 }
 
+// Die Einstellungen hängen nur an IP und Browser-Kennung. Deshalb verlässt die
+// gespeicherte Adresse den Server nicht.
+function buildNotificationSettingsResponse(settings) {
+  return {
+    notificationsEnabled: Boolean(settings.notificationsEnabled),
+    hasEmail: Boolean(settings.email),
+  };
+}
+
 // Get user notification settings
 app.get('/api/user/notification-settings', async (req, res) => {
   try {
     const userFingerprint = generateUserFingerprint(req);
     const settings = await getUserNotificationSettings(userFingerprint);
-    
-    res.json(settings);
+
+    res.json(buildNotificationSettingsResponse(settings));
   } catch (error) {
     console.error('Error fetching notification settings:', error);
     res.status(500).json({ error: 'Failed to fetch notification settings' });
@@ -6544,20 +6549,25 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
     const { email, notificationsEnabled } = req.body;
 
     // Validate email if provided
-    if (email && email.trim() !== '') {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email.trim())) {
-        return res.status(400).json({ error: 'Invalid email format' });
-      }
+    if (email !== undefined && email !== null && typeof email !== 'string') {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    const newEmail = email ? email.trim() : '';
+    if (newEmail && !isValidEmail(newEmail)) {
+      return res.status(400).json({ error: 'Invalid email format' });
     }
 
     const settingsData = {
       tenantId: LEGACY_TENANT_ID,
       userFingerprint,
-      email: email ? email.trim() : null,
       notificationsEnabled: Boolean(notificationsEnabled),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
+    // Fehlt die Adresse oder ist sie leer, bleibt die gespeicherte erhalten: GET
+    // gibt sie nicht aus. Gelöscht wird sie nur mit email: null.
+    if (newEmail || email === null) {
+      settingsData.email = newEmail || null;
+    }
 
     // Check if settings already exist
     const existingSettings = await db.collection('userSettings')
@@ -6568,22 +6578,13 @@ app.put('/api/user/notification-settings', rateLimit(60000, 10), async (req, res
     if (existingSettings.empty) {
       // Create new settings
       settingsData.createdAt = admin.firestore.FieldValue.serverTimestamp();
-      const docRef = await db.collection('userSettings').add(settingsData);
-      res.json({
-        id: docRef.id,
-        ...settingsData,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
+      await db.collection('userSettings').add({ email: null, ...settingsData });
+      res.json(buildNotificationSettingsResponse(settingsData));
     } else {
       // Update existing settings
-      const docRef = existingSettings.docs[0].ref;
-      await docRef.update(settingsData);
-      res.json({
-        id: docRef.id,
-        ...settingsData,
-        updatedAt: new Date()
-      });
+      const existing = existingSettings.docs[0];
+      await existing.ref.update(settingsData);
+      res.json(buildNotificationSettingsResponse({ ...existing.data(), ...settingsData }));
     }
   } catch (error) {
     console.error('Error updating notification settings:', error);

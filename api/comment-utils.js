@@ -1,5 +1,12 @@
 const VALID_COMMENT_APPROVAL_STATUSES = ['pending', 'approved', 'rejected'];
 const VALID_COMMENT_AUTHOR_TYPES = ['admin', 'user'];
+// Nur Raster-Bilder als reine Base64-Data-URL: kein SVG, keine Zeichen, die in
+// einem HTML-Attribut eine Bedeutung haben.
+const SCREENSHOT_DATA_URL_RE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+function isScreenshotDataUrl(value) {
+  return typeof value === 'string' && SCREENSHOT_DATA_URL_RE.test(value);
+}
 
 function normalizeCommentAuthorType(data = {}) {
   const normalized = (data.authorType || '').toString().trim().toLowerCase();
@@ -110,8 +117,7 @@ function validateCommentScreenshots(screenshots, {
   }
 
   const processedScreenshots = screenshots.filter(screenshot => (
-    typeof screenshot === 'string' &&
-    screenshot.startsWith('data:image/') &&
+    isScreenshotDataUrl(screenshot) &&
     screenshot.length < maxImageLength
   ));
 
@@ -128,6 +134,7 @@ module.exports = {
   buildCommentStats,
   buildPublicCommentResponse,
   isCommentVisibleToPublic,
+  isScreenshotDataUrl,
   normalizeCommentApprovalStatus,
   normalizeCommentAuthorType,
   normalizeCommentData,
