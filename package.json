@@ -21,6 +21,7 @@
     "tenant:create": "node scripts/create-tenant.js",
     "tenant:create:dry-run": "node scripts/create-tenant.js --dry-run",
     "workspace:create-private": "node scripts/create-private-workspace.js",
+    "feedback:sources": "node scripts/feedback-sources.js",
     "db:migrate": "node scripts/migrate-db.js",
     "db:migrate:status": "node scripts/migrate-db.js --status",
     "db:migrate-data:dry-run": "node scripts/migrate-firestore-to-neon.js",

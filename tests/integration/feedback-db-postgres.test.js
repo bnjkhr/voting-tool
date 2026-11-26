@@ -3,6 +3,10 @@
 // Angeschlossene Boards und Verknüpfungen gegen echtes Postgres.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { hasDatabase } = require('./helpers');
 
 const suite = hasDatabase ? test : test.skip;
@@ -392,6 +396,116 @@ suite('Verknüpfungen: Repository', async (t) => {
     assert.deepEqual(results.map((result) => result.status).sort(), ['fulfilled', 'rejected']);
     assert.ok(results.find((result) => result.status === 'rejected').reason instanceof feedback.LinkConflictError);
     assert.equal((await feedback.listLinksBySource(source.id)).length, 1);
+  });
+
+  await t.test('inzwischen geänderte Quelle: kein Ticket aus dem alten Stand', async () => {
+    const appId = await board();
+    const stale = await connect(appId);
+    await connect(appId, { sourceAppId: `test_fbdb_neu_${appId}` });
+
+    assert.equal((await create(stale, 'e1')).created, false);
+
+    assert.deepEqual(await counts(appId, stale.id), { tickets: 0, links: 0, next: 1 });
+  });
+
+  await t.test('Skript zum Anschließen', async (tt) => {
+    const { run } = require('../../scripts/feedback-sources');
+    const appId = await board();
+    const slug = `board-${boardNumber}`;
+    const publicApp = await board(ACME);
+    const publicSlug = `board-${boardNumber}`;
+    const output = [];
+    const script = (argv) => run(argv, { log: (line) => output.push(line) });
+    const target = ['--workspace', 'test-fbdb-intern', '--board', slug];
+    const connectArgs = [
+      'connect', ...target, '--source-workspace', 'test-fbdb-acme', '--source-board', publicSlug,
+    ];
+
+    await tt.test('Probelauf schreibt nichts', async () => {
+      await script(connectArgs);
+
+      assert.equal(await feedback.findSourceByApp(INTERN, appId), null);
+    });
+
+    await tt.test('connect legt ausgeschaltet an, erst enable --commit schaltet ein', async () => {
+      await script([...connectArgs, '--commit']);
+      const connected = await feedback.findSourceByApp(INTERN, appId);
+      assert.equal(connected.sourceTenantId, ACME);
+      assert.equal(connected.sourceAppId, publicApp);
+      assert.equal(connected.fetchEnabled, false);
+
+      await script(['enable', ...target]);
+      assert.equal((await feedback.findSourceByApp(INTERN, appId)).fetchEnabled, false);
+      await script(['enable', ...target, '--commit']);
+      assert.equal((await feedback.findSourceByApp(INTERN, appId)).fetchEnabled, true);
+      output.length = 0;
+      await script(['list', '--workspace', 'test-fbdb-intern']);
+      assert.ok(output.includes('  Holen: an'));
+      assert.ok(output.includes(`  Quelle: Workspace test-fbdb-acme, Board ${publicSlug}`));
+
+      await script(['disable', ...target, '--commit']);
+      assert.equal((await feedback.findSourceByApp(INTERN, appId)).fetchEnabled, false);
+    });
+
+    await tt.test('dieselbe Quelle an einem zweiten Board wird abgewiesen', async () => {
+      const second = await board();
+
+      await assert.rejects(script([
+        'connect', '--workspace', 'test-fbdb-intern', '--board', `board-${boardNumber}`,
+        '--source-workspace', 'test-fbdb-acme', '--source-board', publicSlug, '--commit',
+      ]), /schon an einem anderen Board angeschlossen/);
+
+      assert.equal(await feedback.findSourceByApp(INTERN, second), null);
+    });
+
+    // Echter Aufruf, aus einem leeren Ordner, damit keine .env gelesen wird.
+    const spawnScript = (argv) => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'feedback-sources-'));
+      const result = spawnSync(
+        process.execPath,
+        [path.join(__dirname, '..', '..', 'scripts', 'feedback-sources.js'), ...argv],
+        { cwd, env: process.env, encoding: 'utf8' }
+      );
+      fs.rmdirSync(cwd);
+      return result;
+    };
+
+    await tt.test('connect auf aktiven Workspace: Exit 1', async () => {
+      const result = spawnScript([
+        'connect', '--workspace', 'test-fbdb-acme', '--board', publicSlug,
+        '--legacy-app', 'test_fbdb_skript', '--commit',
+      ]);
+
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, /nur private Workspaces/);
+      assert.equal(await feedback.findSourceByApp(ACME, publicApp), null);
+    });
+
+    for (const status of ['private', 'suspended']) {
+      await tt.test(`Quell-Workspace ${status}: Exit 1`, async () => {
+        const free = await board();
+        await query('update tenants set status = $2 where id = $1', [ACME, status]);
+        try {
+          const result = spawnScript([
+            'connect', '--workspace', 'test-fbdb-intern', '--board', `board-${boardNumber}`,
+            '--source-workspace', 'test-fbdb-acme', '--source-board', publicSlug, '--commit',
+          ]);
+
+          assert.equal(result.status, 1, result.stdout + result.stderr);
+          assert.match(result.stderr, /nicht öffentlich/);
+          assert.equal(await feedback.findSourceByApp(INTERN, free), null);
+        } finally {
+          await query("update tenants set status = 'active' where id = $1", [ACME]);
+        }
+      });
+    }
+
+    await tt.test('erfolgreicher Aufruf endet mit Exit 0', async () => {
+      const result = spawnScript(['list', '--workspace', 'test-fbdb-intern']);
+
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /Holen: aus/);
+    });
   });
 
   await t.test('Board löschen räumt Quelle und Verknüpfungen ab', async () => {

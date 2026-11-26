@@ -170,6 +170,8 @@ async function listLinksBySource(sourceId) {
 // Verknüpfung: Wer ein Rennen verliert, wartet am Unique-Index auf den Sieger,
 // bekommt dann keine Zeile und legt nichts an. Workspace und Board kommen aus der
 // Zeile der Quelle, nie aus dem Aufruf.
+// Wurde die Quelle seit dem Lesen umgehängt, gehören die Einträge nicht mehr zu
+// ihr: Dann entsteht nichts (`for share` hält die Zeile bis zum Commit).
 async function createTicketWithLink({ source, entry, ticket }) {
   return withTransaction(async (client) => {
     const exec = (text, params) => client.query(text, params);
@@ -179,10 +181,11 @@ async function createTicketWithLink({ source, entry, ticket }) {
        select s.tenant_id, s.id, $2, $3, $4, $5, now()
          from feedback_sources s
          join tenants t on t.id = s.tenant_id and t.status = 'private'
-        where s.id = $1
+        where s.id = $1 and s.source_app_id = $6
+          for share of s
        on conflict do nothing
        returning id, tenant_id, source_id`,
-      [source.id, entry.id, entry.type, entry.status, entry.approved]
+      [source.id, entry.id, entry.type, entry.status, entry.approved, source.sourceAppId]
     );
     const link = rows[0];
     if (!link) return { created: false };
