@@ -81,6 +81,11 @@ const { usePostgres } = repos.backend;
 const billing = require('../lib/billing');
 const planLimits = require('../lib/plan-limits');
 const feedbackLinks = require('../lib/feedback-links');
+const {
+  PUSH_MESSAGES, TEST_STATUS, targetFor, decidePush, legacyStatus,
+  needsUserSettings, legacyMailAddress, workspaceMailAddress,
+} = require('../lib/feedback-push');
+const { legacySenderAddress, buildLegacyStatusMail, buildTenantStatusMail } = require('./email-templates');
 
 const BILLING_TERMS_VERSION = '2026-09-01-b2b';
 const PRO_PRICE_EUR = 9;
@@ -5053,7 +5058,11 @@ app.put('/api/admin/tenants/:tenantSlug/suggestions/:suggestionId/status', requi
       await notifyTenantSuggestionCreator(tenantSlug, suggestionId, suggestionData, 'tag_updated', `Neuer Status: ${normalizedStatus}`);
     }
 
-    res.json({ success: true, message: 'Status erfolgreich aktualisiert' });
+    res.json({
+      success: true,
+      message: 'Status erfolgreich aktualisiert',
+      ...await publicPushField(req.adminTenant, suggestionId, previousStatus !== normalizedStatus, normalizedStatus),
+    });
   } catch (error) {
     console.error('Error updating tenant suggestion status:', error);
     res.status(500).json({ error: 'Failed to update status' });
@@ -7951,7 +7960,11 @@ app.patch('/api/v1/suggestions/:suggestionId', requireApiKey(['suggestions:statu
       });
     }
 
-    res.json(buildApiSuggestionResponse(updated));
+    const statusChanged = activityEntries.some(entry => entry.action === 'status_changed');
+    res.json({
+      ...buildApiSuggestionResponse(updated),
+      ...await publicPushField(req.apiAuth.tenant, suggestionData.id, statusChanged, updates.status),
+    });
   } catch (error) {
     console.error('Error updating suggestion via API key:', error);
     res.status(500).json({ error: 'Failed to update suggestion' });
@@ -8313,6 +8326,7 @@ app.delete('/api/admin/tenants/:tenantSlug/api-keys/:keyId', requireTenantAccess
 // Verknüpfungen mit öffentlichen Einträgen, Stufe 1: Holen und Verknüpfen.
 // Nur private Workspaces unter Postgres. An der Quelle wird nur gelesen, und
 // nur der Hol-Aufruf liest sie.
+// Ausnahme seit Stufe 2: das Zurückschreiben weiter unten.
 // ----------------------------------------------------------------------------
 
 const FEEDBACK_ONLY_PRIVATE = 'Verknüpfungen gibt es nur in privaten Workspaces.';
@@ -8409,7 +8423,7 @@ async function describeFeedbackSource(source) {
   };
 }
 
-function buildFeedbackLinkResponse(link, url) {
+function buildFeedbackLinkResponse(link, url, pushEnabled = link.pushEnabled) {
   return {
     suggestionId: link.suggestionId,
     entryId: link.entryId,
@@ -8419,6 +8433,12 @@ function buildFeedbackLinkResponse(link, url) {
     publicDeleted: link.publicDeleted,
     publicSeenAt: link.publicSeenAt,
     url,
+    pendingStatus: link.pendingStatus,
+    pendingReason: link.pendingReason,
+    pendingMail: link.pendingMail,
+    pendingError: link.pendingError,
+    pushStage: link.pushStage,
+    pushEnabled: Boolean(pushEnabled),
   };
 }
 
@@ -8440,6 +8460,7 @@ async function loadFeedbackState(tenant) {
       boardName: source.boardName,
       sourceLabel: described.get(source.id).label,
       fetchEnabled: source.fetchEnabled,
+      pushEnabled: source.pushEnabled,
       lastFetchedAt: source.lastFetchedAt,
       unapprovedCount: source.unapprovedCount,
       lastError: source.lastError,
@@ -8614,12 +8635,409 @@ async function handleFeedbackLink(req, res, tenant) {
     const link = await repos.feedback.linkSuggestion({ tenantId: tenant.id, suggestionId, entryId });
     const source = (await repos.feedback.listSources(tenant.id)).find(item => item.id === link.sourceId);
     const { entryUrl } = await describeFeedbackSource(source);
-    res.json(buildFeedbackLinkResponse(link, entryUrl(link.entryId)));
+    res.json(buildFeedbackLinkResponse(link, entryUrl(link.entryId), source.pushEnabled));
   } catch (error) {
     if (error instanceof repos.feedback.LinkConflictError) return res.status(409).json({ error: error.message });
     if (error instanceof repos.feedback.NoSourceError) return res.status(404).json({ error: error.message });
     console.error('Error changing feedback link:', error);
     res.status(500).json({ error: 'Failed to change feedback link' });
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Verknüpfungen, Stufe 2: Status in den öffentlichen Eintrag zurückschreiben.
+// Nur für Quellen mit eingeschaltetem Zurückschreiben. Geschrieben werden nur
+// Status, Kennzeichen und ein Verlaufseintrag, und nur an freigegebenen
+// Einträgen der angeschlossenen Quelle.
+//
+// Eine Mail an die einreichende Person verschickt allein confirmPush, nach dem
+// Klick eines angemeldeten Owners. Dass je wartender Änderung höchstens einmal
+// geschrieben und gemailt wird, sichert der Anspruch in Postgres.
+//
+// In Antworten, Postgres und Logs stehen nur die festen Meldungen aus
+// PUSH_MESSAGES und aus dem Lesen der Quelle, nie eine Adresse und nie ein
+// Fehlertext von Firestore oder Resend.
+// ----------------------------------------------------------------------------
+
+// Altbestand: Eintrag frisch aus Firestore, bei Bedarf mit Nutzereinstellung.
+// Ein Lesefehler wirft: „Weiß nicht“ darf nie als „keine Mail“ zählen.
+async function readLegacyPushTarget(sourceAppId, entryId) {
+  const appDoc = await db.collection('apps').doc(sourceAppId).get();
+  if (!appDoc.exists || !isLegacyPublicAppVisible({ ...appDoc.data(), id: sourceAppId })) {
+    throw new FeedbackSourceError(PUSH_MESSAGES.boardUnavailable);
+  }
+  const doc = await db.collection('suggestions').doc(entryId).get();
+  const data = doc.exists ? doc.data() || {} : null;
+  if (!data || data.appId !== sourceAppId || !isLegacyTenantData(data)) {
+    throw new FeedbackSourceError(PUSH_MESSAGES.gone);
+  }
+  if (data.approved !== true) throw new FeedbackSourceError(PUSH_MESSAGES.notApproved);
+
+  let userSettings = null;
+  if (needsUserSettings(data)) {
+    const snapshot = await db.collection('userSettings')
+      .where('userFingerprint', '==', data.userFingerprint)
+      .limit(1)
+      .get();
+    userSettings = snapshot.empty ? null : snapshot.docs[0].data();
+  }
+  const type = normalizeSuggestionType(data.type);
+  return {
+    id: entryId,
+    type,
+    ...legacyStatus(data, type, mapLegacyTagToStatus(type, data.tag, data.approved)),
+    title: data.title,
+    appName: appDoc.data().name || 'Unbekannte App',
+    recipient: legacyMailAddress(data, userSettings),
+  };
+}
+
+// Roadlight-Board: nur ein aktiver Quell-Workspace und nur sein Quell-Board.
+async function readWorkspacePushTarget(source, entryId) {
+  const { tenant, board, error } = await findFeedbackSourceBoard(source);
+  if (error) throw new FeedbackSourceError(error);
+  const row = await repos.suggestions.findById(entryId);
+  if (!row || row.tenantId !== tenant.id || row.appId !== board.id) {
+    throw new FeedbackSourceError(PUSH_MESSAGES.gone);
+  }
+  if (row.approved !== true) throw new FeedbackSourceError(PUSH_MESSAGES.notApproved);
+  return {
+    id: row.id,
+    tenantId: tenant.id,
+    type: normalizeSuggestionType(row.type),
+    status: row.status,
+    title: row.title,
+    appName: board.name,
+    entryUrl: tenantBoardEntryUrl(process.env.BASE_URL, tenant.slug, board.slug, row.id),
+    recipient: workspaceMailAddress(row),
+  };
+}
+
+// Frischer Stand des öffentlichen Eintrags. `entry.recipient` ist die Adresse
+// für die Mail und verlässt den Arbeitsspeicher nie.
+async function readPushTarget(source, entryId) {
+  const entry = source.sourceKind === 'legacy'
+    ? await readLegacyPushTarget(source.sourceAppId, entryId)
+    : await readWorkspacePushTarget(source, entryId);
+  return { entry, mail: entry.recipient !== null };
+}
+
+// Dieselben Felder wie die jeweilige Statusroute, ohne je `approved` zu setzen,
+// plus ein Verlaufseintrag mit festem Akteur.
+async function writePublicStatus(source, entry, status) {
+  if (entry.status === status) return;
+  const legacy = source.sourceKind === 'legacy';
+  const fields = { status, tag: mapStatusToLegacyTag(entry.type, status) };
+  const activity = {
+    ticketId: entry.id,
+    action: 'status_changed',
+    oldValue: entry.status,
+    newValue: status,
+    detail: `Status geändert: ${entry.status || 'keiner'} → ${status}`,
+    actor: 'admin',
+  };
+
+  // Der Altbestand liegt in Firestore, auch wenn diese App in Postgres lebt:
+  // deshalb weder writeTimestamp() noch logActivity().
+  if (legacy) {
+    await db.collection('suggestions').doc(entry.id).update({
+      ...fields, tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } else {
+    await repos.suggestions.update(entry.id, { ...fields, tagUpdatedAt: new Date() });
+  }
+
+  // Der Status steht; ein fehlender Verlaufseintrag macht daraus keinen Fehler.
+  try {
+    if (legacy) {
+      await db.collection('activity').add({
+        tenantId: LEGACY_TENANT_ID, ...activity, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } else {
+      await repos.activity.log({ tenantId: entry.tenantId, ...activity });
+    }
+  } catch {
+    console.error(`Push activity entry failed (entry ${entry.id}).`);
+  }
+}
+
+// Warum gerade keine Mail ginge, obwohl eine fällig wäre.
+function missingMailSetup(source) {
+  if (!process.env.RESEND_API_KEY) return PUSH_MESSAGES.noMailSetup;
+  if (source.sourceKind === 'legacy' && !legacySenderAddress()) return PUSH_MESSAGES.noLegacySender;
+  return null;
+}
+
+// Einziger Aufrufer ist confirmPush. Wirft, wenn die Mail nicht rausging.
+async function sendPushMail(source, entry, status) {
+  const legacy = source.sourceKind === 'legacy';
+  const from = legacy ? legacySenderAddress() : senderAddress();
+  if (missingMailSetup(source) || !from || !entry.recipient) throw new Error(PUSH_MESSAGES.mailFailed);
+  const build = legacy ? buildLegacyStatusMail : buildTenantStatusMail;
+  const { subject, html } = build({
+    entryId: entry.id,
+    title: entry.title,
+    appName: entry.appName,
+    entryType: entry.type,
+    status,
+    entryUrl: entry.entryUrl,
+  });
+  const { error } = await new Resend(process.env.RESEND_API_KEY).emails.send({
+    from, to: entry.recipient, subject, html,
+  });
+  if (error) throw new Error(PUSH_MESSAGES.mailFailed);
+}
+
+// Arbeit unter einem gewonnenen Anspruch: lesen, entscheiden, schreiben. Mailt
+// nie; ist eine Mail fällig, bleibt der Anspruch bestehen (`mailDue`).
+async function writeClaimedPush({ token: claimId, link }, attempt, { mode, mailRequested }) {
+  const confirmed = mode === 'confirm';
+  const release = async (fields = {}) => repos.feedback.releasePush(claimId, { status: attempt.status, ...fields });
+
+  const { entry, mail } = await readPushTarget(link, link.entryId);
+  const ticket = await repos.suggestions.findById(link.suggestionId);
+  const decision = decidePush({
+    internalStatus: ticket?.status, entry, mail, explicitTest: attempt.status === TEST_STATUS,
+  });
+
+  // Der frische Eintrag (oder das Ticket) verlangt einen anderen Status.
+  if (decision.target && decision.target !== attempt.status) {
+    if (!(await repos.feedback.retargetPush(claimId, attempt.status, decision.target))) {
+      await release();
+      return { result: 'busy' };
+    }
+    attempt.status = decision.target;
+    // Ein Klick gilt nur für den Status, den er genannt hat.
+    if (confirmed) {
+      await release({ reason: mail ? 'mail' : 'backward', mail });
+      return { result: 'error', message: PUSH_MESSAGES.changed };
+    }
+  }
+  const { status } = attempt;
+
+  if (decision.action === 'clear') {
+    await repos.feedback.dropPush(claimId, { status });
+    return confirmed ? { result: 'error', message: PUSH_MESSAGES.changed } : { result: 'none' };
+  }
+  if (decision.action === 'none') {
+    await repos.feedback.dropPush(claimId, { status, publicStatus: entry.status });
+    return { result: 'none' };
+  }
+  if (!confirmed && decision.action === 'wait') {
+    await release({ reason: decision.reason, mail });
+    return { result: 'waiting', reason: decision.reason };
+  }
+  if (confirmed && mail) {
+    // Eine Mail nur, wenn die Karte sie angekündigt und der Klick sie verlangt hat.
+    if (!(mailRequested && link.pendingMail)) {
+      await release({ reason: 'mail', mail: true });
+      return { result: 'error', message: PUSH_MESSAGES.mailNeedsClick };
+    }
+    const missing = missingMailSetup(link);
+    if (missing) {
+      await release({ reason: 'mail', mail: true, error: missing });
+      return { result: 'error', message: missing };
+    }
+  }
+
+  if (!(await repos.feedback.holdsPush(claimId, status))) {
+    await release();
+    return { result: 'busy' };
+  }
+  await writePublicStatus(link, entry, status);
+
+  if (confirmed && mail) return { result: 'written', mailDue: true, claimId, status, source: link, entry };
+  await repos.feedback.finishPush(claimId, { publicStatus: status });
+  return { result: 'written', status };
+}
+
+// Anspruch nehmen und die wartende Änderung `target` abarbeiten. `mode: 'auto'`
+// schreibt nur, was weder eine Mail noch ein Rückschritt wäre.
+async function runPush(tenant, link, { mode, target, mailRequested = false }) {
+  const claim = await repos.feedback.claimPush({
+    tenantId: tenant.id, suggestionId: link.suggestionId, expectStatus: target,
+  });
+  if (!claim) return { result: 'busy' };
+
+  const attempt = { status: target };
+  try {
+    return await writeClaimedPush(claim, attempt, { mode, mailRequested });
+  } catch (error) {
+    const message = error instanceof FeedbackSourceError ? error.message : PUSH_MESSAGES.failed;
+    console.error(`Push failed (link ${claim.link.id}): ${message}`);
+    const claimId = claim.token;
+    await repos.feedback.releasePush(claimId, { status: attempt.status, reason: 'failed', error: message });
+    return { result: 'error', message };
+  }
+}
+
+// Der Klick in der Konsole: der einzige Weg, auf dem eine Mail rausgeht.
+async function confirmPush(req, tenant, suggestionId, { status, mail } = {}) {
+  // Nur ein angemeldeter Owner. Admin-Passwort (type 'admin'), API-Schlüssel und
+  // Skripte kommen hier nicht durch.
+  if (req.tenantAuth?.type !== 'session' || req.tenantAuth.role !== 'owner') return { forbidden: true };
+
+  const link = await repos.feedback.findLink(tenant.id, suggestionId);
+  if (!link) return { result: 'error', message: PUSH_MESSAGES.notLinked };
+  if (!link.pushEnabled) return { result: 'error', message: PUSH_MESSAGES.pushOff };
+  if (!link.pendingStatus || link.pendingStatus !== status) {
+    return { result: 'busy', message: link.pendingStatus ? PUSH_MESSAGES.changed : PUSH_MESSAGES.nothingPending };
+  }
+
+  const outcome = await runPush(tenant, link, { mode: 'confirm', target: status, mailRequested: mail === true });
+  if (outcome.result === 'busy') {
+    return {
+      result: 'busy',
+      message: link.pushStage === 'mailing' ? PUSH_MESSAGES.mailUnclear : PUSH_MESSAGES.busy,
+    };
+  }
+  if (outcome.result === 'none') return { result: 'published_no_mail', message: PUSH_MESSAGES.alreadyPublic };
+  if (outcome.result !== 'written') return outcome;
+  if (!outcome.mailDue) return { result: 'published_no_mail' };
+
+  // Gilt der Anspruch nicht mehr (verworfen oder neu vergeben), geht keine Mail.
+  if (!(await repos.feedback.markMailing(outcome.claimId))) {
+    return { result: 'published_no_mail', message: PUSH_MESSAGES.mailFailed };
+  }
+  let failure = null;
+  try {
+    await sendPushMail(outcome.source, outcome.entry, outcome.status);
+  } catch {
+    failure = PUSH_MESSAGES.mailFailed;
+    console.error(`Push mail failed (link ${outcome.source.id}).`);
+  }
+  // Scheitert nur das Abschließen, bleibt der Anspruch in `mailing`: Die Karte
+  // meldet „unklar“, und niemand mailt ein zweites Mal.
+  try {
+    await repos.feedback.finishPush(outcome.claimId, { publicStatus: outcome.status, error: failure });
+  } catch {
+    console.error(`Push could not be closed (link ${outcome.source.id}).`);
+  }
+  return failure ? { result: 'published_no_mail', message: failure } : { result: 'published' };
+}
+
+const WAITING_MESSAGES = {
+  mail: PUSH_MESSAGES.waitingMail,
+  backward: PUSH_MESSAGES.waitingBackward,
+};
+
+// Ergebnis eines automatischen Laufs als {result, message?} für die Antwort.
+function describeAutoPush(outcome) {
+  if (outcome.result === 'written') {
+    return { result: 'written', message: `Öffentlich veröffentlicht: ${outcome.status}.` };
+  }
+  if (outcome.result === 'waiting') return { result: 'waiting', message: WAITING_MESSAGES[outcome.reason] };
+  if (outcome.result === 'busy') return { result: 'waiting', message: PUSH_MESSAGES.waitingBusy };
+  if (outcome.result === 'error') return { result: 'error', message: outcome.message };
+  return { result: 'none' };
+}
+
+// Zieht den öffentlichen Eintrag nach, nachdem intern `status` gespeichert ist.
+// Wirft nie: Der interne Statuswechsel gilt in jedem Fall.
+async function pushAfterStatusChange(tenant, suggestionId, status) {
+  if (!feedbackEnabled(tenant)) return { result: 'none' };
+  try {
+    const link = await repos.feedback.findLink(tenant.id, suggestionId);
+    if (!link?.pushEnabled) return { result: 'none' };
+    // Die wartende Änderung spiegelt immer den aktuellen internen Stand; ein
+    // überholter Aufruf (`ifTicketStatus`) setzt nichts.
+    const target = targetFor(status, link.publicType);
+    const pending = await repos.feedback.setPending({
+      tenantId: tenant.id, suggestionId, status: target, reason: 'busy', ifTicketStatus: status,
+    });
+    if (!target || !pending) return { result: 'none' };
+    return describeAutoPush(await runPush(tenant, link, { mode: 'auto', target }));
+  } catch {
+    console.error(`Push after status change failed (ticket ${suggestionId}).`);
+    return { result: 'error', message: PUSH_MESSAGES.failed };
+  }
+}
+
+// Für die Antwort der Statusrouten: `publicPush` nur, wenn es etwas zu sagen
+// gibt. Ohne Verknüpfung bleibt die Antwort, wie sie war.
+async function publicPushField(tenant, suggestionId, changed, status) {
+  if (!changed) return {};
+  const publicPush = await pushAfterStatusChange(tenant, suggestionId, status);
+  return publicPush.result === 'none' ? {} : { publicPush };
+}
+
+// „Öffentlich auf Im Test setzen“: bewusst, für ein Ticket, das intern im Test
+// ist. Mailt nie; ginge eine Mail, entsteht nur die wartende Änderung.
+async function pushPublicTest(tenant, suggestionId) {
+  const none = message => ({ result: 'none', message });
+  try {
+    const link = await repos.feedback.findLink(tenant.id, suggestionId);
+    if (!link) return none(PUSH_MESSAGES.notLinked);
+    if (!link.pushEnabled) return none(PUSH_MESSAGES.pushOff);
+    const pending = await repos.feedback.setPending({
+      tenantId: tenant.id, suggestionId, status: TEST_STATUS, reason: 'busy', ifTicketStatus: TEST_STATUS,
+    });
+    if (!pending) return none(PUSH_MESSAGES.notInTest);
+    const outcome = await runPush(tenant, link, { mode: 'auto', target: TEST_STATUS });
+    return outcome.result === 'none' ? none(PUSH_MESSAGES.alreadyPublic) : describeAutoPush(outcome);
+  } catch {
+    console.error(`Public test push failed (ticket ${suggestionId}).`);
+    return { result: 'error', message: PUSH_MESSAGES.failed };
+  }
+}
+
+// Gemeinsamer Rahmen der Konsolen-Routen: nur private Workspaces, gültige ID,
+// und die Antwort bringt den neuen Stand mit.
+function feedbackPushRoute(handle) {
+  return async (req, res) => {
+    const tenant = req.adminTenant;
+    try {
+      if (!feedbackEnabled(tenant)) return res.status(409).json({ error: FEEDBACK_ONLY_PRIVATE });
+      const { suggestionId } = req.params;
+      if (!/^[a-zA-Z0-9_-]+$/.test(suggestionId)) {
+        return res.status(400).json({ error: 'Invalid suggestion ID' });
+      }
+      const outcome = await handle(req, tenant, suggestionId);
+      if (outcome.status) return res.status(outcome.status).json({ error: outcome.error });
+      const state = await loadFeedbackState(tenant)
+        .catch(() => console.error('Error loading feedback state after push.'));
+      res.json({ ...outcome.body, state });
+    } catch {
+      console.error(`Error handling feedback push (ticket ${req.params.suggestionId}).`);
+      res.status(500).json({ error: PUSH_MESSAGES.failed });
+    }
+  };
+}
+
+const OWNER_ONLY = { status: 403, error: PUSH_MESSAGES.ownerOnly };
+
+const handleFeedbackPublish = feedbackPushRoute(async (req, tenant, suggestionId) => {
+  const outcome = await confirmPush(req, tenant, suggestionId, {
+    status: req.body?.status, mail: req.body?.mail,
+  });
+  if (outcome.forbidden) return OWNER_ONLY;
+  const { result, message } = outcome;
+  return { body: { result, message } };
+});
+
+// Verwerfen entscheidet über eine öffentliche Änderung: auch nur mit Sitzung.
+const handleFeedbackDiscard = feedbackPushRoute(async (req, tenant, suggestionId) => {
+  if (req.tenantAuth?.type !== 'session') return OWNER_ONLY;
+  const success = await repos.feedback.discardPending({ tenantId: tenant.id, suggestionId });
+  return { body: { success } };
+});
+
+const handleFeedbackPublicTest = feedbackPushRoute(async (req, tenant, suggestionId) => {
+  const { errorStatus, error } = await loadSuggestionForTenant(tenant.id, suggestionId);
+  if (error) return { status: errorStatus, error };
+  return { body: { publicPush: await pushPublicTest(tenant, suggestionId) } };
+});
+
+async function handleApiPublicTest(req, res) {
+  const { tenant } = req.apiAuth;
+  try {
+    if (!feedbackEnabled(tenant)) return res.status(409).json({ error: FEEDBACK_ONLY_PRIVATE });
+    const { suggestionData, errorStatus, error } = await loadApiKeySuggestionById(req, req.params.suggestionId);
+    if (error) return res.status(errorStatus).json({ error });
+    res.json({ publicPush: await pushPublicTest(tenant, suggestionData.id) });
+  } catch {
+    console.error(`Error handling public test push (ticket ${req.params.suggestionId}).`);
+    res.status(500).json({ error: PUSH_MESSAGES.failed });
   }
 }
 
@@ -8661,6 +9079,12 @@ app.get('/api/v1/feedback', requireApiKey(['suggestions:read']), rateLimitByApiK
 app.post('/api/v1/feedback/fetch', requireApiKey(['suggestions:read']), rateLimitFeedbackFetchByApiKey(60000, 10), requireWriteScopeForFetch, (req, res) => handleFeedbackFetch(req, res, req.apiAuth.tenant, `api:${req.apiAuth.keyId}`));
 app.put('/api/v1/suggestions/:suggestionId/link', requireApiKey(['suggestions:write']), rateLimitByApiKey(60000, 60), (req, res) => handleFeedbackLink(req, res, req.apiAuth.tenant));
 app.delete('/api/v1/suggestions/:suggestionId/link', requireApiKey(['suggestions:write']), rateLimitByApiKey(60000, 60), (req, res) => handleFeedbackLink(req, res, req.apiAuth.tenant));
+
+// Zurückschreiben. Bestätigen und Verwerfen: nur Owner mit Sitzung.
+app.post('/api/admin/tenants/:tenantSlug/feedback/links/:suggestionId/publish', requireTenantAccess(['owner']), rateLimit(60000, 20), handleFeedbackPublish);
+app.post('/api/admin/tenants/:tenantSlug/feedback/links/:suggestionId/discard', requireTenantAccess(['owner']), rateLimit(60000, 20), handleFeedbackDiscard);
+app.post('/api/admin/tenants/:tenantSlug/feedback/links/:suggestionId/test', requireTenantAccess(['owner', 'admin']), rateLimit(60000, 20), handleFeedbackPublicTest);
+app.post('/api/v1/suggestions/:suggestionId/public-test', requireApiKey(['suggestions:status']), rateLimitByApiKey(60000, 60), handleApiPublicTest);
 
 // SPA-Fallback: pfad-basierte Board-URLs (/{tenant}/{board}/{view}) auf die
 // öffentliche Shell mappen. Läuft NACH allen API-Routen und express.static,

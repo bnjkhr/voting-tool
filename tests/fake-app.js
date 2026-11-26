@@ -13,6 +13,8 @@ Object.assign(process.env, {
   VERCEL_ENV: '',
   STRIPE_SECRET_KEY: '',
   RESEND_API_KEY: 're_test',
+  EMAIL_FROM: '',
+  LEGACY_EMAIL_FROM: '',
   BASE_URL: 'http://localhost',
   ADMIN_PASSWORD: 'test-admin-password',
   OPERATOR_EMAIL: 'operator@example.test',
@@ -22,22 +24,49 @@ const collections = new Map();
 const sentMails = [];
 let nextId = 0;
 
-// Gelesene Sammlungen in Reihenfolge, und gestörte Sammlungen.
+// Gelesene Sammlungen in Reihenfolge, Schreibzugriffe je Sammlung und
+// Dokument, und gestörte Sammlungen.
 const readLog = [];
+const writeLog = [];
 const brokenReads = new Map();
+const brokenWrites = new Map();
+let mailFailure = null;
 
-// Lässt jedes Lesen der Sammlung scheitern, mit `hang` hängen. Gibt die
-// Funktion zurück, die die Störung wieder aufhebt.
-function failReads(name, { hang = false } = {}) {
-  brokenReads.set(name, hang);
-  return () => brokenReads.delete(name);
+// Lässt jedes Lesen (Schreiben) der Sammlung scheitern. Mit `hang: true` hängt
+// es für immer; mit einem Versprechen hängt es, bis dieses erfüllt ist, und
+// läuft dann normal weiter. Gibt die Funktion zurück, die die Störung wieder
+// aufhebt.
+const disturb = (broken) => (name, { hang = false } = {}) => {
+  broken.set(name, hang);
+  return () => broken.delete(name);
+};
+const failReads = disturb(brokenReads);
+const failWrites = disturb(brokenWrites);
+
+// Jeder weitere Mailversand scheitert: Ein `Error` wird geworfen, alles andere
+// meldet Resend als `error` zurück.
+function failMails(error) {
+  mailFailure = error;
+  return () => { mailFailure = null; };
+}
+
+async function pass(broken, name, what) {
+  if (!broken.has(name)) return;
+  const hang = broken.get(name);
+  if (hang === true) await new Promise(() => {});
+  if (hang) await hang;
+  else throw new Error(`${what} von „${name}“ ist gestört`);
 }
 
 async function noteRead(name) {
   readLog.push(name);
-  if (!brokenReads.has(name)) return;
-  if (brokenReads.get(name)) await new Promise(() => {});
-  throw new Error(`Lesen von „${name}“ ist gestört`);
+  await pass(brokenReads, name, 'Lesen');
+}
+
+async function write(collection, id, op, apply) {
+  await pass(brokenWrites, collection, 'Schreiben');
+  apply();
+  writeLog.push({ collection, id, op });
 }
 
 function records(name) {
@@ -67,15 +96,13 @@ function docRef(name, id) {
       const stored = records(name).get(id);
       return { id, ref, exists: Boolean(stored), data: () => (stored ? { ...stored } : undefined) };
     },
-    async set(data, options = {}) {
+    set: (data, options = {}) => write(name, id, 'set', () => {
       records(name).set(id, options.merge ? { ...records(name).get(id), ...data } : { ...data });
-    },
-    async update(data) {
+    }),
+    update: (data) => write(name, id, 'update', () => {
       records(name).set(id, applyUpdate(records(name).get(id), data));
-    },
-    async delete() {
-      records(name).delete(id);
-    },
+    }),
+    delete: () => write(name, id, 'delete', () => records(name).delete(id)),
   };
   return ref;
 }
@@ -149,7 +176,10 @@ stubModule('resend', {
     constructor() {
       this.emails = {
         send: async (mail) => {
+          // `sentMails` zählt jeden Versuch, auch einen gescheiterten.
           sentMails.push(mail);
+          if (mailFailure instanceof Error) throw mailFailure;
+          if (mailFailure) return { data: null, error: mailFailure };
           return { data: { id: 'mail' }, error: null };
         },
       };
@@ -172,7 +202,10 @@ function reset() {
   collections.clear();
   sentMails.length = 0;
   readLog.length = 0;
+  writeLog.length = 0;
   brokenReads.clear();
+  brokenWrites.clear();
+  mailFailure = null;
 }
 
 let clientCounter = 0;
@@ -209,4 +242,6 @@ async function startApp() {
   return { request, close };
 }
 
-module.exports = { dump, failReads, readLog, records, reset, seed, sentMails, startApp };
+module.exports = {
+  dump, failMails, failReads, failWrites, readLog, records, reset, seed, sentMails, startApp, writeLog,
+};

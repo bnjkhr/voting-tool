@@ -13,9 +13,11 @@
 // irgendein Pfad doch auf Firestore durch, scheitert der Request sichtbar —
 // genau das ist die Aussage dieses Tests.
 //
-// Einzige Ausnahme vom „kein Firestore“: der Hol-Aufruf für verknüpftes
-// Feedback (POST …/feedback/fetch) liest den Altbestand dort, und nur lesend
-// (feedback-fetch-postgres.test.js).
+// Zwei Ausnahmen vom „kein Firestore“, beide nur für verknüpftes Feedback:
+// der Hol-Aufruf (POST …/feedback/fetch) liest den Altbestand dort, und nur
+// lesend (feedback-fetch-postgres.test.js); das Zurückschreiben liest und
+// schreibt dort den Status eines verknüpften Eintrags, wenn die Quelle dafür
+// eingeschaltet ist (feedback-push-postgres.test.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

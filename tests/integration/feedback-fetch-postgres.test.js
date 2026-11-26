@@ -768,6 +768,8 @@ suite('Holen und Verknüpfen gegen Postgres', async (t) => {
         suggestionId: 'test_fbget_frei', entryId: 'test_fbget_offen',
         publicType: null, publicStatus: null, publicApproved: null, publicDeleted: false, publicSeenAt: null,
         url: `https://roadlight.example.test/${SLUG[ACME]}/board/t/test_fbget_offen`,
+        pendingStatus: null, pendingReason: null, pendingMail: false, pendingError: null,
+        pushStage: null, pushEnabled: false,
       });
       assert.equal((await put('test_fbget_frei', 'test_fbget_offen')).status, 200);
 
