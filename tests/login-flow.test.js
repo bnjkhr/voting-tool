@@ -32,7 +32,7 @@ test('login link API endpoints are exposed without global admin auth', () => {
   assert.ok(apiSource.includes('buildLoginLinkData'));
   assert.ok(apiSource.includes('resolvePendingLoginLinkByToken'));
   assert.ok(apiSource.includes('sendLoginLinkEmail'));
-  assert.ok(apiSource.includes('loadActiveUserTenants'));
+  assert.ok(apiSource.includes('loadMemberTenants'));
   assert.ok(apiSource.includes('redirectUrl: req.body?.redirectUrl'));
   assert.ok(apiSource.includes('loginLink.redirectUrl'));
   // Der Magic-Link (enthält das Token) darf nie in Logs landen.

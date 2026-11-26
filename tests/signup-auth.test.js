@@ -29,7 +29,7 @@ test('Signup + Auth-Helfer haben einen Postgres-Branch', () => {
   assert.ok(apiSource.includes('repos.provisioning.provisionWorkspace('));
   assert.equal(/insert into (tenants|apps|memberships)/.test(apiSource), false, 'kein rohes SQL in api/index.js');
   // Die vier Auth-Helfer dispatchen auf Postgres.
-  ['createUserSession', 'loadActiveUserTenants', 'resolvePendingInviteByToken', 'resolvePendingLoginLinkByToken']
+  ['createUserSession', 'loadMemberTenants', 'resolvePendingInviteByToken', 'resolvePendingLoginLinkByToken']
     .forEach((fn) => {
       const idx = apiSource.indexOf(`function ${fn}(`);
       assert.ok(idx !== -1, `Helfer fehlt: ${fn}`);

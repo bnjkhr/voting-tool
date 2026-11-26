@@ -1378,7 +1378,7 @@ async function persistLoginLink(loginLinkData) {
   return docRef.id;
 }
 
-async function loadActiveUserTenants(userId) {
+async function loadMemberTenants(userId) {
   if (usePostgres()) {
     const memberships = await repos.memberships.listByUser(userId); // nur status='active'
     const tenantIds = [...new Set(memberships.map((m) => m.tenantId).filter(Boolean))];
@@ -1901,7 +1901,7 @@ app.post('/api/auth/login-links/:token/consume', rateLimit(60000, 10), async (re
       }, { merge: true });
     }
 
-    const tenants = await loadActiveUserTenants(resolved.user.id);
+    const tenants = await loadMemberTenants(resolved.user.id);
     const firstTenant = tenants[0]?.tenant || null;
     const redirectUrl = resolved.loginLink.redirectUrl || (
       firstTenant
@@ -1934,7 +1934,7 @@ app.get('/api/auth/session', async (req, res) => {
   try {
     const sessionAuth = await resolveSessionAuth(req);
     if (sessionAuth) {
-      const tenants = await loadActiveUserTenants(sessionAuth.user.id);
+      const tenants = await loadMemberTenants(sessionAuth.user.id);
       return res.json({
         authType: 'user',
         platformRole: null,
