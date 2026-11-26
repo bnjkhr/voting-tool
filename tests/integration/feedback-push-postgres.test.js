@@ -203,9 +203,11 @@ suite('Zurückschreiben gegen Postgres', async (t) => {
   );
   const linkUrl = (item, action) => `${base()}/feedback/links/${item.id}/${action}`;
   const publish = (item, status, mail = false, headers = as('owner')) => (
-    post(linkUrl(item, 'publish'), { status, mail }, headers)
+    post(linkUrl(item, 'publish'), { entryId: item.entryId, status, mail }, headers)
   );
-  const discard = (item, headers = as('owner')) => post(linkUrl(item, 'discard'), {}, headers);
+  const discard = (item, headers = as('owner')) => (
+    post(linkUrl(item, 'discard'), { entryId: item.entryId }, headers)
+  );
   const consoleTest = (item, headers = as('owner')) => post(linkUrl(item, 'test'), {}, headers);
   const apiTest = (item, headers = keys.full) => (
     post(`/api/v1/suggestions/${item.id}/public-test`, undefined, headers)
@@ -1231,5 +1233,177 @@ suite('Zurückschreiben gegen Postgres', async (t) => {
     assert.equal('publicPush' in ok(await patchStatus(item, 'in Bearbeitung')), false);
 
     assert.deepEqual(fake.readLog, []);
+  });
+  // Hält das nächste Schreiben in die Quelle an, bis `open()` gerufen wird.
+  // `reached` wird erfüllt, sobald es angekommen ist.
+  function holdNextWrite(kind) {
+    const held = gate();
+    if (kind === 'alt') {
+      const before = fake.writeAttempts.length;
+      const restore = fake.failWrites('suggestions', { hang: held.closed });
+      const reached = until(() => fake.writeAttempts.length > before, 'Schreiben begonnen').then(restore);
+      return { reached, open: held.open };
+    }
+    const original = repos.suggestions.updateIfUnchanged;
+    let arrived = false;
+    repos.suggestions.updateIfUnchanged = async (...args) => {
+      repos.suggestions.updateIfUnchanged = original;
+      arrived = true;
+      await held.closed;
+      return original(...args);
+    };
+    return { reached: until(() => arrived, 'Schreiben begonnen'), open: held.open };
+  }
+
+  const activityCount = async (kind) => (kind === 'alt' ? writes('activity').length : (await sourceActivity()).length);
+  // Ändert den öffentlichen Eintrag an etwas anderem als dem Status.
+  const touch = async (item) => {
+    if (item.kind === 'alt') {
+      const docs = fake.records('suggestions');
+      docs.set(item.entryId, { ...docs.get(item.entryId), votes: 7 });
+    } else {
+      await query('update suggestions set votes = votes + 1 where id = $1', [item.entryId]);
+    }
+  };
+
+  for (const kind of ['alt', 'neu']) {
+    await t.test(`altes Schreiben kommt nach dem neuen an und scheitert (${kind})`, { timeout: 30000 }, async () => {
+      await seed();
+      const item = await pair({ kind });
+      const old = holdNextWrite(kind);
+      const first = ok(await captureLog(() => setStatus(item, 'in Bearbeitung')));
+      await old.reached;
+      assert.equal(first.publicPush.message, PUSH_MESSAGES.timeout);
+      assert.equal(ok(await setStatus(item, 'gelöst')).publicPush.result, 'written');
+
+      old.open();
+      await settle();
+
+      assert.equal(await publicStatus(item), 'gelöst');
+      assert.deepEqual(await pending(item), NOTHING_PENDING);
+      assert.equal((await linkRow(item)).public_status, 'gelöst');
+      assert.equal(await activityCount(kind), 1);
+      assert.equal(fake.sentMails.length, 0);
+    });
+
+    await t.test(`altes Schreiben landet zwischen Lesen und Schreiben des neuen (${kind})`, { timeout: 30000 }, async () => {
+      await seed();
+      const item = await pair({ kind });
+      const old = holdNextWrite(kind);
+      ok(await captureLog(() => setStatus(item, 'in Bearbeitung')));
+      await old.reached;
+      const fresh = holdNextWrite(kind);
+      const second = captureLog(() => setStatus(item, 'gelöst'));
+      await fresh.reached;
+      old.open();
+      await settle();
+      assert.equal(await publicStatus(item), 'in Bearbeitung');
+
+      fresh.open();
+      const res = ok(await second);
+
+      assert.deepEqual(res.publicPush, { result: 'waiting', message: PUSH_MESSAGES.waitingConflict });
+      assert.equal(await publicStatus(item), 'in Bearbeitung');
+      assert.deepEqual(await pending(item), ['gelöst', 'busy', false]);
+      const link = await linkRow(item);
+      assert.deepEqual([link.pending_error, link.push_claim], [PUSH_MESSAGES.conflict, null]);
+      // Ein Verlaufseintrag nur für das angekommene alte Schreiben, keiner für das abgelehnte neue.
+      assert.equal(await activityCount(kind), 1);
+      assert.equal(ok(await publish(item, 'gelöst')).result, 'published_no_mail');
+      assert.equal(await publicStatus(item), 'gelöst');
+      assert.deepEqual(await pending(item), NOTHING_PENDING);
+    });
+
+    await t.test(`Eintrag ändert sich zwischen Lesen und Schreiben: Klick schreibt und mailt nicht (${kind})`, async () => {
+      await seed();
+      const item = await pair({ kind, entry: NOTIFY });
+      ok(await setStatus(item, 'gelöst'));
+      const held = holdNextWrite(kind);
+      const click = captureLog(() => publish(item, 'gelöst', true));
+      await held.reached;
+      await touch(item);
+      held.open();
+
+      const res = ok(await click);
+
+      assert.deepEqual([res.result, res.message], ['busy', PUSH_MESSAGES.conflict]);
+      assert.equal(await publicStatus(item), 'offen');
+      assert.equal(await activityCount(kind), 0);
+      assert.equal(fake.sentMails.length, 0);
+      assert.deepEqual(await pending(item), ['gelöst', 'busy', true]);
+      assert.equal((await linkRow(item)).push_claim, null);
+      // Mit dem frischen Stand geht der nächste Klick durch.
+      assert.equal(ok(await publish(item, 'gelöst', true)).result, 'published');
+      assert.equal(fake.sentMails.length, 1);
+    });
+  }
+
+  await t.test('ohne Stand des gelesenen Eintrags wird nicht geschrieben', async () => {
+    await seed();
+    const item = await pair({});
+    fake.hideUpdateTime('suggestions');
+
+    const res = ok(await captureLog(() => setStatus(item, 'gelöst')));
+
+    assert.deepEqual(res.publicPush, { result: 'error', message: PUSH_MESSAGES.failed });
+    assert.deepEqual(writes('suggestions'), []);
+    assert.deepEqual(await pending(item), ['gelöst', 'failed', false]);
+  });
+
+  await t.test('der Klick gilt nur für den Eintrag, den die Karte zeigt', async () => {
+    await seed();
+    const item = await pair({ entry: NOTIFY });
+    ok(await setStatus(item, 'gelöst'));
+    const before = await linkRow(item);
+
+    for (const entryId of [undefined, '', 'anderer_eintrag', 7, [item.entryId]]) {
+      const clicked = ok(await post(linkUrl(item, 'publish'), { entryId, status: 'gelöst', mail: true }, as('owner')));
+      assert.deepEqual([clicked.result, clicked.message], ['busy', PUSH_MESSAGES.changed], JSON.stringify(entryId));
+      const discarded = ok(await post(linkUrl(item, 'discard'), { entryId }, as('owner')));
+      assert.deepEqual([discarded.success, discarded.message], [false, PUSH_MESSAGES.changed], JSON.stringify(entryId));
+    }
+
+    assert.deepEqual(await linkRow(item), before);
+    assert.deepEqual(writes('suggestions'), []);
+    assert.equal(fake.sentMails.length, 0);
+  });
+
+  await t.test('neu verknüpft: Der Klick der alten Karte trifft den neuen Eintrag nicht', async () => {
+    await seed();
+    const item = await pair({ entry: NOTIFY });
+    ok(await setStatus(item, 'gelöst'));
+    const other = legacyEntry(NOTIFY);
+    await repos.feedback.unlinkSuggestion({ tenantId: INTERN, suggestionId: item.id });
+    await repos.feedback.linkSuggestion({ tenantId: INTERN, suggestionId: item.id, entryId: other });
+    // Auf dem neuen Eintrag wartet derselbe Status.
+    ok(await setStatus(item, 'offen'));
+    ok(await setStatus(item, 'gelöst'));
+    assert.deepEqual(await pending(item), ['gelöst', 'mail', true]);
+
+    const clicked = ok(await publish(item, 'gelöst', true));
+    const discarded = ok(await discard(item));
+
+    assert.deepEqual([clicked.result, clicked.message], ['busy', PUSH_MESSAGES.changed]);
+    assert.equal(discarded.success, false);
+    assert.deepEqual(await pending(item), ['gelöst', 'mail', true]);
+    assert.deepEqual(writes('suggestions'), []);
+    assert.equal(fake.sentMails.length, 0);
+    // Die neu geladene Karte nennt den neuen Eintrag.
+    assert.equal(ok(await publish({ ...item, entryId: other }, 'gelöst', true)).result, 'published');
+    assert.equal(legacyDoc(item.entryId).status, 'offen');
+    assert.equal(legacyDoc(other).status, 'gelöst');
+  });
+
+  // Zwischen Nachsehen und Anspruch neu verknüpft: Der Anspruch selbst prüft den
+  // Eintrag.
+  await t.test('der Anspruch bindet den Eintrag', async () => {
+    await seed();
+    const item = await pair({ entry: NOTIFY });
+    ok(await setStatus(item, 'gelöst'));
+    const ids = { tenantId: INTERN, suggestionId: item.id };
+
+    assert.equal(await repos.feedback.claimPush({ ...ids, expectStatus: 'gelöst', expectEntryId: 'x' }), null);
+    assert.equal(await repos.feedback.discardPending({ ...ids, entryId: 'x' }), false);
+    assert.ok(await repos.feedback.claimPush({ ...ids, expectStatus: 'gelöst', expectEntryId: item.entryId }));
   });
 });

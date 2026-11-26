@@ -380,7 +380,8 @@ async function setPending({
 // gleichzeitigen Aufrufen gewinnt genau einer. Frei ist sie ohne Anspruch oder
 // wenn ein Schreiben seit zwei Minuten hängt. Ein hängender Mailversand wird nie
 // neu genommen, sonst ginge die Mail womöglich zweimal.
-async function claimPush({ tenantId, suggestionId, expectStatus }) {
+// `expectEntryId` bindet den Anspruch an den Eintrag, den ein Klick meinte.
+async function claimPush({ tenantId, suggestionId, expectStatus, expectEntryId = null }) {
   const token = crypto.randomUUID();
   const { rows } = await query(
     `with source as (
@@ -395,10 +396,11 @@ async function claimPush({ tenantId, suggestionId, expectStatus }) {
        from source s
       where l.tenant_id = $1 and l.suggestion_id = $2 and l.source_id = s.id
         and l.pending_status = $3
+        and ($5::text is null or l.entry_id = $5)
         and (l.push_claim is null
              or (l.push_stage = 'writing' and l.push_claimed_at < now() - interval '2 minutes'))
       returning ${prefixed(LINK_COLUMNS, 'l')}, ${LINK_SOURCE_COLUMNS}`,
-    [tenantId, suggestionId, expectStatus, token]
+    [tenantId, suggestionId, expectStatus, token, expectEntryId]
   );
   return rows[0] ? { token, link: mapRow(rows[0]) } : null;
 }
@@ -498,12 +500,12 @@ async function dropPush(token, { status, publicStatus = null }) {
 }
 
 // Verwerfen räumt alles ab, auch einen hängenden Mailversand.
-async function discardPending({ tenantId, suggestionId }) {
+async function discardPending({ tenantId, suggestionId, entryId = null }) {
   const { rowCount } = await query(
     `update feedback_links set ${CLEAR_PENDING}, ${CLEAR_CLAIM}
-      where tenant_id = $1 and suggestion_id = $2
+      where tenant_id = $1 and suggestion_id = $2 and ($3::text is null or entry_id = $3)
         and (pending_status is not null or pending_error is not null or push_claim is not null)`,
-    [tenantId, suggestionId]
+    [tenantId, suggestionId, entryId]
   );
   return rowCount > 0;
 }

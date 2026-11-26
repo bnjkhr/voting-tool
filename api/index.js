@@ -8684,6 +8684,7 @@ async function readLegacyPushTarget(sourceAppId, entryId) {
   const type = normalizeSuggestionType(data.type);
   return {
     id: entryId,
+    version: doc.updateTime,
     type,
     ...legacyStatus(data, type, mapLegacyTagToStatus(type, data.tag, data.approved)),
     title: data.title,
@@ -8696,13 +8697,14 @@ async function readLegacyPushTarget(sourceAppId, entryId) {
 async function readWorkspacePushTarget(source, entryId) {
   const { tenant, board, error } = await findFeedbackSourceBoard(source);
   if (error) throw new FeedbackSourceError(error);
-  const row = await repos.suggestions.findById(entryId);
+  const row = await repos.suggestions.findByIdWithVersion(entryId);
   if (!row || row.tenantId !== tenant.id || row.appId !== board.id) {
     throw new FeedbackSourceError(PUSH_MESSAGES.gone);
   }
   if (row.approved !== true) throw new FeedbackSourceError(PUSH_MESSAGES.notApproved);
   return {
     id: row.id,
+    version: row.rowVersion,
     tenantId: tenant.id,
     type: normalizeSuggestionType(row.type),
     status: row.status,
@@ -8722,6 +8724,40 @@ async function readPushTarget(source, entryId) {
   return { entry, mail: entry.recipient !== null };
 }
 
+// Der Eintrag hat sich zwischen Lesen und Schreiben geändert.
+class PushConflictError extends Error {}
+
+// gRPC-Status, mit dem Firestore eine verletzte Vorbedingung meldet.
+const FIRESTORE_FAILED_PRECONDITION = 9;
+
+// Schreibt nur, wenn der Eintrag seit dem Lesen unverändert ist. Ein Schreiben,
+// das nach Ablauf der Zeitgrenze noch unterwegs ist, kann so keinen inzwischen
+// veröffentlichten neueren Stand überholen.
+async function writeEntryIfUnchanged(source, entry, fields) {
+  // Ohne gelesenen Stand gäbe es keine Bedingung (die Bibliothek prüft bei
+  // `undefined` nichts): dann gar nicht schreiben.
+  if (!entry.version) throw new Error('Entry version missing');
+
+  // Der Altbestand liegt in Firestore, auch wenn diese App in Postgres lebt:
+  // deshalb nicht writeTimestamp().
+  if (source.sourceKind === 'legacy') {
+    try {
+      await db.collection('suggestions').doc(entry.id).update(
+        { ...fields, tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { lastUpdateTime: entry.version }
+      );
+    } catch (error) {
+      if (error?.code === FIRESTORE_FAILED_PRECONDITION) throw new PushConflictError();
+      throw error;
+    }
+    return;
+  }
+  const written = await repos.suggestions.updateIfUnchanged(entry.id, entry.version, {
+    ...fields, tagUpdatedAt: new Date(),
+  });
+  if (!written) throw new PushConflictError();
+}
+
 // Dieselben Felder wie die jeweilige Statusroute, ohne je `approved` zu setzen,
 // plus ein Verlaufseintrag mit festem Akteur.
 async function writePublicStatus(source, entry, status) {
@@ -8737,17 +8773,10 @@ async function writePublicStatus(source, entry, status) {
     actor: 'admin',
   };
 
-  // Der Altbestand liegt in Firestore, auch wenn diese App in Postgres lebt:
-  // deshalb weder writeTimestamp() noch logActivity().
-  if (legacy) {
-    await db.collection('suggestions').doc(entry.id).update({
-      ...fields, tagUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-  } else {
-    await repos.suggestions.update(entry.id, { ...fields, tagUpdatedAt: new Date() });
-  }
+  await writeEntryIfUnchanged(source, entry, fields);
 
   // Der Status steht; ein fehlender Verlaufseintrag macht daraus keinen Fehler.
+  // Nicht über logActivity(): Das schriebe unter Postgres nie nach Firestore.
   try {
     if (legacy) {
       await db.collection('activity').add({
@@ -8878,9 +8907,9 @@ async function writeClaimedPush({ token: claimId, link }, attempt, { mode, mailR
 
 // Anspruch nehmen und die wartende Änderung `target` abarbeiten. `mode: 'auto'`
 // schreibt nur, was weder eine Mail noch ein Rückschritt wäre.
-async function runPush(tenant, link, { mode, target, mailRequested = false }) {
+async function runPush(tenant, link, { mode, target, mailRequested = false, expectEntryId }) {
   const claim = await repos.feedback.claimPush({
-    tenantId: tenant.id, suggestionId: link.suggestionId, expectStatus: target,
+    tenantId: tenant.id, suggestionId: link.suggestionId, expectStatus: target, expectEntryId,
   });
   if (!claim) return { result: 'busy' };
 
@@ -8888,16 +8917,21 @@ async function runPush(tenant, link, { mode, target, mailRequested = false }) {
   try {
     return await withPushDeadline(attempt, writeClaimedPush(claim, attempt, { mode, mailRequested }));
   } catch (error) {
-    const message = error instanceof FeedbackSourceError ? error.message : PUSH_MESSAGES.failed;
+    // Ein geänderter Eintrag ist kein Fehler der Quelle: Die Änderung wartet
+    // weiter, wie bei einem besetzten Anspruch.
+    const conflict = error instanceof PushConflictError;
+    let message = error instanceof FeedbackSourceError ? error.message : PUSH_MESSAGES.failed;
+    if (conflict) message = PUSH_MESSAGES.conflict;
     console.error(`Push failed (link ${claim.link.id}): ${message}`);
     const claimId = claim.token;
-    await repos.feedback.releasePush(claimId, { status: attempt.status, reason: 'failed', error: message });
-    return { result: 'error', message };
+    const reason = conflict ? 'busy' : 'failed';
+    await repos.feedback.releasePush(claimId, { status: attempt.status, reason, error: message });
+    return conflict ? { result: 'busy', conflict } : { result: 'error', message };
   }
 }
 
 // Der Klick in der Konsole: der einzige Weg, auf dem eine Mail rausgeht.
-async function confirmPush(req, tenant, suggestionId, { status, mail } = {}) {
+async function confirmPush(req, tenant, suggestionId, { entryId, status, mail } = {}) {
   // Nur ein angemeldeter Owner. Admin-Passwort (type 'admin'), API-Schlüssel und
   // Skripte kommen hier nicht durch.
   if (req.tenantAuth?.type !== 'session' || req.tenantAuth.role !== 'owner') return { forbidden: true };
@@ -8905,11 +8939,18 @@ async function confirmPush(req, tenant, suggestionId, { status, mail } = {}) {
   const link = await repos.feedback.findLink(tenant.id, suggestionId);
   if (!link) return { result: 'error', message: PUSH_MESSAGES.notLinked };
   if (!link.pushEnabled) return { result: 'error', message: PUSH_MESSAGES.pushOff };
+  // Der Klick gilt nur für den Eintrag, den die Karte gezeigt hat. Die Quelle
+  // dazu kann nicht wechseln: upsertSource lehnt das ab, solange es an ihr
+  // Verknüpfungen gibt, auch gelöste.
+  if (link.entryId !== entryId) return { result: 'busy', message: PUSH_MESSAGES.changed };
   if (!link.pendingStatus || link.pendingStatus !== status) {
     return { result: 'busy', message: link.pendingStatus ? PUSH_MESSAGES.changed : PUSH_MESSAGES.nothingPending };
   }
 
-  const outcome = await runPush(tenant, link, { mode: 'confirm', target: status, mailRequested: mail === true });
+  const outcome = await runPush(tenant, link, {
+    mode: 'confirm', target: status, mailRequested: mail === true, expectEntryId: entryId,
+  });
+  if (outcome.conflict) return { result: 'busy', message: PUSH_MESSAGES.conflict };
   if (outcome.result === 'busy') {
     return {
       result: 'busy',
@@ -8952,7 +8993,10 @@ function describeAutoPush(outcome) {
     return { result: 'written', message: `Öffentlich veröffentlicht: ${outcome.status}.` };
   }
   if (outcome.result === 'waiting') return { result: 'waiting', message: WAITING_MESSAGES[outcome.reason] };
-  if (outcome.result === 'busy') return { result: 'waiting', message: PUSH_MESSAGES.waitingBusy };
+  if (outcome.result === 'busy') {
+    const message = outcome.conflict ? PUSH_MESSAGES.waitingConflict : PUSH_MESSAGES.waitingBusy;
+    return { result: 'waiting', message };
+  }
   if (outcome.result === 'error') return { result: 'error', message: outcome.message };
   return { result: 'none' };
 }
@@ -9033,7 +9077,7 @@ const OWNER_ONLY = { status: 403, error: PUSH_MESSAGES.ownerOnly };
 
 const handleFeedbackPublish = feedbackPushRoute(async (req, tenant, suggestionId) => {
   const outcome = await confirmPush(req, tenant, suggestionId, {
-    status: req.body?.status, mail: req.body?.mail,
+    entryId: req.body?.entryId, status: req.body?.status, mail: req.body?.mail,
   });
   if (outcome.forbidden) return OWNER_ONLY;
   const { result, message } = outcome;
@@ -9043,7 +9087,11 @@ const handleFeedbackPublish = feedbackPushRoute(async (req, tenant, suggestionId
 // Verwerfen entscheidet über eine öffentliche Änderung: auch nur mit Sitzung.
 const handleFeedbackDiscard = feedbackPushRoute(async (req, tenant, suggestionId) => {
   if (req.tenantAuth?.type !== 'session') return OWNER_ONLY;
-  const success = await repos.feedback.discardPending({ tenantId: tenant.id, suggestionId });
+  const link = await repos.feedback.findLink(tenant.id, suggestionId);
+  if (!link) return { body: { success: false } };
+  const entryId = req.body?.entryId;
+  if (link.entryId !== entryId) return { body: { success: false, message: PUSH_MESSAGES.changed } };
+  const success = await repos.feedback.discardPending({ tenantId: tenant.id, suggestionId, entryId });
   return { body: { success } };
 });
 

@@ -1671,7 +1671,7 @@ test('Klick sendet Status und Mail, zeigt den neuen Stand und meldet das Ergebni
   await clickCard(board, 'publish-card', 'a');
 
   assert.deepEqual(requested(board), ['POST /feedback/links/a/publish']);
-  assert.deepEqual(board.calls.requests[0].body, { status: 'gelöst', mail: true });
+  assert.deepEqual(board.calls.requests[0].body, { entryId: 'e1', status: 'gelöst', mail: true });
   assert.equal(toast(board), 'Veröffentlicht, die Mail ist raus.');
   assert.equal(board.cardMarkup('a').includes('Wartet auf'), false);
   assert.ok(board.cardMarkup('a').includes('Öffentlich: gelöst'));
@@ -1683,7 +1683,7 @@ test('Klick ohne Mail sagt ausdrücklich mail: false', async () => {
 
   await clickCard(board, 'publish-card', 'a');
 
-  assert.deepEqual(board.calls.requests[0].body, { status: 'gelöst', mail: false });
+  assert.deepEqual(board.calls.requests[0].body, { entryId: 'e1', status: 'gelöst', mail: false });
   assert.equal(toast(board), 'Veröffentlicht, ohne Mail.');
 });
 
@@ -1766,8 +1766,20 @@ test('„Verwerfen“ räumt die Zeile ab', async () => {
   await clickCard(board, 'discard-card', 'a');
 
   assert.deepEqual(requested(board), ['POST /feedback/links/a/discard']);
+  assert.deepEqual(board.calls.requests[0].body, { entryId: 'e1' });
   assert.equal(toast(board), 'Wartende Änderung verworfen');
   assert.equal(board.cardMarkup('a').includes('Wartet auf'), false);
+});
+
+test('„Verwerfen“ auf veraltetem Stand zeigt die Meldung des Servers', async () => {
+  const board = await openPending();
+  const message = 'Die wartende Änderung hat sich geändert. Nichts veröffentlicht.';
+  board.server.pushAnswer = () => ({ success: false, message });
+
+  await clickCard(board, 'discard-card', 'a');
+
+  assert.equal(toast(board), message);
+  assert.equal(board.element('toast').className, 'toast error');
 });
 
 test('Hängender Mailversand: nur der Hinweis und „Verwerfen“', async () => {

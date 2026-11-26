@@ -28,6 +28,8 @@ let nextId = 0;
 // Dokument, und gestörte Sammlungen.
 const readLog = [];
 const writeLog = [];
+// Jeder begonnene Schreibzugriff, auch ein hängender oder abgelehnter.
+const writeAttempts = [];
 const brokenReads = new Map();
 const brokenWrites = new Map();
 let mailFailure = null;
@@ -64,9 +66,48 @@ async function noteRead(name) {
 }
 
 async function write(collection, id, op, apply) {
+  writeAttempts.push({ collection, id, op });
   await pass(brokenWrites, collection, 'Schreiben');
   apply();
   writeLog.push({ collection, id, op });
+}
+
+// `updateTime` wie bei Firestore: Jeder Schreibzugriff legt ein neues Objekt ab
+// und damit einen neuen Stand.
+class Timestamp {
+  constructor(sequence) {
+    this.sequence = sequence;
+  }
+}
+const updateTimes = new WeakMap();
+const hiddenUpdateTimes = new Set();
+let sequence = 0;
+
+function updateTimeOf(stored) {
+  if (!updateTimes.has(stored)) updateTimes.set(stored, new Timestamp(sequence += 1));
+  return updateTimes.get(stored);
+}
+
+// Snapshots der Sammlung kommen ohne `updateTime`.
+function hideUpdateTime(name) {
+  hiddenUpdateTimes.add(name);
+  return () => hiddenUpdateTimes.delete(name);
+}
+
+// Die Vorbedingung von update(), geprüft erst beim Anwenden: Was inzwischen
+// geschrieben wurde, zählt. Wie die Bibliothek prüft `{ lastUpdateTime:
+// undefined }` nichts.
+function checkPrecondition(name, id, precondition) {
+  const lastUpdateTime = precondition?.lastUpdateTime;
+  if (lastUpdateTime === undefined) return;
+  if (!(lastUpdateTime instanceof Timestamp)) {
+    throw new Error('"lastUpdateTime" is not a Firestore Timestamp.');
+  }
+  const stored = records(name).get(id);
+  if (!stored) throw Object.assign(new Error('5 NOT_FOUND: Dokument fehlt'), { code: 5 });
+  if (updateTimeOf(stored) !== lastUpdateTime) {
+    throw Object.assign(new Error('9 FAILED_PRECONDITION: Dokument wurde geändert'), { code: 9 });
+  }
 }
 
 function records(name) {
@@ -94,12 +135,19 @@ function docRef(name, id) {
     async get() {
       await noteRead(name);
       const stored = records(name).get(id);
-      return { id, ref, exists: Boolean(stored), data: () => (stored ? { ...stored } : undefined) };
+      return {
+        id,
+        ref,
+        exists: Boolean(stored),
+        updateTime: stored && !hiddenUpdateTimes.has(name) ? updateTimeOf(stored) : undefined,
+        data: () => (stored ? { ...stored } : undefined),
+      };
     },
     set: (data, options = {}) => write(name, id, 'set', () => {
       records(name).set(id, options.merge ? { ...records(name).get(id), ...data } : { ...data });
     }),
-    update: (data) => write(name, id, 'update', () => {
+    update: (data, precondition) => write(name, id, 'update', () => {
+      checkPrecondition(name, id, precondition);
       records(name).set(id, applyUpdate(records(name).get(id), data));
     }),
     delete: () => write(name, id, 'delete', () => records(name).delete(id)),
@@ -147,7 +195,7 @@ const db = {
         if ((await ref.get()).exists) throw new Error(`Dokument existiert bereits: ${ref.id}`);
         await ref.set(data);
       }),
-      update: (ref, data) => writes.push(() => ref.update(data)),
+      update: (ref, data, precondition) => writes.push(() => ref.update(data, precondition)),
       delete: (ref) => writes.push(() => ref.delete()),
       async commit() {
         for (const write of writes) await write();
@@ -203,6 +251,8 @@ function reset() {
   sentMails.length = 0;
   readLog.length = 0;
   writeLog.length = 0;
+  writeAttempts.length = 0;
+  hiddenUpdateTimes.clear();
   brokenReads.clear();
   brokenWrites.clear();
   mailFailure = null;
@@ -243,5 +293,6 @@ async function startApp() {
 }
 
 module.exports = {
-  dump, failMails, failReads, failWrites, readLog, records, reset, seed, sentMails, startApp, writeLog,
+  dump, failMails, failReads, failWrites, hideUpdateTime, readLog, records, reset, seed, sentMails, startApp,
+  writeAttempts, writeLog,
 };

@@ -284,4 +284,4 @@ npm run feedback:sources -- disable-push --workspace <ziel-workspace> --board <z
 
 Erwartet ohne `--commit`: `Zurückschreiben: an -> aus` und die Anzahl wartender Änderungen, die gelöscht würden.
 
-`disable-push --commit` löscht die wartenden Änderungen dieser Quelle; danach wird nichts mehr geschrieben. Ein laufender oder hängender Mailversand bleibt vermerkt. Schon Veröffentlichtes bleibt öffentlich stehen. Bei Bedarf den Code zurücknehmen; die Spalten bleiben, ältere Code-Stände kennen sie nicht.
+`disable-push --commit` löscht die wartenden Änderungen dieser Quelle; danach beginnt kein Schreiben mehr. Ein Lauf, der in diesem Moment zwischen letzter Prüfung und Schreiben steht oder dessen Schreiben schon unterwegs ist, kann noch genau diesen einen Status veröffentlichen, ohne Mail. Ein laufender oder hängender Mailversand bleibt vermerkt. Schon Veröffentlichtes bleibt öffentlich stehen. Bei Bedarf den Code zurücknehmen; die Spalten bleiben, ältere Code-Stände kennen sie nicht.

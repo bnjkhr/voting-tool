@@ -954,7 +954,7 @@ class TenantAdminApp {
     async publishCard(suggestionId) {
         const link = this.feedbackLink(suggestionId);
         if (!window.BoardModel.pendingLine(link, { isOwner: this.canPublishPublic() })?.action) return;
-        const body = { status: link.pendingStatus, mail: link.pendingMail === true };
+        const body = { entryId: link.entryId, status: link.pendingStatus, mail: link.pendingMail === true };
         await this.sendPublicAction(suggestionId, 'publish', body, result => {
             if (result.result === 'published') return ['Veröffentlicht, die Mail ist raus.', 'success'];
             if (result.result === 'published_no_mail' && !result.message) {
@@ -967,9 +967,10 @@ class TenantAdminApp {
     async discardCard(suggestionId) {
         const link = this.feedbackLink(suggestionId);
         if (!window.BoardModel.pendingLine(link, { isOwner: this.canPublishPublic() })?.canDiscard) return;
-        await this.sendPublicAction(suggestionId, 'discard', {}, result => (result.success
+        const body = { entryId: link.entryId };
+        await this.sendPublicAction(suggestionId, 'discard', body, result => (result.success
             ? ['Wartende Änderung verworfen', 'success']
-            : ['Hier wartet keine Änderung mehr.', 'error']));
+            : [result.message || 'Hier wartet keine Änderung mehr.', 'error']));
     }
 
     async setPublicTest(suggestionId) {

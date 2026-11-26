@@ -72,6 +72,9 @@ suite('Zurückschreiben: Repository', async (t) => {
     ...target.ids, status: 'gelöst', reason: 'busy', mail: false, error: null, ...fields,
   });
   const claim = (target, expectStatus = 'gelöst') => feedback.claimPush({ ...target.ids, expectStatus });
+  const ticketStatus = (suggestionId, status) => query(
+    'update suggestions set status = $2 where id = $1', [suggestionId, status]
+  );
   const age = (suggestionId, interval) => query(
     `update feedback_links set push_claimed_at = now() - $2::interval where suggestion_id = $1`,
     [suggestionId, interval]
@@ -483,5 +486,41 @@ suite('Zurückschreiben: Repository', async (t) => {
       await query("update tenants set status = 'private' where id = $1", [INTERN]);
       fs.rmdirSync(cwd);
     }
+  });
+  await t.test('bedingtes Update: nur auf dem gelesenen Stand', async () => {
+    const suggestions = require('../../db/suggestions');
+    const target = await linked({ status: 'offen' });
+    const read = await suggestions.findByIdWithVersion(target.suggestionId);
+    assert.ok(read.rowVersion);
+    assert.equal(read.status, 'offen');
+
+    const written = await suggestions.updateIfUnchanged(target.suggestionId, read.rowVersion, { status: 'gelöst' });
+
+    assert.equal(written.status, 'gelöst');
+    // Derselbe alte Stand gilt nicht mehr, auch wenn der Status wieder passt.
+    await ticketStatus(target.suggestionId, 'offen');
+    assert.equal(
+      await suggestions.updateIfUnchanged(target.suggestionId, read.rowVersion, { status: 'in Bearbeitung' }),
+      null
+    );
+    assert.equal((await suggestions.findById(target.suggestionId)).status, 'offen');
+    for (const version of [undefined, null, '', '0']) {
+      assert.equal(await suggestions.updateIfUnchanged(target.suggestionId, version, { status: 'x' }), null);
+    }
+    assert.equal((await suggestions.findById(target.suggestionId)).status, 'offen');
+    assert.equal(await suggestions.findByIdWithVersion('test_fbpush_gibtsnicht'), null);
+  });
+
+  await t.test('Claim und Verwerfen binden den Eintrag', async () => {
+    const target = await linked();
+    await pend(target);
+    const { entry_id: entryId } = await row(target.suggestionId);
+
+    assert.equal(await feedback.claimPush({ ...target.ids, expectStatus: 'gelöst', expectEntryId: 'x' }), null);
+    assert.equal(await feedback.discardPending({ ...target.ids, entryId: 'x' }), false);
+    assert.equal((await row(target.suggestionId)).pending_status, 'gelöst');
+
+    assert.ok(await feedback.claimPush({ ...target.ids, expectStatus: 'gelöst', expectEntryId: entryId }));
+    assert.equal(await feedback.discardPending({ ...target.ids, entryId }), true);
   });
 });
